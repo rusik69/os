@@ -146,13 +146,17 @@ static int ehci_do_transfer(uint64_t op_base, uint32_t pid, uint8_t ep,
     if (!op_base) return -1;
 
     /*
-     * qTD buffer addressing is limited to 5 pages (20 KB) and the token
-     * byte-count field is 15 bits (max 0x7FFF).  Reject larger transfers
-     * instead of letting the controller DMA past the programmed buffer
-     * pages into adjacent physical memory.
+     * The DMA buffer supplied by hid_alloc_dma() is exactly one 4 KB
+     * page (pmm_alloc_frame), so the transfer length must never exceed
+     * 4096 bytes — otherwise the controller would DMA past the end of
+     * the buffer into adjacent physical memory.  (The qTD could address
+     * up to 5 pages / 20 KB and the token byte-count field is 15 bits,
+     * but our buffers are only one page, so 4096 is the binding limit.)
+     * Non-DMA callers pass small stack buffers (<= 64 bytes), which the
+     * 5-page qTD buffer list still covers when they straddle a page
+     * boundary.
      */
-    if (len > 20480u - ((uint32_t)(uintptr_t)VIRT_TO_PHYS(data) & 0xFFFu) ||
-        len > 0x7FFFu)
+    if (len > 4096u)
         return -EINVAL;
 
     struct ehci_qh  *qh  = (struct ehci_qh  *)hid_alloc_dma(sizeof(*qh));
