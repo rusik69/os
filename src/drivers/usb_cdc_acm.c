@@ -131,6 +131,12 @@ static int      g_acm_initialized = 0;
 static uint8_t g_bulk_in_ep  = 0;
 static uint8_t g_bulk_out_ep = 0;
 
+/* Communication interface (comm) number.  CDC class control requests
+ * (SET_LINE_CODING, GET_LINE_CODING, SET_CONTROL_LINE_STATE, SEND_BREAK)
+ * must be addressed to this interface via wIndex, and the serial-state
+ * notification's wIndex must match it.  -1 while unknown. */
+static int g_acm_comm_iface = -1;
+
 /* Serial data ring buffer */
 #define ACM_BUF_SIZE 256
 static uint8_t g_acm_rx_buf[ACM_BUF_SIZE];
@@ -312,15 +318,17 @@ static int cdc_set_line_coding(uint32_t baud, uint8_t data_bits,
     lc->bParityType  = parity;
     lc->bDataBits    = data_bits;
 
-    int rc = usb_control(0x21, CDC_SET_LINE_CODING, 0, 0,
-                          sizeof(*lc), lc);
+    int rc = usb_control(0x21, CDC_SET_LINE_CODING, 0,
+                         (uint16_t)g_acm_comm_iface,
+                         sizeof(*lc), lc);
     pmm_free_frame(VIRT_TO_PHYS((uint64_t)lc));
     return rc;
 }
 
 static int cdc_set_control_line_state(uint16_t state) {
     g_control_line_state = state;
-    return usb_control(0x21, CDC_SET_CONTROL_LINE_STATE, state, 0, 0, NULL);
+    return usb_control(0x21, CDC_SET_CONTROL_LINE_STATE, state,
+                       (uint16_t)g_acm_comm_iface, 0, NULL);
 }
 
 static int cdc_get_line_coding(struct cdc_line_coding *lc) {
@@ -329,8 +337,9 @@ static int cdc_get_line_coding(struct cdc_line_coding *lc) {
     if (!buf) return -ENOMEM;
     memset(buf, 0, sizeof(*buf));
 
-    int rc = usb_control(0xA1, CDC_GET_LINE_CODING, 0, 0,
-                          sizeof(*buf), buf);
+    int rc = usb_control(0xA1, CDC_GET_LINE_CODING, 0,
+                         (uint16_t)g_acm_comm_iface,
+                         sizeof(*buf), buf);
     if (rc >= 0) {
         lc->dwDTERate   = buf->dwDTERate;
         lc->bCharFormat = buf->bCharFormat;
@@ -342,7 +351,8 @@ static int cdc_get_line_coding(struct cdc_line_coding *lc) {
 }
 
 static int cdc_send_break(uint16_t duration) {
-    return usb_control(0x21, CDC_SEND_BREAK, duration, 0, 0, NULL);
+    return usb_control(0x21, CDC_SEND_BREAK, duration,
+                       (uint16_t)g_acm_comm_iface, 0, NULL);
 }
 
 /* ── Serial data transfer ──────────────────────────────────────────── */
@@ -387,7 +397,10 @@ static int acm_poll_notification(void) {
     int rc = ehci_do_transfer(QTD_PID_IN, g_int_in_ep,
                                (uint8_t *)notif, sizeof(*notif), 1);
     if (rc == 0 && notif->bmRequestType == 0xA1 &&
-        notif->bNotification == CDC_NOTIF_SERIAL_STATE) {
+        notif->bNotification == CDC_NOTIF_SERIAL_STATE &&
+        notif->wLength >= 2 &&
+        (g_acm_comm_iface < 0 ||
+         notif->wIndex == (uint16_t)g_acm_comm_iface)) {
         g_serial_state = notif->wData;
     }
 
@@ -431,6 +444,7 @@ int __init usb_cdc_acm_init(void) {
     int pos = 0;
     int cdc_found = 0;
     int data_iface_num = -1;
+    int cur_iface_valid = 0;
 
     while (pos + 1 < cfg_len) {
         uint8_t dlen = cfg[pos];
@@ -445,13 +459,24 @@ int __init usb_cdc_acm_init(void) {
 
             if (if_class == CDC_CLASS_COMM && if_sub == CDC_SUBCLASS_ACM) {
                 cdc_found = 1;
-                kprintf("[USB ACM] Found CDC ACM interface (proto=0x%02x)\n", if_proto);
-            }
-            if (if_class == 0x0A) {  /* CDC Data */
+                g_acm_comm_iface = cfg[pos + 2];
+                cur_iface_valid = 1;
+                kprintf("[USB ACM] Found CDC ACM interface %d (proto=0x%02x)\n",
+                        g_acm_comm_iface, if_proto);
+            } else if (if_class == 0x0A) {  /* CDC Data */
                 data_iface_num = cfg[pos + 2];
+                cur_iface_valid = 1;
                 kprintf("[USB ACM] Found CDC Data interface %d\n", data_iface_num);
+            } else {
+                /*
+                 * Endpoints of any other interface (vendor, HID, MSC, ...)
+                 * in a composite device must not be claimed by this driver.
+                 */
+                cur_iface_valid = 0;
             }
-        } else if (dtype == 5 && dlen >= 7) {  /* Endpoint (standard length 7) */
+        } else if (dtype == 5 && dlen >= 7 && cur_iface_valid) {
+            /* Endpoint (standard length 7) — only adopt endpoints that
+             * belong to the CDC function's own interfaces. */
             uint8_t ep_addr = cfg[pos + 2];
             uint8_t ep_attr = cfg[pos + 3];
 
@@ -602,8 +627,9 @@ static int usb_cdc_acm_set_line_coding(uint32_t baud, uint8_t data_bits,
     if (!buf) return -ENOMEM;
     memcpy(buf, &lc, sizeof(lc));
 
-    int rc = usb_control(0x21, CDC_SET_LINE_CODING, 0, 0,
-                          sizeof(*buf), buf);
+    int rc = usb_control(0x21, CDC_SET_LINE_CODING, 0,
+                         (uint16_t)g_acm_comm_iface,
+                         sizeof(*buf), buf);
     if (rc >= 0)
         g_line_coding = lc;
 
@@ -693,6 +719,7 @@ static void usb_cdc_acm_exit(void) {
 
     g_acm_initialized = 0;
     g_acm_dev_addr = 0;
+    g_acm_comm_iface = -1;
     g_bulk_in_ep = 0;
     g_bulk_out_ep = 0;
     g_int_in_ep = 0;
