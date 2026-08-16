@@ -165,8 +165,11 @@ static void dbc_flush_output(struct dbc_device *dbc)
     struct dbc_trb *trbs = (struct dbc_trb *)dbc->bulk_out.trbs;
     struct dbc_trb *trb = &trbs[idx];
 
-    /* Use the console buffer directly (for simplicity) */
-    uint64_t buf_phys = (uint64_t)g_dbc_console_buf;  /* assumes identity map */
+    /* Use the console buffer directly (for simplicity).
+     * The kernel links at a high-half VMA (KERNEL_VMA_OFFSET), so the TRB
+     * data pointer must be the buffer's PHYSICAL address, not its virtual
+     * address -- the controller DMAs from this address. */
+    uint64_t buf_phys = VIRT_TO_PHYS(g_dbc_console_buf);
     trb->parameter = buf_phys;
     trb->status = (uint32_t)g_dbc_console_pos;  /* TRB transfer length */
     trb->control = TRB_C | (TRB_TYPE_NORMAL << TRB_TYPE_SHIFT) | TRB_IOC;
