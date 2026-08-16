@@ -755,7 +755,22 @@ int virtio_pci_modern_enable_msix(struct vpci_modern_device *vdev,
 	 *   [8]  = message data (32-bit)
 	 *   [12] = vector control (32-bit)
 	 */
+	/* Validate the table BAR index: the BIR field is 3 bits wide
+	 * (0-7) but a device has only 6 BAR registers — indexing bar[]
+	 * with 6 or 7 would read out of bounds.  The table must also
+	 * live in a memory-mapped BAR; an I/O-space BAR's value is a
+	 * port number, not a physical address. */
+	if (msix_info.table_bir >= 6) {
+		kprintf("[VPCI-MODERN] invalid MSI-X table BIR %u\n",
+		        (unsigned int)msix_info.table_bir);
+		return -1;
+	}
 	uint32_t bar_val = vdev->pci_dev->bar[msix_info.table_bir];
+	if (bar_val == 0 || (bar_val & 1)) {
+		kprintf("[VPCI-MODERN] MSI-X table BAR%d is I/O space or unassigned\n",
+		        (unsigned int)msix_info.table_bir);
+		return -1;
+	}
 	uint64_t table_phys = (uint64_t)(bar_val & ~0xFu);
 	/* 64-bit MMIO BAR (type bits [2:1] == 0b10): the upper address
 	 * dword lives in the adjacent BAR slot — without it the table

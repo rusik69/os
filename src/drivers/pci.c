@@ -725,7 +725,12 @@ int pci_setup_interrupts(struct pci_device *dev,
     if (has_msix == 0 && msix_info.table_size > 0) {
         /* Map the MSI-X table from the device's BAR */
         int bir = msix_info.table_bir;
-        if (bir >= 0 && bir < 6 && dev->bar[bir] != 0) {
+        /* The MSI-X table must live in a memory-mapped BAR.  An
+         * I/O-space BAR's value is a port number, not a physical
+         * address — treating it as one would map and write the
+         * vector table into arbitrary low memory. */
+        if (bir >= 0 && bir < 6 && dev->bar[bir] != 0 &&
+            !(dev->bar[bir] & 1)) {
             uint32_t bar_val = dev->bar[bir];
             uint64_t phys_base = (uint64_t)(bar_val & ~0xFu);
             /* 64-bit MMIO BAR (type bits [2:1] == 0b10): the upper
