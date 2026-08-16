@@ -77,40 +77,38 @@ struct dma_buf *dma_buf_alloc(size_t size, uint32_t flags)
     int num_frames = (int)(aligned / PAGE_SIZE);
     if (num_frames == 0) num_frames = 1;
 
-    /* Allocate contiguous physical pages */
-    uint64_t first_frame = 0;
-    uint64_t *frames = pmm_alloc_frames((size_t)num_frames);
-    if (!frames) {
-        /* Fallback: allocate single frames and hope for contiguity.
-         * For a real implementation we'd use a proper contiguous allocator. */
+    /* Allocate contiguous physical pages.  pmm_alloc_frames() returns
+     * the physical address of the first frame cast to a pointer — NOT
+     * a pointer to an array.  Dereferencing it would read the frame's
+     * contents and produce a bogus phys_addr. */
+    uint64_t first_frame =
+        (uint64_t)(uintptr_t)pmm_alloc_frames((size_t)num_frames);
+
+    if (!first_frame) {
+        /* Fallback: allocate single frames, requiring contiguity so the
+         * buffer metadata (first_frame + num_frames) stays consistent
+         * with the contiguous free loop in dma_buf_free(). */
         first_frame = pmm_alloc_frame();
         if (!first_frame) return NULL;
-        uint64_t expected = first_frame + PAGE_SIZE;
 
         for (int i = 1; i < num_frames; i++) {
             uint64_t f = pmm_alloc_frame();
             if (!f) {
-                /* Free already allocated frames */
+                /* Free the frames allocated so far (contiguous by
+                 * construction) and fail. */
                 for (int j = 0; j < i; j++)
                     pmm_free_frame(first_frame + (uint64_t)j * PAGE_SIZE);
-                pmm_free_frame(first_frame);
                 return NULL;
             }
-            if (f != expected) {
-                /* Not contiguous — in a real implementation we would
-                 * use a proper contiguous allocator.  For simplicity
-                 * we accept non-contiguous pages. */
-                (void)f;
-                expected = f + PAGE_SIZE;
-            } else {
-                expected = f + PAGE_SIZE;
+            if (f != first_frame + (uint64_t)i * PAGE_SIZE) {
+                /* Not contiguous — cannot be represented by the buffer
+                 * metadata.  Free everything and fail. */
+                pmm_free_frame(f);
+                for (int j = 0; j < i; j++)
+                    pmm_free_frame(first_frame + (uint64_t)j * PAGE_SIZE);
+                return NULL;
             }
         }
-    } else {
-        first_frame = frames[0];
-        /* Free the array allocated by pmm_alloc_frames — we only need
-         * the first frame as reference. */
-        /* pmm_alloc_frames returns a dynamically allocated array */
     }
 
     /* Find a free dma_buf slot */
