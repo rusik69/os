@@ -226,6 +226,8 @@ static int usb_wifi_send(int dev_id, const uint8_t *data, int len)
         return -ENODEV;
 
     struct usb_wifi_device *dev = &usb_wifi_devs[dev_id];
+    if (len < 0)
+        return -EINVAL;
     if (!dev->connected) return -ENOTCONN;
 
     int copy_len = (len > 2048) ? 2048 : len;
@@ -242,6 +244,8 @@ static int usb_wifi_recv(int dev_id, uint8_t *buf, int max)
         return -ENODEV;
 
     struct usb_wifi_device *dev = &usb_wifi_devs[dev_id];
+    if (max < 0)
+        return -EINVAL;
     if (dev->rx_len <= 0) {
         dev->rx_offset = 0;
         return 0;
