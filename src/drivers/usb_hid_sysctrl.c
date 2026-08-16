@@ -360,6 +360,13 @@ static void sysctrl_process_report(const uint8_t *report, int len)
                 int bit_size = (int)cur_report_size;
                 int count = (int)cur_report_count;
 
+                /* Crafted descriptors can encode negative sizes/counts
+                 * (values >= 0x80000000), which would drive
+                 * report_bit_offset negative and underflow the report
+                 * buffer read below. */
+                if (bit_size < 0 || count < 0)
+                    break;
+
                 if (is_constant) {
                     /* Constant values don't convey key state */
                     report_bit_offset += bit_size * count;
@@ -376,7 +383,7 @@ static void sysctrl_process_report(const uint8_t *report, int len)
                         uint16_t usage_code = (uint16_t)(base_usage + b);
 
                         int bit_val = 0;
-                        if (byte_off < len) {
+                        if (byte_off >= 0 && bit_off >= 0 && byte_off < len) {
                             bit_val = (report[byte_off] >> bit_off) & 1;
                         }
 
@@ -396,9 +403,10 @@ static void sysctrl_process_report(const uint8_t *report, int len)
                     int byte_off = report_bit_offset / 8;
                     uint16_t usage_code = 0;
 
-                    if (bit_size <= 8 && byte_off < len) {
+                    if (bit_size <= 8 && byte_off >= 0 && byte_off < len) {
                         usage_code = report[byte_off];
-                    } else if (bit_size <= 16 && byte_off + 1 < len) {
+                    } else if (bit_size <= 16 && byte_off >= 0 &&
+                               byte_off + 1 < len) {
                         usage_code = (uint16_t)(report[byte_off] |
                                                 ((uint32_t)report[byte_off + 1] << 8));
                     }
