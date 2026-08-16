@@ -728,6 +728,11 @@ int pci_setup_interrupts(struct pci_device *dev,
         if (bir >= 0 && bir < 6 && dev->bar[bir] != 0) {
             uint32_t bar_val = dev->bar[bir];
             uint64_t phys_base = (uint64_t)(bar_val & ~0xFu);
+            /* 64-bit MMIO BAR (type bits [2:1] == 0b10): the upper
+             * address dword lives in the adjacent BAR slot — without
+             * it the table address is truncated to 32 bits. */
+            if ((((bar_val >> 1) & 0x3) == 0x2) && bir + 1 < 6)
+                phys_base |= (uint64_t)dev->bar[bir + 1] << 32;
             uint64_t table_phys = phys_base + msix_info.table_offset;
 
             /* Allocate vectors */

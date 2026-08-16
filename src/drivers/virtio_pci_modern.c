@@ -744,7 +744,14 @@ int virtio_pci_modern_enable_msix(struct vpci_modern_device *vdev,
 	 *   [8]  = message data (32-bit)
 	 *   [12] = vector control (32-bit)
 	 */
-	uint64_t table_phys = (uint64_t)(vdev->pci_dev->bar[msix_info.table_bir] & ~0xFu);
+	uint32_t bar_val = vdev->pci_dev->bar[msix_info.table_bir];
+	uint64_t table_phys = (uint64_t)(bar_val & ~0xFu);
+	/* 64-bit MMIO BAR (type bits [2:1] == 0b10): the upper address
+	 * dword lives in the adjacent BAR slot — without it the table
+	 * address is truncated to 32 bits. */
+	if ((((bar_val >> 1) & 0x3) == 0x2) &&
+	    msix_info.table_bir + 1 < 6)
+		table_phys |= (uint64_t)vdev->pci_dev->bar[msix_info.table_bir + 1] << 32;
 	if (!table_phys) {
 		kprintf("[VPCI-MODERN] MSI-X table BAR is I/O space?\n");
 		return -1;
