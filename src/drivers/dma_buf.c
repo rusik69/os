@@ -27,19 +27,32 @@ static spinlock_t g_dma_buf_lock;
 
 static struct dma_buf_attachment *alloc_attachment(void)
 {
+    /* The global attachment pool is shared across all buffers; the
+     * check-and-claim must be atomic under g_dma_buf_lock or two
+     * concurrent dma_buf_attach() calls can take the same slot and
+     * alias it into two buffers' attachment lists. */
+    uint64_t lock_flags;
+    spinlock_irqsave_acquire(&g_dma_buf_lock, &lock_flags);
+
     for (int i = 0; i < DMA_BUF_MAX_BUFS * DMA_BUF_MAX_ATTACH; i++) {
         if (!g_attachments[i].in_use) {
             g_attachments[i].in_use = 1;
+            spinlock_irqsave_release(&g_dma_buf_lock, lock_flags);
             return &g_attachments[i];
         }
     }
+
+    spinlock_irqsave_release(&g_dma_buf_lock, lock_flags);
     return NULL;
 }
 
 static void free_attachment(struct dma_buf_attachment *att)
 {
     if (att) {
+        uint64_t lock_flags;
+        spinlock_irqsave_acquire(&g_dma_buf_lock, &lock_flags);
         memset(att, 0, sizeof(*att));
+        spinlock_irqsave_release(&g_dma_buf_lock, lock_flags);
     }
 }
 
