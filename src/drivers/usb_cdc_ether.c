@@ -639,6 +639,15 @@ static int cdc_ether_frame_rx(struct cdc_ether_device *dev,
         int crc_flag;
         int type = eem_parse_header(header, &payload_len, &crc_flag);
 
+        /* The EEM header length field (bits 11-0) declares the total
+         * EEM packet size including this 2-byte header. A crafted
+         * header claiming more bytes than are actually present would
+         * make the caller's rx_len -= consumed underflow, corrupting
+         * the RX buffer state and enabling an out-of-bounds write
+         * before rx_buf on the next queued packet. Reject it. */
+        if (payload_len > in_len)
+            return -EINVAL;
+
         if (type == EEM_HEADER_TYPE_CMD) {
             /* Command packet — process and return 0 consumed (no data) */
             eem_process_command(dev, header & 0x0FFF);
