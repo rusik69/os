@@ -749,11 +749,32 @@ int pci_setup_interrupts(struct pci_device *dev,
              * near the end of a 4KB page, so we map ALL pages that the
              * nvecs entries (each MSIX_ENTRY_SIZE bytes) touch. */
             uint64_t table_start_page = table_phys & ~(uint64_t)(PAGE_SIZE - 1);
-            uint64_t table_end = table_phys + (uint64_t)nvecs * MSIX_ENTRY_SIZE - 1;
-            uint64_t table_end_page = table_end & ~(uint64_t)(PAGE_SIZE - 1);
+            uint64_t table_region = (uint64_t)nvecs * MSIX_ENTRY_SIZE;
+            /* table_phys derives from device-controlled BAR/capability
+             * values.  If the region would wrap the 64-bit address space,
+             * the end-page arithmetic (and the += PAGE_SIZE loop increment)
+             * wraps too, mapping every page from 0 upward — an unbounded
+             * loop.  Refuse the table and fall back to MSI/INTx. */
+            if (table_phys > UINT64_MAX - table_region + 1) {
+                kprintf("[PCI] %02x:%02x.%x: MSI-X table 0x%llx+%u wraps "
+                        "address space; falling back\n",
+                        (unsigned int)dev->bus, (unsigned int)dev->slot,
+                        (unsigned int)dev->func,
+                        (unsigned long long)table_phys,
+                        (unsigned int)(nvecs * MSIX_ENTRY_SIZE));
+                pci_disable_msix(dev);
+                goto try_msi;
+            }
+            uint64_t table_end_page =
+                (table_phys + table_region - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+            uint64_t table_npages =
+                (table_end_page - table_start_page) / PAGE_SIZE + 1;
 
-            for (uint64_t page = table_start_page; page <= table_end_page;
-                 page += PAGE_SIZE) {
+            /* Iterate by page index: the last page may sit inside the
+             * final 4 KB of the address space, where a += PAGE_SIZE loop
+             * increment would wrap to 0 and never terminate. */
+            for (uint64_t i = 0; i < table_npages; i++) {
+                uint64_t page = table_start_page + i * PAGE_SIZE;
                 uint64_t virt = (uint64_t)PHYS_TO_VIRT(page);
                 vmm_map_page(virt, page,
                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_NOCACHE);
