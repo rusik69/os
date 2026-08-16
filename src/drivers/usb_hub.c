@@ -242,7 +242,16 @@ static int hub_port_is_valid(struct hub_state *hub, int port)
 /* ── DMA / MMIO helpers ────────────────────────────────────────────── */
 
 static void *hub_alloc_dma(size_t sz) {
-    (void)sz;
+    /*
+     * Single-frame allocator: only one 4 KiB page can be handed out, so a
+     * request larger than a page must be rejected up front.  Silently
+     * ignoring sz would hand the caller a buffer smaller than the size it
+     * later programs into a qTD (ehci_do_transfer accepts len up to 20 KB
+     * for page-aligned buffers) — the controller would DMA past the
+     * caller's buffer into adjacent physical pages.
+     */
+    if (sz > 4096)
+        return (void *)0;
     uint64_t frame = pmm_alloc_frame();
     if (!frame) return (void *)0;
     void *p = PHYS_TO_VIRT(frame);
