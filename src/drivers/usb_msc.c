@@ -857,38 +857,4 @@ void usb_msc_exit(void)
     kprintf("[USB] MSC device unregistered\n");
 }
 
-/* ── Public API: byte-level read/write/capacity (non-blockdev) ──── */
 
-static int usb_msc_read(void *dev, void *buf, size_t count, uint64_t offset)
-{
-    (void)dev;
-    if (!buf || count == 0) return 0;
-
-    /* Convert byte offset/count to LBA/sectors (512-byte sectors) */
-    uint32_t lba = (uint32_t)(offset / 512);
-    uint32_t nsec = (uint32_t)((count + 511) / 512);
-    if (nsec > 255) nsec = 255;  /* limit to max sectors per request */
-
-    return scsi_read10(lba, (uint8_t)nsec, buf);
-}
-
-static int usb_msc_write(void *dev, const void *buf, size_t count, uint64_t offset)
-{
-    (void)dev;
-    if (!buf || count == 0) return 0;
-
-    uint32_t lba = (uint32_t)(offset / 512);
-    uint32_t nsec = (uint32_t)((count + 511) / 512);
-    if (nsec > 255) nsec = 255;
-
-    return scsi_write10(lba, (uint8_t)nsec, buf);
-}
-
-static int usb_msc_capacity(void *dev, void *cap)
-{
-    (void)dev;
-    if (cap) {
-        *(uint64_t *)cap = (uint64_t)(g_max_lba + 1);
-    }
-    return 0;
-}
