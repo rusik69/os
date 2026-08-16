@@ -104,8 +104,9 @@ struct bot_csw {
 
 static uint64_t g_op_base     = 0;
 static uint8_t  g_dev_addr    = 1;   /* USB address assigned after reset */
-static uint8_t  g_bulk_in_ep  = 1;   /* bulk IN endpoint number */
-static uint8_t  g_bulk_out_ep = 2;   /* bulk OUT endpoint number */
+static uint8_t  g_if_num      = 0;   /* interface number of the MSC interface */
+static uint8_t  g_bulk_in_ep  = 1;   /* bulk IN endpoint address (0x80|num) */
+static uint8_t  g_bulk_out_ep = 2;   /* bulk OUT endpoint address */
 static uint32_t g_max_lba     = 0;   /* total sectors - 1 */
 static uint32_t g_tag         = 1;
 
@@ -157,6 +158,16 @@ static int ehci_do_transfer(uint32_t pid, uint8_t ep, void *data,
      */
     if (len > 20480u - ((uint32_t)(uintptr_t)VIRT_TO_PHYS(data) & 0xFFFu) ||
         len > 0x7FFFu)
+        return -EINVAL;
+
+    /*
+     * Endpoint address validation (USB 2.0 spec §9.6.6): for non-control
+     * transfers, bits 4-6 are reserved and must be zero, and endpoint 0
+     * is the control endpoint.  The QH endpoint field holds only 4 bits,
+     * so reject malformed addresses instead of silently truncating them.
+     */
+    if (pid != QTD_PID_SETUP &&
+        ((ep & 0x70u) || (ep & 0x0Fu) == 0))
         return -EINVAL;
 
     struct ehci_qh  *qh  = (struct ehci_qh  *)alloc_dma(sizeof(*qh));
@@ -309,8 +320,8 @@ static int bot_reset(void)
 {
     /* bmRequestType = 0x21 (Class, Interface, Host-to-Device)
      * bRequest = 0xFF (Bulk-Only Mass Storage Reset)
-     * wValue = 0, wIndex = interface 0 */
-    return usb_control(0x21, 0xFF, 0, 0, 0, (void *)0);
+     * wValue = 0, wIndex = interface number of the MSC interface */
+    return usb_control(0x21, 0xFF, 0, g_if_num, 0, (void *)0);
 }
 
 /* ── BOT bulk transfer helpers ───────────────────────────────────────────── */
@@ -691,8 +702,14 @@ static int usb_msc_parse_config(void)
         if (desc_type == USB_DT_INTERFACE && desc_len >= 9) {
             uint8_t if_class = config[offset + 5];
             if (if_class == 0x08) {  /* Mass Storage Class */
-                /* Walk endpoints inside this interface */
+                /* Walk endpoints inside this interface.  bNumEndpoints
+                 * counts every endpoint descriptor of the interface, so
+                 * only USB_DT_ENDPOINT descriptors decrement it.  Stop at
+                 * the first non-endpoint descriptor (next interface or its
+                 * class-specific descriptors) so the walk can never bleed
+                 * into a neighbouring interface and adopt its endpoints. */
                 uint8_t num_ep = config[offset + 4];
+                uint8_t if_num = config[offset + 2];  /* bInterfaceNumber */
                 uint16_t ep_offset = offset + desc_len;
                 int found_in = 0, found_out = 0;
 
@@ -702,11 +719,18 @@ static int usb_msc_parse_config(void)
 
                     if (ep_len == 0) break;
                     if (ep_offset + ep_len > total_len) break;
-                    if (ep_type == USB_DT_ENDPOINT && ep_len >= 7) {
+                    if (ep_type != USB_DT_ENDPOINT) break;  /* boundary */
+                    num_ep--;
+                    if (ep_len >= 7) {
                         uint8_t ep_addr = config[ep_offset + 2];
                         uint8_t ep_attr = config[ep_offset + 3];
 
-                        if ((ep_attr & USB_ENDPOINT_XFERTYPE_MASK) ==
+                        /* Endpoint addresses with reserved bits set or an
+                         * endpoint number of 0 are invalid (USB 2.0 spec
+                         * §9.6.6) — the transfer path would truncate them. */
+                        if ((ep_addr & 0x70u) == 0 &&
+                            (ep_addr & 0x0Fu) != 0 &&
+                            (ep_attr & USB_ENDPOINT_XFERTYPE_MASK) ==
                             USB_ENDPOINT_XFER_BULK) {
                             if (ep_addr & USB_ENDPOINT_DIR_IN) {
                                 g_bulk_in_ep = ep_addr;
@@ -715,13 +739,13 @@ static int usb_msc_parse_config(void)
                                 g_bulk_out_ep = ep_addr;
                                 found_out = 1;
                             }
-                            num_ep--;
                         }
                     }
                     ep_offset += ep_len;
                 }
 
                 if (found_in && found_out) {
+                    g_if_num = if_num;
                     found = 1;
                     break;
                 }
@@ -752,6 +776,7 @@ int usb_msc_init(void)
     if (!g_op_base) return -3;
 
     /* Reset device state */
+    g_if_num      = 0;
     g_bulk_in_ep  = 0x81;   /* default: EP1 IN */
     g_bulk_out_ep = 0x02;   /* default: EP2 OUT */
     g_tag = 1;
