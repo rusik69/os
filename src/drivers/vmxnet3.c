@@ -517,8 +517,13 @@ static int vmxnet3_probe(struct vmxnet3_priv *priv)
     }
 
     /* BAR0 contains the MMIO base address (the lower bits encode
-     * the BAR type — mask them off to get the physical address). */
+     * the BAR type — mask them off to get the physical address).
+     * A 64-bit MMIO BAR (type bits [2:1] == 0b10) stores its upper
+     * address dword in BAR1 — without it the base is truncated to
+     * 32 bits (PCI Local Bus Spec r3.0 §6.2.5.1). */
     mmio_phys = (uint64_t)(pci_dev.bar[0] & ~0xFULL);
+    if (((pci_dev.bar[0] >> 1) & 0x3) == 0x2)
+        mmio_phys |= (uint64_t)pci_dev.bar[1] << 32;
     if (mmio_phys == 0) {
         kprintf("  vmxnet3: invalid MMIO base from BAR0\n");
         return -ENODEV;
