@@ -652,8 +652,28 @@ static int uas_parse_config(void)
 						uint8_t ep_attr =
 							config[ep_offset + 3];
 
+						/*
+						 * bNumEndpoints counts every endpoint
+						 * descriptor in this interface (bulk,
+						 * interrupt, isochronous), so decrement
+						 * per endpoint.  Otherwise the walk
+						 * keeps scanning past the interface
+						 * boundary and can capture bulk
+						 * endpoints from the following
+						 * interfaces as this one's pipes.
+						 */
+						num_ep--;
+
+						/*
+						 * Endpoint number 0 is the control
+						 * endpoint (8-byte SETUP only) — never a
+						 * valid bulk data pipe.  Reject such
+						 * addresses instead of issuing bulk
+						 * transfers to EP0.
+						 */
 						if ((ep_attr & USB_ENDPOINT_XFERTYPE_MASK) ==
-						    USB_ENDPOINT_XFER_BULK) {
+						    USB_ENDPOINT_XFER_BULK &&
+						    (ep_addr & 0x0F) != 0) {
 							if (ep_addr & USB_ENDPOINT_DIR_IN) {
 								g_bulk_in_ep = ep_addr;
 								found_in = 1;
@@ -661,7 +681,6 @@ static int uas_parse_config(void)
 								g_bulk_out_ep = ep_addr;
 								found_out = 1;
 							}
-							num_ep--;
 						}
 					}
 					ep_offset = (uint16_t)(ep_offset + ep_len);
