@@ -1037,7 +1037,7 @@ static int cdc_detect_ether_model(const uint8_t *config_data, uint16_t config_le
         if (pos + dlen > (int)config_len)
             break;
 
-        if (dtype == 4) { /* Interface descriptor */
+        if (dtype == 4 && dlen >= 9) { /* Interface descriptor (9 bytes) */
             uint8_t if_class = config_data[pos + 5];
             uint8_t if_sub   = config_data[pos + 6];
 
