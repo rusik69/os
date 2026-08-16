@@ -39,6 +39,13 @@ static int dma_addr_fits_mask(struct pci_device *dev, uint64_t dma_addr,
     if (mask == 0)
         return 0;
 
+    /* Guard against 64-bit overflow when computing the range end.
+     * If num_pages * PAGE_SIZE (or the addition to dma_addr) would
+     * wrap, the wrapped end could falsely satisfy the mask check and
+     * validate a range the device cannot address. */
+    if (num_pages > (UINT64_MAX - dma_addr) / PAGE_SIZE)
+        return -EIO;
+
     uint64_t end = dma_addr + num_pages * PAGE_SIZE - 1;
 
     /* Check every bit set in the address range is within the mask */
