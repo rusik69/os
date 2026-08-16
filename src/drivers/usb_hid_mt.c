@@ -614,6 +614,14 @@ int usb_hid_mt_register(uint8_t dev_addr, uint8_t input_ep,
     if (g_mt_count >= MT_MAX_DEVICES)
         return -ENOSPC;
 
+    /* Reject ep 0: the default control pipe is not a valid interrupt
+     * IN endpoint, and the HID core's poll paths treat 0 as "no
+     * endpoint found" (see usb_hid.c). Registering a device with a
+     * bogus endpoint would surface a MT device that can never
+     * receive reports. */
+    if (input_ep == 0)
+        return -EINVAL;
+
     struct mt_device *mt = &g_mt_devices[g_mt_count];
     int rc = usb_hid_mt_init(mt, dev_addr, desc);
     if (rc < 0)
