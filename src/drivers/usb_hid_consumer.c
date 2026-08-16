@@ -399,7 +399,7 @@ static void consumer_process_report(const uint8_t *report, int len)
                         uint16_t usage_code = (uint16_t)(base_usage + b);
 
                         int bit_val = 0;
-                        if (byte_off < len) {
+                        if (report_bit_offset >= 0 && byte_off < len) {
                             bit_val = (report[byte_off] >> bit_off) & 1;
                         }
 
@@ -419,11 +419,20 @@ static void consumer_process_report(const uint8_t *report, int len)
                     int byte_off = report_bit_offset / 8;
                     uint16_t usage_code = 0;
 
-                    if (bit_size <= 8 && byte_off < len) {
-                        usage_code = report[byte_off];
-                    } else if (bit_size <= 16 && byte_off + 1 < len) {
-                        usage_code = (uint16_t)(report[byte_off] |
-                                                ((uint32_t)report[byte_off + 1] << 8));
+                    /*
+                     * report_bit_offset is accumulated from descriptor
+                     * Global items (Report Size/Count) which are
+                     * device-controlled; crafted values can overflow the
+                     * int accumulator and make byte_off negative.  Reject
+                     * negative offsets so we never read before the buffer.
+                     */
+                    if (report_bit_offset >= 0) {
+                        if (bit_size <= 8 && byte_off < len) {
+                            usage_code = report[byte_off];
+                        } else if (bit_size <= 16 && byte_off + 1 < len) {
+                            usage_code = (uint16_t)(report[byte_off] |
+                                                    ((uint32_t)report[byte_off + 1] << 8));
+                        }
                     }
 
                     /* For selector reports, usage_code is the consumer usage.
