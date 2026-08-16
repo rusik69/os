@@ -27,6 +27,7 @@
 #include "pci.h"
 #include "virtio.h"
 #include "apic.h"
+#include "vmm.h"
 
 #ifdef MODULE
 #include "module.h"
@@ -784,8 +785,34 @@ int virtio_pci_modern_enable_msix(struct vpci_modern_device *vdev,
 	}
 	table_phys += msix_info.table_offset;
 
-	volatile uint32_t *table_virt = (volatile uint32_t *)
-		((uintptr_t)PHYS_TO_VIRT(table_phys));
+	/* Bound the number of entries programmed: the kernel's vector
+	 * allocator and pci_setup_interrupts cap MSI-X at 8 vectors per
+	 * device, so a device-declared table size (up to 2048) must not
+	 * drive a multi-kilobyte write through the table region. */
+	if (n > 8)
+		n = 8;
+
+	/* Map every page the vector table spans before writing it.  The
+	 * table may straddle a page boundary when the BAR offset sits
+	 * near the end of a 4 KB page, and nothing else in this file
+	 * maps the BAR region — without this the entry writes below land
+	 * in whatever happens to be mapped at PHYS_TO_VIRT() of the
+	 * table address (page fault, or silent corruption of adjacent
+	 * physical memory if the device's table offset/size is bogus). */
+	uint64_t table_start_page = table_phys & ~(uint64_t)(PAGE_SIZE - 1);
+	uint64_t table_end = table_phys + (uint64_t)n * 16 - 1;
+	uint64_t table_end_page = table_end & ~(uint64_t)(PAGE_SIZE - 1);
+
+	for (uint64_t page = table_start_page; page <= table_end_page;
+	     page += PAGE_SIZE) {
+		uint64_t virt = (uint64_t)PHYS_TO_VIRT(page);
+		vmm_map_page(virt, page,
+		             VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_NOCACHE);
+	}
+
+	volatile uint32_t *table_virt = (volatile uint32_t *)(
+		(uintptr_t)PHYS_TO_VIRT(table_start_page)
+		+ (table_phys - table_start_page));
 
 	/*
 	 * Program each MSI-X table entry with the specified vector and
