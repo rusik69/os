@@ -1082,7 +1082,12 @@ static int parse_uvc_control_desc(struct uvc_device *dev,
 		eu->num_controls = data[21];
 
 		uint8_t nr_in_pins = data[22];
-		uint8_t pins_offset = 23 + nr_in_pins;
+		/* baSourceID[nr_in_pins] starts at offset 23.  bNrInPins is a
+		 * uint8_t, so a crafted descriptor can claim up to 255 pins —
+		 * compute the offset in int to avoid uint8_t wraparound (e.g.
+		 * 255 pins → 23+255 = 278 wraps to 22), which would make the
+		 * bounds checks below validate against the wrong offset. */
+		int pins_offset = 23 + nr_in_pins;
 
 		if (pins_offset < length) {
 			eu->control_size = data[pins_offset];
