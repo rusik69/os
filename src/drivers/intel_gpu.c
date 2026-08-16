@@ -20,6 +20,11 @@ static volatile uint8_t *g_mmio;
 
 static uint32_t intel_gpu_read32(uint32_t reg) {
     if (IS_ERR_OR_NULL((const void *)(uintptr_t)g_mmio)) return 0;
+    /* Bounds-check against the mapped MMIO size: the display registers are
+     * read at fixed offsets up to INTEL_VGACNTRL (0x71400), which can exceed
+     * the probed BAR size (validated down to 4 KB). Reading beyond the
+     * mapping is an OOB access into unmapped kernel pages. */
+    if ((uint64_t)reg + sizeof(uint32_t) > g_gpu.mmio_size) return 0;
     return *(volatile uint32_t *)(g_mmio + reg);
 }
 
