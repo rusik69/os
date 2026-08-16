@@ -60,8 +60,12 @@ static int xhci_streams_init(void)
 static int xhci_streams_capable(struct xhci_controller *xhci)
 {
     if (!xhci) return 0;
-    uint32_t hccparams = xhci_read32(xhci, xhci->cap_regs, 0x10);  /* HCCPARAMS */
-    int nss = (hccparams >> 12) & 0x1f;  /* Number of Stream Contexts */
+    uint32_t hccparams = xhci_read32(xhci, xhci->cap_regs, 0x10);  /* HCCPARAMS1 */
+    /* NSS (Number of Streams Supported) is bit 13 of HCCPARAMS1
+     * (xHCI 1.2 §5.3.3).  Bits 16:12 also contain LTC (bit 12) and
+     * MaxPSASize[0] (bit 16) — a wider mask would report false
+     * stream support when only LTC or MaxPSASize is set. */
+    int nss = (hccparams >> 13) & 0x1;
     return (nss > 0) ? 1 : 0;
 }
 
