@@ -75,27 +75,39 @@ static int scan_intel_display(struct intel_gpu_info *out) {
                 /* ── MMIO BAR (BAR0): probe size, handle 64-bit BAR ── */
                 uint32_t saved_bar0 = pci_read((uint8_t)bus, (uint8_t)slot,
                                                 (uint8_t)func, 0x10);
-                pci_write((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x10, 0xFFFFFFFF);
-                uint32_t bar0_sz = pci_read((uint8_t)bus, (uint8_t)slot,
-                                              (uint8_t)func, 0x10);
-                /* Restore and re-read */
-                pci_write((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x10, saved_bar0);
-                uint32_t bar0 = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x10);
 
                 uint64_t mmio_base;
                 uint32_t mmio_size;
+                uint64_t bar_mask;
 
-                if ((bar0 & 0x6) == 0x4) {
-                    /* 64-bit MMIO BAR: upper 32 bits in BAR1 (offset 0x14) */
-                    uint32_t bar1 = pci_read((uint8_t)bus, (uint8_t)slot,
-                                              (uint8_t)func, 0x14);
-                    mmio_base = ((uint64_t)bar1 << 32) | (bar0 & ~0xFULL);
+                if ((saved_bar0 & 0x6) == 0x4) {
+                    /* 64-bit MMIO BAR: upper 32 bits live in BAR1 (offset
+                     * 0x14). Probe BOTH dwords with all-ones (PCI spec
+                     * 6.2.5.1) so the decoded size is correct even when it
+                     * spans the 32-bit boundary, then restore both. */
+                    uint32_t saved_bar1 = pci_read((uint8_t)bus, (uint8_t)slot,
+                                                    (uint8_t)func, 0x14);
+                    pci_write((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x10, 0xFFFFFFFF);
+                    pci_write((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x14, 0xFFFFFFFF);
+                    uint32_t bar0_sz = pci_read((uint8_t)bus, (uint8_t)slot,
+                                                  (uint8_t)func, 0x10);
+                    uint32_t bar1_sz = pci_read((uint8_t)bus, (uint8_t)slot,
+                                                  (uint8_t)func, 0x14);
+                    pci_write((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x14, saved_bar1);
+                    pci_write((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x10, saved_bar0);
+                    bar_mask = ((uint64_t)bar1_sz << 32) | (bar0_sz & ~0xFULL);
+                    mmio_base = ((uint64_t)saved_bar1 << 32) | (saved_bar0 & ~0xFULL);
                 } else {
                     /* 32-bit MMIO BAR */
-                    mmio_base = (uint64_t)(bar0 & ~0xFULL);
+                    pci_write((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x10, 0xFFFFFFFF);
+                    uint32_t bar0_sz = pci_read((uint8_t)bus, (uint8_t)slot,
+                                                  (uint8_t)func, 0x10);
+                    pci_write((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x10, saved_bar0);
+                    bar_mask = bar0_sz & ~0xFULL;
+                    mmio_base = (uint64_t)(saved_bar0 & ~0xFULL);
                 }
                 /* Decode BAR size from probe: writable bits indicate capacity */
-                mmio_size = ~(bar0_sz & 0xFFFFFFF0) + 1;
+                mmio_size = (uint32_t)(~bar_mask + 1ULL);
                 if (mmio_size < 0x1000 || mmio_size > 0x10000000) {
                     /* Unreasonable value; fall back to default 2 MB */
                     mmio_size = (uint32_t)INTEL_GPU_MMIO_SIZE;
