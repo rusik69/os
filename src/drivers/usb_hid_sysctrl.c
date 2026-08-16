@@ -516,6 +516,18 @@ int usb_hid_sysctrl_register(uint8_t dev_addr, uint8_t intf_num,
 
     struct hid_sysctrl_dev *dev = &g_sysctrl;
 
+    /* Validate the report descriptor BEFORE mutating any state.  A
+     * failed parse must not destroy the currently-registered device
+     * (previous code tore down dev->report_desc first and then bailed
+     * with -ENODEV, orphaning the old registration on the error path). */
+    int report_len = 0;
+    int has_sysctrl = sysctrl_parse_report_desc(report_desc, desc_len,
+                                                 &report_len);
+    if (!has_sysctrl) {
+        kprintf("[SYSCTRL] No System Control found in report desc\n");
+        return -ENODEV;
+    }
+
     if (dev->present) {
         kprintf("[SYSCTRL] System Control device already registered, "
                 "replacing\n");
@@ -532,15 +544,6 @@ int usb_hid_sysctrl_register(uint8_t dev_addr, uint8_t intf_num,
     dev->ev_head   = 0;
     dev->ev_tail   = 0;
     g_sysctrl_num_tracked = 0;
-
-    /* Parse the report descriptor to determine report length */
-    int report_len = 0;
-    int has_sysctrl = sysctrl_parse_report_desc(report_desc, desc_len,
-                                                 &report_len);
-    if (!has_sysctrl) {
-        kprintf("[SYSCTRL] No System Control found in report desc\n");
-        return -ENODEV;
-    }
 
     /* Store a copy of the report descriptor */
     if (report_desc && desc_len > 0) {
