@@ -301,7 +301,7 @@ uint64_t dma_map_single(struct pci_device *dev, void *cpu_addr,
         iommu_flags = IOMMU_READ | IOMMU_WRITE;
         break;
     default:
-        return -EIO;
+        return ~0ULL;
     }
 
     /*
