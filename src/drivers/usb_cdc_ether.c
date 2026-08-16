@@ -639,6 +639,23 @@ static int cdc_ether_frame_rx(struct cdc_ether_device *dev,
         int crc_flag;
         int type = eem_parse_header(header, &payload_len, &crc_flag);
 
+        if (type == EEM_HEADER_TYPE_CMD) {
+            /* Command packet — produces no Ethernet frame. Bits 11-0
+             * carry command data, not a length, so consume at least
+             * the 2-byte header (clamped to the input) to keep the RX
+             * stream advancing; returning without consumption would
+             * leave the command packet in rx_buf forever and starve
+             * any data packets queued behind it. */
+            eem_process_command(dev, header);
+            if (out_frame_len)
+                *out_frame_len = 0;
+            if (payload_len < 2)
+                payload_len = 2;
+            if (payload_len > in_len)
+                payload_len = in_len;
+            return (int)payload_len;  /* total EEM packet consumed */
+        }
+
         /* The EEM header length field (bits 11-0) declares the total
          * EEM packet size including this 2-byte header. A crafted
          * header claiming more bytes than are actually present would
@@ -647,14 +664,6 @@ static int cdc_ether_frame_rx(struct cdc_ether_device *dev,
          * before rx_buf on the next queued packet. Reject it. */
         if (payload_len > in_len)
             return -EINVAL;
-
-        if (type == EEM_HEADER_TYPE_CMD) {
-            /* Command packet — process and return 0 consumed (no data) */
-            eem_process_command(dev, header & 0x0FFF);
-            if (out_frame_len)
-                *out_frame_len = 0;
-            return (int)payload_len;  /* total EEM packet consumed */
-        }
 
         /* Data packet: payload follows the 2-byte header */
         uint16_t eth_len;
@@ -794,28 +803,31 @@ static int cdc_ether_recv(int dev_id, uint8_t *frame, int max_len)
     int consumed = cdc_ether_frame_rx(dev, dev->rx_buf, in_len,
                                  frame, (uint16_t)max_len,
                                  &frame_len);
-    if (consumed < 0)
+    if (consumed <= 0)
         return consumed;
-    if (frame_len == 0)
-        return 0;
 
     spinlock_acquire(&dev->lock);
 
-    dev->stats.rcv_ok++;
-    if (frame_len >= 12) {
-        int is_mcast = (frame[0] & 1);
-        int is_bcast = (frame[0] == 0xFF && frame[1] == 0xFF &&
-                        frame[2] == 0xFF && frame[3] == 0xFF &&
-                        frame[4] == 0xFF && frame[5] == 0xFF);
-        if (is_bcast) {
-            dev->stats.bcast_bytes_rcv += frame_len;
-            dev->stats.bcast_frames_rcv++;
-        } else if (is_mcast) {
-            dev->stats.mcast_bytes_rcv += frame_len;
-            dev->stats.mcast_frames_rcv++;
-        } else {
-            dev->stats.directed_bytes_rcv += frame_len;
-            dev->stats.directed_frames_rcv++;
+    /* EEM command packets yield no frame (frame_len == 0) but still
+     * consume bytes from the RX buffer; always advance the stream so
+     * the next queued packet becomes reachable. */
+    if (frame_len > 0) {
+        dev->stats.rcv_ok++;
+        if (frame_len >= 12) {
+            int is_mcast = (frame[0] & 1);
+            int is_bcast = (frame[0] == 0xFF && frame[1] == 0xFF &&
+                            frame[2] == 0xFF && frame[3] == 0xFF &&
+                            frame[4] == 0xFF && frame[5] == 0xFF);
+            if (is_bcast) {
+                dev->stats.bcast_bytes_rcv += frame_len;
+                dev->stats.bcast_frames_rcv++;
+            } else if (is_mcast) {
+                dev->stats.mcast_bytes_rcv += frame_len;
+                dev->stats.mcast_frames_rcv++;
+            } else {
+                dev->stats.directed_bytes_rcv += frame_len;
+                dev->stats.directed_frames_rcv++;
+            }
         }
     }
 
