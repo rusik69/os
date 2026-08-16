@@ -641,7 +641,7 @@ uint32_t usb_msc_get_sectors(void)
 static int usb_msc_parse_config(void)
 {
     /* First get config descriptor header (9 bytes) to learn total length */
-    uint8_t hdr[9];
+    uint8_t hdr[9] = {0};
     int rc = usb_control(0x80, USB_REQ_GET_DESCRIPTOR,
                          0x0200, 0, 9, hdr);
     if (rc < 0) {
