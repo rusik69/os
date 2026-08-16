@@ -7,6 +7,7 @@
 #include "idt.h"
 #include "pic.h"
 #include "apic.h"
+#include "dma.h"
 #include "net.h"
 #include "netdevice.h"
 #include "err.h"
@@ -241,10 +242,28 @@ int rtl8139_init_hw(struct rtl8139_priv *priv)
     memset(priv->rx_buf, 0, RTL8139_RX_BUF_SIZE);
     priv->rx_cur = 0;
 
+    /* Step 6b: Validate DMA addressing.  RBSTART and TSAD0-3 are
+     * 32-bit registers — the RTL8139 cannot DMA to buffers above the
+     * 4 GB boundary.  Reject at init time rather than silently
+     * truncating the (uint64_t) physical address in the casts below,
+     * which would make the NIC DMA to the wrong location. */
+    for (i = 0; i < RTL8139_NUM_TX_DESC; i++) {
+        if (VIRT_TO_PHYS(priv->tx_bufs[i]) > (uint64_t)DMA_BIT_MASK(32)) {
+            kprintf("  rtl8139: TX buffer %d phys 0x%llx exceeds 32-bit "
+                    "DMA mask\n", i,
+                    (unsigned long long)VIRT_TO_PHYS(priv->tx_bufs[i]));
+            return -EIO;
+        }
+    }
+    if (VIRT_TO_PHYS(priv->rx_buf) > (uint64_t)DMA_BIT_MASK(32)) {
+        kprintf("  rtl8139: RX buffer phys 0x%llx exceeds 32-bit DMA mask\n",
+                (unsigned long long)VIRT_TO_PHYS(priv->rx_buf));
+        return -EIO;
+    }
+
     /* Write physical address of RX buffer to RBSTART (must be done
-     * before enabling the receiver).  The RTL8139 has a 32-bit address
-     * register, so the buffer must be in the first 4 GB of physical
-     * memory — true for statically allocated kernel data. */
+     * before enabling the receiver).  Proven to fit the 32-bit DMA
+     * mask by the check above. */
     rtl8139_writel(priv, RTL_REG_RBSTART,
                    (uint32_t)VIRT_TO_PHYS(priv->rx_buf));
 
@@ -423,7 +442,9 @@ int rtl8139_transmit(struct net_device *dev,
                    (uint32_t)len | RTL_TSD_OWN);
 
     /* Write the physical buffer address to the TX Start Address
-     * register — this kicks off the transmission. */
+     * register — this kicks off the transmission.  The buffer is
+     * statically allocated and was validated to fit the 32-bit DMA
+     * mask in rtl8139_init_hw(), so the truncation is lossless. */
     rtl8139_writel(priv, (uint16_t)(RTL_REG_TSAD0 + slot * 4),
                    (uint32_t)VIRT_TO_PHYS(priv->tx_bufs[slot]));
 
