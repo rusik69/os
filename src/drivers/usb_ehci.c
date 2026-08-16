@@ -136,6 +136,17 @@ struct ehci_itd {
 /* Helper: build a link pointer to an iTD (physical address, 32-byte aligned) */
 #define EHCI_ITD_LINK(phys)  ((uint32_t)(phys) | EHCI_PTR_TYPE_ITD)
 
+/*
+ * QH endpoint-number field is 4 bits (bits 11:8 of the Endpoint
+ * Capabilities dword, EHCI spec §4.10.3).  Callers may pass a raw
+ * bEndpointAddress (direction bit 7 set, e.g. 0x81 for IN ep 1) — the
+ * transfer direction is carried by the qTD PID, so mask down to the
+ * 4-bit endpoint number before shifting.  An unmasked shift would
+ * corrupt the Endpoint Speed (bits 13:12), Data Toggle Control
+ * (bit 14) and Head-of-Reclamation-Line (bit 15) fields.
+ */
+#define EHCI_QH_EP_FIELD(ep)  ((uint32_t)((ep) & 0x0Fu) << 8)
+
 /* Transaction record builder: encode status, offset, page, IOC into 16 bits */
 #define ITD_XACT(status, offset, page, ioc)                               \
     ((uint16_t)(((uint16_t)(uint8_t)(status) & 0xFF) |                    \
@@ -912,7 +923,7 @@ static int ehci_periodic_add_int_qh(uint8_t dev_addr, uint8_t ep,
 
     /* Endpoint capabilities: speed + endpoint number + device address */
     uint32_t ep_cap = ((2u << 12) /* QH_EPS_HIGH */) |
-                       ((uint32_t)ep << 8) | dev_addr;
+                       EHCI_QH_EP_FIELD(ep) | dev_addr;
     qh[1] = ep_cap;
 
     /* Overlay qTD pointer + S-mask (micro-frame 0) */
@@ -1524,7 +1535,7 @@ static int ehci_submit_async_qtd(uint8_t dev_addr, uint8_t ep,
      *   bits 11:8  = endpoint number
      *   bits 7:0   = device address
      */
-    uint32_t ep_cap = QH_EPS_HIGH | ((uint32_t)ep << 8) | dev_addr;
+    uint32_t ep_cap = QH_EPS_HIGH | EHCI_QH_EP_FIELD(ep) | dev_addr;
     qh[1] = ep_cap;
 
     /* Overlay: qTD pointer */
@@ -1649,7 +1660,7 @@ static int ehci_sync_submit(uint8_t dev_addr, uint8_t ep,
     qh[0] = old_async_head ? old_async_head : EHCI_PTR_TERMINATE;
 
     /* Endpoint capabilities: speed + endpoint number + device address */
-    uint32_t ep_cap = QH_EPS_HIGH | ((uint32_t)ep << 8) | dev_addr;
+    uint32_t ep_cap = QH_EPS_HIGH | EHCI_QH_EP_FIELD(ep) | dev_addr;
     qh[1] = ep_cap;
 
     /* Overlay qTD pointer (32-byte aligned) */
@@ -1928,7 +1939,7 @@ static int ehci_interrupt_transfer(uint8_t dev_addr, uint8_t ep,
     qh[0] = EHCI_PTR_TERMINATE;
 
     /* Endpoint capabilities: speed + endpoint number + device address */
-    uint32_t ep_cap = QH_EPS_HIGH | ((uint32_t)ep << 8) | dev_addr;
+    uint32_t ep_cap = QH_EPS_HIGH | EHCI_QH_EP_FIELD(ep) | dev_addr;
     qh[1] = ep_cap;
 
     /*
