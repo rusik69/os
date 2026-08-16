@@ -481,6 +481,7 @@ int mlx4_probe(struct mlx4_priv *priv)
 {
     struct pci_device pci_dev;
     uint64_t mmio_phys;
+    uint32_t bar0_val;
     int ret;
 
     /* Find a mlx4-compatible device on the PCI bus */
@@ -491,7 +492,13 @@ int mlx4_probe(struct mlx4_priv *priv)
     }
 
     /* BAR0 contains the MMIO base address (1 MB region) */
-    mmio_phys = (uint64_t)(pci_dev.bar[0] & ~0xFULL);
+    bar0_val  = pci_dev.bar[0];
+    mmio_phys = (uint64_t)(bar0_val & ~0xFULL);
+    /* 64-bit MMIO BAR (type bits [2:1] == 0b10): the upper address
+     * dword lives in BAR1 — without it the base is truncated to 32
+     * bits (PCI Local Bus Spec r3.0 §6.2.5.1). */
+    if (((bar0_val >> 1) & 0x3) == 0x2)
+        mmio_phys |= (uint64_t)pci_dev.bar[1] << 32;
     if (mmio_phys == 0) {
         kprintf("  mlx4: invalid MMIO base from BAR0\n");
         return -ENODEV;
