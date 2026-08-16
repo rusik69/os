@@ -428,7 +428,7 @@ int __init usb_cdc_acm_init(void) {
         if (dlen < 2) break;
         if (pos + dlen > cfg_len) break;
 
-        if (dtype == 4) {  /* Interface */
+        if (dtype == 4 && dlen >= 9) {  /* Interface (standard length 9) */
             uint8_t if_class  = cfg[pos + 5];
             uint8_t if_sub    = cfg[pos + 6];
             uint8_t if_proto  = cfg[pos + 7];
@@ -441,7 +441,7 @@ int __init usb_cdc_acm_init(void) {
                 data_iface_num = cfg[pos + 2];
                 kprintf("[USB ACM] Found CDC Data interface %d\n", data_iface_num);
             }
-        } else if (dtype == 5) {  /* Endpoint */
+        } else if (dtype == 5 && dlen >= 7) {  /* Endpoint (standard length 7) */
             uint8_t ep_addr = cfg[pos + 2];
             uint8_t ep_attr = cfg[pos + 3];
 
