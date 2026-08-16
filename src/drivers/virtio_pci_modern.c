@@ -159,7 +159,13 @@ static uint64_t vpci_valid_bar_base(const struct pci_device *dev,
 	if (cap->bar > 5)
 		return 0;
 
-	uint64_t base = (uint64_t)(dev->bar[cap->bar] & ~0xFu);
+	uint32_t bar_val = dev->bar[cap->bar];
+	uint64_t base = (uint64_t)(bar_val & ~0xFu);
+	/* 64-bit MMIO BAR (type bits [2:1] == 0b10): the upper address
+	 * dword lives in the adjacent BAR slot — without it the base is
+	 * truncated to 32 bits (PCI Local Bus Spec r3.0 §6.2.5.1). */
+	if ((((bar_val >> 1) & 0x3) == 0x2) && cap->bar + 1 < 6)
+		base |= (uint64_t)dev->bar[cap->bar + 1] << 32;
 	return base;
 }
 
@@ -231,7 +237,12 @@ int virtio_pci_modern_probe(struct pci_device *dev,
 
 		/* Validate notify BAR index */
 		if (notify_bar <= 5) {
-			uint64_t bar_base = (uint64_t)(dev->bar[notify_bar] & ~0xFu);
+			uint32_t bar_val = dev->bar[notify_bar];
+			uint64_t bar_base = (uint64_t)(bar_val & ~0xFu);
+			/* 64-bit MMIO BAR (type bits [2:1] == 0b10): the upper
+			 * address dword lives in the adjacent BAR slot. */
+			if ((((bar_val >> 1) & 0x3) == 0x2) && notify_bar + 1 < 6)
+				bar_base |= (uint64_t)dev->bar[notify_bar + 1] << 32;
 			if (bar_base && notify_len > 0) {
 				vdev->caps.notify_base = (volatile void *)
 					((uintptr_t)PHYS_TO_VIRT(bar_base + notify_bar_off));

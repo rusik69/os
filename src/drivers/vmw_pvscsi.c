@@ -155,7 +155,13 @@ static void vmw_pvscsi_init(void)
         pci_find_device(VMWARE_VENDOR, PVSCSI_DEVICE_LEGACY, &dev) < 0)
         return;
 
-    pvscsi_mmio_phys = dev.bar[0] & ~0xF;
+    /* PVSCSI BAR0 is a 64-bit MMIO BAR — the upper address dword
+     * lives in the adjacent BAR slot; combine it or the MMIO base is
+     * truncated to 32 bits. */
+    uint32_t bar0 = dev.bar[0];
+    pvscsi_mmio_phys = (uint64_t)(bar0 & ~0xFu);
+    if ((((bar0 >> 1) & 0x3) == 0x2))
+        pvscsi_mmio_phys |= (uint64_t)dev.bar[1] << 32;
     pvscsi_mmio = PHYS_TO_VIRT(pvscsi_mmio_phys);
 
     pci_enable_bus_master(&dev);

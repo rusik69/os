@@ -36,7 +36,12 @@ static int xhci_probe_pci(void) {
         return -1;
     }
 
-    uint64_t mmio_base = (bar0 & 0xFFFFFFF0);
+    /* xHCI BAR0 is typically a 64-bit MMIO BAR — the upper address
+     * dword lives in the adjacent BAR slot; without it the register
+     * window base is truncated to 32 bits. */
+    uint64_t mmio_base = (uint64_t)(bar0 & 0xFFFFFFF0);
+    if ((((bar0 >> 1) & 0x3) == 0x2))
+        mmio_base |= (uint64_t)pci.bar[1] << 32;
     if (mmio_base == 0)
         return -1;
 

@@ -296,7 +296,12 @@ int __init nvme_pmr_init(void) {
 
     /* Get the NVMe register base (BAR0) */
     uint32_t bar0 = pci.bar[0];
-    uint64_t mmio_base = (bar0 & 0xFFFFFFF0);
+    uint64_t mmio_base = (uint64_t)(bar0 & 0xFFFFFFF0);
+    /* 64-bit MMIO BAR (type bits [2:1] == 0b10): the upper address
+     * dword lives in the adjacent BAR slot — combine it or the base
+     * is truncated to 32 bits (PCI Local Bus Spec r3.0 §6.2.5.1). */
+    if ((((bar0 >> 1) & 0x3) == 0x2))
+        mmio_base |= (uint64_t)pci.bar[1] << 32;
     if (mmio_base == 0) {
         kprintf("[NVMe PMR] BAR0 not found\n");
         g_pmr_init_done = 1;

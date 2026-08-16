@@ -81,8 +81,13 @@ static void ivshmem_init(void)
     ivshmem_iobase = (uint16_t)(dev.bar[0] & ~0x3u);
     if (!ivshmem_iobase) return;
 
-    /* BAR2: shared memory (64-bit) */
-    ivshmem_shmem_phys = dev.bar[2] & ~0xF;
+    /* BAR2: shared memory (64-bit MMIO BAR) — the upper address dword
+     * lives in the adjacent BAR slot; combine it or the shared memory
+     * window base is truncated to 32 bits. */
+    uint32_t bar2 = dev.bar[2];
+    ivshmem_shmem_phys = (uint64_t)(bar2 & ~0xFu);
+    if ((((bar2 >> 1) & 0x3) == 0x2))
+        ivshmem_shmem_phys |= (uint64_t)dev.bar[3] << 32;
     ivshmem_shmem_size = 0x400000; /* 4MB default */
 
     pci_enable_bus_master(&dev);

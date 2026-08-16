@@ -332,8 +332,12 @@ static int nvme_probe_pci(void) {
     /* Get BAR0 (MMIO registers) */
     uint32_t bar0 = pci.bar[0];
     if (!(bar0 & 1)) {
-        /* MMIO BAR */
-        uint64_t mmio_base = (bar0 & 0xFFFFFFF0);
+        /* MMIO BAR.  NVMe BAR0 is commonly a 64-bit MMIO BAR — the
+         * upper address dword lives in the adjacent BAR slot; without
+         * it the register window base is truncated to 32 bits. */
+        uint64_t mmio_base = (uint64_t)(bar0 & 0xFFFFFFF0);
+        if ((((bar0 >> 1) & 0x3) == 0x2))
+            mmio_base |= (uint64_t)pci.bar[1] << 32;
         if (mmio_base == 0)
             return -EIO;
         g_nvme_ctrl.phys_regs = mmio_base;
