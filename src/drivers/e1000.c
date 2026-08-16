@@ -1488,7 +1488,13 @@ int e1000_init(void) {
     }
 
     /* Get MMIO base from BAR0 (memory-mapped, mask lower 4 bits) */
-    uint64_t bar0 = dev.bar[0] & ~0xFULL;
+    uint32_t bar0_val = dev.bar[0];
+    uint64_t bar0 = (uint64_t)(bar0_val & ~0xFULL);
+    /* 64-bit MMIO BAR (type bits [2:1] == 0b10): the upper address
+     * dword lives in BAR1 — without it the base is truncated to 32
+     * bits (PCI Local Bus Spec r3.0 §6.2.5.1). */
+    if (((bar0_val >> 1) & 0x3) == 0x2)
+        bar0 |= (uint64_t)dev.bar[1] << 32;
     kprintf("  e1000: %s BAR0=0x%llx IRQ=%lu queues=%d\n",
             is_82576 ? "82576" : (is_82574 ? "82574L" : "82540EM"),
             (unsigned long long)bar0, (unsigned long)dev.irq, num_queues);
