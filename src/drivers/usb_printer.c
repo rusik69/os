@@ -286,12 +286,20 @@ static int printer_desc_callback(uint8_t bDescriptorType,
 		/*
 		 * Interface descriptor encountered.
 		 * Check if it's a printer class interface.
+		 * The subdesc walker only guarantees bLength bytes at data,
+		 * so validate the length BEFORE reading any fields: a crafted
+		 * short descriptor would otherwise over-read bInterfaceClass
+		 * (offset 5) past the end of the config buffer.
 		 */
+		if (bLength < sizeof(struct usb_interface_descriptor)) {
+			ctx->current_iface_valid = 0;
+			return 0;
+		}
+
 		const struct usb_interface_descriptor *iface =
 			(const struct usb_interface_descriptor *)data;
 
-		if (iface->bInterfaceClass == USB_CLASS_PRINTER &&
-		    bLength >= sizeof(struct usb_interface_descriptor)) {
+		if (iface->bInterfaceClass == USB_CLASS_PRINTER) {
 			ctx->found_printer = 1;
 			ctx->current_iface_valid = 1;
 			ctx->current_iface_num = iface->bInterfaceNumber;
