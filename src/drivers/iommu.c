@@ -274,6 +274,19 @@ static int iommu_setup_device_context(struct iommu_device *dev) {
         return -1;
     }
 
+    /* Validate the BDF before indexing the root/context tables.  The
+     * context table is a single 4K page of 16-byte entries — exactly
+     * 256 slots — and is indexed by slot*8+func, which only fits when
+     * slot <= 31 and func <= 7 (PCI 5-bit slot / 3-bit func fields).
+     * dev->slot/func are uint8_t and only bounded by upstream PCI
+     * enumeration, so an out-of-range slot would index past the table
+     * and corrupt whatever physical page follows it. */
+    if (dev->slot > 31 || dev->func > 7) {
+        kprintf("[IOMMU] Device %02x:%02x.%x out-of-range slot/func\n",
+                dev->bus, dev->slot, dev->func);
+        return -1;
+    }
+
     /* Root table index = bus number */
     int bus_idx = dev->bus;
     struct vtd_root_entry *re = &unit->root_table[bus_idx];
