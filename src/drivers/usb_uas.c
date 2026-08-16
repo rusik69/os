@@ -979,6 +979,21 @@ static int usb_uas_init(void)
 	}
 	g_block_size = block_size;
 
+	/* The block layer is hardwired to 512-byte sectors: legacy read/write
+	 * callbacks receive sector counts in 512-byte units and buffers of
+	 * count*512 bytes.  A device reporting any other block size would make
+	 * uas_read10()/uas_write10() program a transfer of count*block_size
+	 * bytes -- larger than the caller-provided buffer -- and the EHCI
+	 * controller would DMA past the destination buffer (bug-hunt #395:
+	 * transfer buffer sizing / no short-read into smaller buffer).
+	 * Refuse such devices instead of corrupting the block cache. */
+	if (g_block_size != 512) {
+		kprintf("  USB UAS: unsupported block size %u (512-byte sectors only)\n",
+			(unsigned)g_block_size);
+		g_initialized = 0;
+		return -EOPNOTSUPP;
+	}
+
 	kprintf("  USB UAS: %lu sectors (%llu MB), block size=%u\n",
 		(unsigned long)(g_max_lba + 1),
 		(unsigned long long)((g_max_lba + 1) / 2048),
