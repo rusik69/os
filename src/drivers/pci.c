@@ -1043,7 +1043,12 @@ int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
                 vid = (uint16_t)(reg0 & 0xFFFF);
                 did = (uint16_t)((reg0 >> 16) & 0xFFFF);
                 if (vid == 0xFFFF) continue;
-                if (vid == vendor && did == device) {
+                /* Wildcard semantics: vendor/device == 0xFFFF (PCI_ANY_ID
+                 * truncated to uint16_t) match any value, mirroring the
+                 * id-table matcher below.  Real devices never have a
+                 * vendor ID of 0xFFFF ("no device"), so no ambiguity. */
+                if ((vendor == 0xFFFF || vid == vendor) &&
+                    (device == 0xFFFF || did == device)) {
                     out->bus = (uint8_t)bus;
                     out->slot = (uint8_t)slot;
                     out->func = (uint8_t)func;
