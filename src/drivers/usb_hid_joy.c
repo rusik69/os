@@ -426,10 +426,10 @@ static void gamepad_process_report(struct hid_gamepad_dev *dev,
 						int bit_off  = report_bit_offset % 8;
 						int32_t raw_val = 0;
 
-						if (bit_size <= 8 && byte_off < len) {
+						if (bit_size <= 8 && byte_off >= 0 && byte_off < len) {
 							raw_val = (int32_t)report[byte_off];
 						} else if (bit_size <= 16 &&
-						           byte_off + 1 < len) {
+						           byte_off >= 0 && byte_off + 1 < len) {
 							raw_val = (int32_t)(report[byte_off] |
 							    ((uint32_t)report[byte_off + 1] << 8));
 						}
@@ -502,11 +502,11 @@ static void gamepad_process_report(struct hid_gamepad_dev *dev,
 						int btn_idx  = (int)(base_usage + b - 1);
 
 						int bit_val = 0;
-						if (bit_size == 1 && byte_off < len) {
+						if (bit_size == 1 && byte_off >= 0 && byte_off < len) {
 							bit_val = (report[byte_off] >>
 							           bit_off) & 1;
 						} else if (bit_size <= 16 &&
-						           byte_off < len) {
+						           byte_off >= 0 && byte_off < len) {
 							/* Array-style: value is button
 							 * index, 0 = no press */
 							int32_t v = 0;
