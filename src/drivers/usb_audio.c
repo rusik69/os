@@ -1548,6 +1548,14 @@ static int audio_desc_callback(uint8_t bDescriptorType,
 	int ret = 0;
 
 	if (bDescriptorType == USB_DT_INTERFACE) {
+		/* Guard against truncated interface descriptors: the subdesc
+		 * walker only guarantees the descriptor as a whole fits in the
+		 * blob, not that it is long enough for its type.  Reading the
+		 * fields below past bLength walks off the end of the config
+		 * buffer when a crafted descriptor ends the blob early. */
+		if (bLength < sizeof(struct usb_interface_descriptor))
+			return -EINVAL;
+
 		const struct usb_interface_descriptor *iface =
 			(const struct usb_interface_descriptor *)data;
 		ctx->current_iface = iface->bInterfaceNumber;
