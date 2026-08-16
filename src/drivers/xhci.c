@@ -54,7 +54,11 @@ static int xhci_probe_pci(void) {
     g_xhci.op_regs = virt_base + caplength;
     g_xhci.max_ports = (uint8_t)((hcsparams1 >> 24) & 0xFF);
     g_xhci.max_slots = (uint8_t)(hcsparams2 & 0x1F);
-    g_xhci.db_off = (hccparams1 & 0xFFFF);
+    /* Doorbell offset comes from the DBOFF capability register (0x14),
+     * NOT from the low 16 bits of HCCPARAMS1 (which are capability
+     * flags such as AC64/CSZ/PPC).  A bogus db_off makes every doorbell
+     * write land on the wrong MMIO offset (e.g. runtime registers). */
+    g_xhci.db_off = xhci_read32(&g_xhci, g_xhci.cap_regs, XHCI_CAP_DBOFF);
     g_xhci.rt_off = xhci_read32(&g_xhci, g_xhci.cap_regs, XHCI_CAP_RTSOFF);
 
     if (g_xhci.max_ports > XHCI_MAX_PORTS)
