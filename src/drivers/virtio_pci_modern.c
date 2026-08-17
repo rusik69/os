@@ -406,6 +406,33 @@ static void virtio_pci_modern_set_driver_features(
 	                (uint32_t)(features >> 32));
 }
 
+/*
+ * Helper: Read back Driver feature bits (64-bit via select register).
+ * Returns the features the driver wrote during negotiation (the
+ * negotiated set).  Used to verify a feature was actually negotiated
+ * before activating a queue format that depends on it (e.g. packed).
+ */
+static uint64_t virtio_pci_modern_get_driver_features(
+	struct vpci_modern_device *vdev)
+{
+	if (!vdev || !vdev->caps.common)
+		return 0;
+
+	/* Select low 32 bits */
+	vpci_cfg_writel(vdev, offsetof(struct virtio_pci_common_cfg,
+	                                driver_feature_select), 0);
+	uint64_t low = vpci_cfg_readl(vdev, offsetof(struct virtio_pci_common_cfg,
+	                                              driver_feature));
+
+	/* Select high 32 bits */
+	vpci_cfg_writel(vdev, offsetof(struct virtio_pci_common_cfg,
+	                                driver_feature_select), 1);
+	uint64_t high = vpci_cfg_readl(vdev, offsetof(struct virtio_pci_common_cfg,
+	                                               driver_feature));
+
+	return low | (high << 32);
+}
+
 int virtio_pci_modern_init_device(struct vpci_modern_device *vdev,
                                   uint64_t supported, uint64_t required,
                                   const struct virtio_feature_entry *feat_table,
@@ -629,6 +656,21 @@ int virtio_pci_modern_setup_packed_queue(struct vpci_modern_device *vdev,
 {
 	if (!vdev || !vdev->caps.common)
 		return -1;
+
+	/*
+	 * Packed virtqueues are only valid when VIRTIO_F_RING_PACKED has
+	 * been negotiated with the device.  If the feature is missing, the
+	 * device interprets the ring memory as a split virtqueue and would
+	 * read its avail/used rings from the zeroed queue_driver/queue_device
+	 * addresses — memory corruption on the device side.  Refuse to set
+	 * up the queue instead of silently enabling an invalid format.
+	 */
+	if (!(virtio_pci_modern_get_driver_features(vdev) & VIRTIO_F_RING_PACKED)) {
+		kprintf("[VPCI-MODERN] packed queue %u: VIRTIO_F_RING_PACKED not "
+		        "negotiated, refusing packed queue setup\n",
+		        (unsigned int)queue_idx);
+		return -1;
+	}
 
 	/* Select the queue */
 	vpci_cfg_writew(vdev, offsetof(struct virtio_pci_common_cfg,
