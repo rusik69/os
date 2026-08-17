@@ -97,7 +97,19 @@ static int dpc_handle_trigger(int bus, int dev, int func)
         pci_write16(bus, dev, func, dpc_cap + PCI_DPC_STATUS,
                     DPC_STATUS_TRIGGER | DPC_STATUS_INTERRUPT);
 
-        return 0;
+        /*
+         * Containment disarms the port (the link retrains) but does NOT
+         * reset the downstream device: after an uncorrectable error its
+         * internal state is indeterminate, and this kernel has no
+         * secondary-bus-reset/FLR machinery to reinitialize it. Returning
+         * 0 here would let a caller keep using stale, error-corrupted
+         * device state as if recovery had succeeded — report the
+         * recovery as incomplete instead.
+         */
+        kprintf("[DPC] Containment disarmed on %02x:%02x.%x — device was NOT reset, "
+                "downstream state is stale (reinitialize before use)\n",
+                source_id >> 8, (source_id >> 3) & 0x1F, source_id & 0x7);
+        return -EIO;
     }
 
     return 0;
