@@ -148,9 +148,14 @@ int fsverity_enable(uint64_t ino, const uint8_t *data, uint64_t size,
     }
     if (slot < 0) return -ENOSPC;
 
-    /* Compute number of data blocks */
-    uint32_t num_data_blocks = (uint32_t)((size + VERITY_BLOCK_SIZE - 1) / VERITY_BLOCK_SIZE);
-    if (num_data_blocks == 0) return -EINVAL;
+    /* Compute number of data blocks (64-bit to avoid overflow on
+     * large files; the descriptor field is uint32_t). */
+    uint64_t num_data_blocks64 =
+        size / VERITY_BLOCK_SIZE + (size % VERITY_BLOCK_SIZE != 0);
+    if (num_data_blocks64 == 0) return -EINVAL;
+    if (num_data_blocks64 > 0xFFFFFFFFULL)
+        return -EFBIG; /* too large for the uint32_t block-count field */
+    uint32_t num_data_blocks = (uint32_t)num_data_blocks64;
 
     /* Calculate tree size and allocate */
     uint32_t levels;
@@ -181,7 +186,7 @@ int fsverity_enable(uint64_t ino, const uint8_t *data, uint64_t size,
         sha256_hash(hash_slot, block_buf, (size_t)data_len > 0 ? (size_t)data_len : 1);
     }
 
-    tree_offset += blocks_at_current * VERITY_HASH_SIZE;
+    tree_offset += (uint64_t)blocks_at_current * VERITY_HASH_SIZE;
     /* Align to block boundary */
     tree_offset = (tree_offset + VERITY_BLOCK_SIZE - 1) & ~(uint64_t)(VERITY_BLOCK_SIZE - 1);
 
