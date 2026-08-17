@@ -253,6 +253,12 @@ static __attribute__((unused)) int v9p_send_recv(const void *tx, uint32_t txlen,
 
     kprintf("[9pnet-virtio] message send (size=%u, tag=%u) -> response tag=%u\n",
             (unsigned int)txlen, (unsigned int)tag, (unsigned int)rxhdr->tag);
+
+    /* The request/response cycle completed within this synchronous call:
+     * the tag is no longer in flight and must be released exactly like
+     * the validation-failure path above, or the 65535-tag pool leaks one
+     * entry per successful message (eventual tag exhaustion). */
+    v9p_tag_free(tag);
     return 0;
 }
 
