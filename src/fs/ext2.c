@@ -3223,6 +3223,10 @@ int ext2_orphan_cleanup(struct ext2_priv *ep) {
     return 0;
 }
 
+/* Forward declaration — ext2_validate_superblock is defined later in this
+ * file but is needed by ext2_mount to reject corrupt geometry. */
+static int ext2_validate_superblock(const struct ext2_superblock *sb);
+
 int ext2_mount(const char *mountpoint, uint8_t dev_id) {
     struct ext2_priv *ep = (struct ext2_priv *)kmalloc(sizeof(struct ext2_priv));
     if (!ep)
@@ -3285,6 +3289,16 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
             ((uint64_t)ep->sb.s_blocks_count + ep->blocks_per_group - 1) /
             ep->blocks_per_group);
         ep->num_block_groups = total_groups_r;
+    }
+
+    /* Validate the (possibly restored) superblock geometry before deriving
+     * any arithmetic from it.  A corrupt superblock with a valid magic but
+     * zero s_blocks_per_group / s_inodes_per_group would otherwise cause a
+     * division-by-zero panic in the block group count computation below. */
+    if (ext2_validate_superblock(&ep->sb) < 0) {
+        kprintf("[ext2] Invalid superblock geometry, refusing mount\n");
+        kfree(ep);
+        return -EFSCORRUPTED;
     }
 
     ep->block_size = 1024 << ep->sb.s_log_block_size;
