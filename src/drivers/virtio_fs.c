@@ -19,9 +19,20 @@
 #include "pmm.h"
 #include "types.h"
 
-/* ── Virtio ring structures ────────────────────────────────────────── */
-#define VRING_SIZE             64
-#define QUEUE_MEM_SIZE         8192
+/* ── Virtio ring structures ────────────────────────────────────────── *
+ * The rings are sized by the device's QUEUE_SIZE (vq_size), like the
+ * virtio_blk / virtio_rng / virtio_gpu drivers: legacy virtio devices
+ * index BOTH rings with their own reported queue size (avail->idx % qsz,
+ * used->idx % qsz) and place the used ring at the next 4 KiB boundary.
+ * Hardcoding a 64-slot layout here made the driver's avail ring sit at
+ * the wrong offset (device saw idx==0, requests were never delivered)
+ * and, for qsz >= 256, let the device's used-ring writes run past the
+ * pool into adjacent .bss. */
+#define VRING_MAX_SIZE         256
+/* 12288 bytes (3 pages) covers a full 256-entry ring: descriptor table
+ * (256*16 = 4096) + avail ring (2+2+512 = 516) + page-aligned used ring
+ * (2+2+2048 = 2052) = 10244 bytes, rounded up to 3 pages. */
+#define QUEUE_MEM_SIZE         12288
 
 /* Descriptor flags */
 #define VRING_DESC_F_NEXT      1
@@ -38,7 +49,7 @@ struct vring_desc {
 struct vring_avail {
     uint16_t flags;
     uint16_t idx;
-    uint16_t ring[VRING_SIZE];
+    uint16_t ring[VRING_MAX_SIZE];
 };
 
 struct vring_used_elem { uint32_t id; uint32_t len; };
@@ -46,7 +57,7 @@ struct vring_used_elem { uint32_t id; uint32_t len; };
 struct vring_used {
     uint16_t flags;
     uint16_t idx;
-    struct vring_used_elem ring[VRING_SIZE];
+    struct vring_used_elem ring[VRING_MAX_SIZE];
 };
 #pragma pack(pop)
 
@@ -55,6 +66,11 @@ struct virtio_fs_vq {
     int      initialized;
 
     uint16_t queue_idx;
+
+    /* Device queue size (QUEUE_SIZE register).  The ring geometry below
+     * is derived from this value: the device indexes avail/used with
+     * i % qsz and lays the rings out for qsz descriptors. */
+    uint16_t vq_size;
 
     struct vring_desc  *descs;
     struct vring_avail *avail;
@@ -813,11 +829,13 @@ int virtio_fs_handle_request(int vq_idx)
     /* Process all available request buffers */
     uint16_t avail_idx = vq->avail->idx;
     while (vq->last_used_idx != avail_idx) {
-        /* Get descriptor index from avail ring */
-        uint16_t desc_idx = vq->avail->ring[vq->last_used_idx & (VRING_SIZE - 1)];
+        /* Get descriptor index from avail ring.  The device indexes its
+         * ring with i % vq_size — the same modulo must be applied here,
+         * not a hardcoded power-of-two mask. */
+        uint16_t desc_idx = vq->avail->ring[vq->last_used_idx % vq->vq_size];
 
         /* Validate descriptor index from device — must be within the desc table */
-        if (desc_idx >= VRING_SIZE) {
+        if (desc_idx >= vq->vq_size) {
             kprintf("[VIRTIO-FS] invalid descriptor index %u from avail ring\n",
                     (unsigned int)desc_idx);
             goto next;
@@ -860,7 +878,7 @@ int virtio_fs_handle_request(int vq_idx)
         {
             /* Find the next descriptor (which should be writable) */
             uint16_t next_idx = desc->next;
-            if (desc->flags & VRING_DESC_F_NEXT && next_idx < VRING_SIZE) {
+            if (desc->flags & VRING_DESC_F_NEXT && next_idx < vq->vq_size) {
                 struct vring_desc *resp_desc = &vq->descs[next_idx];
                 uint32_t copy_len = outh->len;
                 if (copy_len > resp_desc->len)
@@ -874,8 +892,11 @@ next:
         vq->last_used_idx++;
         __asm__ volatile("" ::: "memory");
 
-        /* Tell the device we've consumed the buffer by advancing used->idx */
-        uint16_t used_slot = vq->used->idx & (VRING_SIZE - 1);
+        /* Tell the device we've consumed the buffer by advancing used->idx.
+         * The device reads used->ring[i % vq_size], so the slot index must
+         * use the same modulo (the 16-bit index counter wraps at 65536,
+         * a multiple of any real queue size, so this stays consistent). */
+        uint16_t used_slot = vq->used->idx % vq->vq_size;
         vq->used->ring[used_slot].id  = desc_idx;
         vq->used->ring[used_slot].len = sizeof(struct fuse_out_header) + 256;
         __asm__ volatile("" ::: "memory");
@@ -1009,6 +1030,20 @@ int virtio_fs_init(void)
             memset(vq, 0, sizeof(*vq));
             vq->queue_idx = (uint16_t)i;
 
+            /* The ring geometry MUST be derived from the device's queue
+             * size: the device indexes avail/used with i % qsz and lays
+             * out its own descriptor table / avail ring / page-aligned
+             * used ring for qsz entries.  A hardcoded smaller size puts
+             * the avail ring at the wrong offset (device never sees the
+             * driver's descriptors) and lets the device's used-ring
+             * writes run past the pool for large qsz. */
+            if (qsz > VRING_MAX_SIZE) {
+                kprintf("[VIRTIO-FS] queue %d size %u exceeds max %u\n",
+                        i, (unsigned int)qsz, (unsigned int)VRING_MAX_SIZE);
+                break;
+            }
+            vq->vq_size = qsz;
+
             /* Initialize notification coalescing with sane defaults */
             vq->coalescing_enabled    = 1;
             vq->coalesce_max_completed = VIRTIO_FS_COALESCE_DEFAULT_MAX;
@@ -1019,11 +1054,35 @@ int virtio_fs_init(void)
             uint64_t phys = (uint64_t)(uintptr_t)vq->mem;
             vfs_outl(VIRTIO_PCI_QUEUE_PFN, (uint32_t)(phys >> 12));
 
-            /* Set up ring pointers */
+            /* Verify the device accepted the queue allocation (legacy
+             * virtio spec: the device writes 0 to QUEUE_PFN if it cannot
+             * accept the queue). */
+            if (vfs_inl(VIRTIO_PCI_QUEUE_PFN) == 0) {
+                kprintf("[VIRTIO-FS] device rejected queue %d PFN 0x%x\n",
+                        i, (unsigned int)(phys >> 12));
+                break;
+            }
+
+            /* Set up ring pointers into the queue memory per the device's
+             * queue size: descriptor table (16 bytes each), avail ring
+             * immediately after, used ring at the next 4 KiB boundary
+             * (legacy vring alignment). */
             vq->descs = (struct vring_desc *)vq->mem;
             vq->avail = (struct vring_avail *)(vq->mem +
-                          sizeof(struct vring_desc) * VRING_SIZE);
-            vq->used  = (struct vring_used *)(vq->mem + 4096);
+                          sizeof(struct vring_desc) * vq->vq_size);
+
+            uint32_t avail_end =
+                (uint32_t)sizeof(struct vring_desc) * vq->vq_size + 2 + 2 +
+                (uint32_t)vq->vq_size * 2;
+            uint32_t used_off = (avail_end + 4095) & ~4095u;
+            if (used_off + 2 + 2 + 8u * vq->vq_size > QUEUE_MEM_SIZE) {
+                kprintf("[VIRTIO-FS] queue %d ring (%u descriptors) does "
+                        "not fit in %u bytes of queue memory\n",
+                        i, (unsigned int)vq->vq_size,
+                        (unsigned int)QUEUE_MEM_SIZE);
+                break;
+            }
+            vq->used = (struct vring_used *)(vq->mem + used_off);
 
             vq->last_used_idx = 0;
             vq->initialized   = 1;
