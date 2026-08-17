@@ -17,15 +17,20 @@
  * Layout of virtqueues (indices):
  *   0 – inflateq       guest → host (pages the guest gives up)
  *   1 – deflateq       host → guest (pages returned to guest)
- *   2 – statsq         optional memory statistics
  *   3 – reporting_vq   free-page reporting (VIRTIO_BALLOON_F_REPORTING)
  *
+ * Virtqueue index 2 (statsq) belongs to VIRTIO_BALLOON_F_STATS_VQ,
+ * which is deliberately NOT negotiated: the kernel has no memory
+ * statistics collection to deliver on it.
+ *
  * Feature bits negotiated:
- *   VIRTIO_BALLOON_F_MUST_TELL_HOST    (0) – must notify before using page
- *   VIRTIO_BALLOON_F_STATS_VQ          (1) – memory statistics virtqueue
- *   VIRTIO_BALLOON_F_DEFLATE_ON_OOM    (2) – deflate when OOM
+ *   VIRTIO_BALLOON_F_MUST_TELL_HOST    (0) – inflate/deflate submit pages
  *   VIRTIO_BALLOON_F_PAGE_POISON       (4) – page poisoning hint
  *   VIRTIO_BALLOON_F_REPORTING         (5) – free page reporting
+ *
+ * VIRTIO_BALLOON_F_STATS_VQ (1) and VIRTIO_BALLOON_F_DEFLATE_ON_OOM (2)
+ * are not negotiated: this kernel has neither stats delivery nor an
+ * OOM-deflation hook to back them.
  *
  * Uses the legacy PCI I/O transport pattern (matching virtio_rng).
  */
@@ -159,7 +164,6 @@ static uint32_t   balloon_features = 0;
 
 static struct vbq inflate_q;       /* vq 0 */
 static struct vbq deflate_q;       /* vq 1 */
-static struct vbq stats_q;         /* vq 2 (VIRTIO_BALLOON_F_STATS_VQ) */
 static struct vbq reporting_q;     /* vq 3 (VIRTIO_BALLOON_F_REPORTING) */
 
 /* Pre-allocated report buffer for free-page reporting (must be
@@ -532,9 +536,6 @@ static void vbl_init_queues(void)
 	vbl_init_vq(&inflate_q, 0);
 	vbl_init_vq(&deflate_q, 1);
 
-	if (balloon_features & VIRTIO_BALLOON_F_STATS_VQ)
-		vbl_init_vq(&stats_q, 2);
-
 	if (balloon_features & VIRTIO_BALLOON_F_REPORTING)
 		vbl_init_vq(&reporting_q, 3);
 }
@@ -567,14 +568,15 @@ static void virtio_balloon_init(void)
 
 	/* Supported features:
 	 *   MUST_TELL_HOST – required for correct inflate/deflate
-	 *   DEFLATE_ON_OOM – deflate balloon when guest runs low on mem
-	 *   STATS_VQ       – memory statistics (optional, wire it up)
 	 *   PAGE_POISON    – page poisoning hint (tell host our poison value)
 	 *   REPORTING      – free page reporting (the main addition)
+	 *
+	 * VIRTIO_BALLOON_F_STATS_VQ and VIRTIO_BALLOON_F_DEFLATE_ON_OOM
+	 * are deliberately NOT offered: the kernel has no memory-statistics
+	 * delivery and no OOM-deflation hook, so negotiating them would
+	 * claim capabilities the driver cannot honour.
 	 */
 	uint32_t supported = VIRTIO_BALLOON_F_MUST_TELL_HOST |
-			     VIRTIO_BALLOON_F_DEFLATE_ON_OOM |
-			     VIRTIO_BALLOON_F_STATS_VQ |
 			     VIRTIO_BALLOON_F_PAGE_POISON |
 			     VIRTIO_BALLOON_F_REPORTING;
 
