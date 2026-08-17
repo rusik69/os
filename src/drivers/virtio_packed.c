@@ -247,7 +247,9 @@ int virtio_packed_add_buf_sg(struct virtio_packed_vq *vq,
 
 	if (!vq || !vq->ring || !addrs || !lens || !flags_in || n < 1)
 		return -1;
-	if ((uint16_t)n > vq->free_count)
+	/* Compare in int domain: (uint16_t)n truncates n >= 65536 and lets an
+	 * oversized chain past the capacity guard, over-running the ring. */
+	if (n > (int)vq->free_count)
 		return -1;
 
 	head_idx = vq->next_idx;
@@ -259,9 +261,13 @@ int virtio_packed_add_buf_sg(struct virtio_packed_vq *vq,
 
 		desc = &vq->ring->desc[idx];
 
-		/* Add write flag if specified */
-		if (this_flags & VRING_DESC_F_WRITE)
-			desc->flags |= VRING_DESC_F_WRITE;
+		/* Full assignment, not OR: the descriptor slot was already consumed
+		 * by the device in a previous cycle and may still carry stale
+		 * WRITE / NEXT / AVAIL / USED bits.  OR-ing new bits in would leave
+		 * a stale WRITE on a read descriptor (device writes where it should
+		 * read) and a stale AVAIL from the previous wrap epoch (device never
+		 * sees the buffer). */
+		desc->flags = this_flags;
 
 		/* Chain: every descriptor except the last has NEXT */
 		if (!is_last)
