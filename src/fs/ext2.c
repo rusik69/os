@@ -3531,6 +3531,14 @@ static int ext2_sync_bgd(struct ext2_priv *ep) {
         uint32_t bgd_block_in_group = (ep->block_size == 1024) ? 2 : 1;
         uint32_t bgd_start = ext2_group_start(g, ep->blocks_per_group) + bgd_block_in_group;
 
+        /* Skip backup tables that do not fit inside the filesystem.  For a
+         * partial last group on a large disk (e.g. a 4 TB / 1024-byte-block
+         * ext2 without sparse_super), bgd_start + bgd_blocks would exceed
+         * s_blocks_count; the 32-bit addition below would wrap to a low
+         * block number and clobber group 0's data area with BGD data. */
+        if ((uint64_t)bgd_start + bgd_blocks > ep->sb.s_blocks_count)
+            continue;
+
         offset = 0;
         for (uint32_t i = 0; i < bgd_blocks; i++) {
             memset(block_buf, 0, ep->block_size);
@@ -3884,6 +3892,14 @@ static int ext2_read_bgd_at(struct ext2_priv *ep, uint32_t group, int sparse,
 
     uint64_t bgd_bytes = (uint64_t)num_entries * sizeof(struct ext2_bg_desc);
     uint32_t bgd_blocks = (uint32_t)((bgd_bytes + ep->block_size - 1) / ep->block_size);
+
+    /* The backup BGD table must fit inside the filesystem.  For a partial
+     * last group on a large disk (e.g. a 4 TB / 1024-byte-block ext2), the
+     * table would extend past s_blocks_count; computing its block number as
+     * 32-bit would wrap to a low block and read/write the wrong data.
+     * Such a backup copy was never written by mkfs — skip it. */
+    if ((uint64_t)bgd_first_block + bgd_blocks > ep->sb.s_blocks_count)
+        return -ENOENT;
 
     uint8_t block_buf[4096];
     uint32_t bytes_read = 0;
