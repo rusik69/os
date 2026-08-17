@@ -65,6 +65,7 @@ void vhost_blk_clear_mem_regions(void) {
 static int vhost_blk_initialized = 0;
 static struct vhost_blk_backing vhost_blk_backing;
 static int vhost_blk_backing_valid = 0;
+static int vhost_blk_backing_allocated = 0; /* data was allocated by ensure_backing() */
 
 /* Number of sectors for discard/write-zeroes (must be power of 2) */
 #define VHOST_BLK_DISCARD_GRANULARITY 64 /* 64 sectors = 32 KB */
@@ -84,6 +85,7 @@ static int vhost_blk_ensure_backing(void) {
         return -1;
     }
     vhost_blk_backing.data = (uint8_t *)PHYS_TO_VIRT(blk_mem);
+    vhost_blk_backing_allocated = 1;
     kprintf("[vhost-blk] Backing store allocated on demand: 32 MB\n");
     return 0;
 }
@@ -266,6 +268,16 @@ int vhost_blk_set_backing(struct vhost_blk_backing *bak) {
     if (!bak)
         return -1;
 
+    /* If the previous backing was our own lazy allocation, return its
+     * frames to the PMM before the copy below drops the pointer
+     * (ownership transfer, not a leak). */
+    if (vhost_blk_backing_allocated && vhost_blk_backing.data) {
+        uint64_t num_pages = (32ULL * 1024 * 1024) / PAGE_SIZE;
+        pmm_free_frames_contiguous(
+            VIRT_TO_PHYS((uint64_t)(uintptr_t)vhost_blk_backing.data), (size_t)num_pages);
+        vhost_blk_backing_allocated = 0;
+    }
+
     memcpy(&vhost_blk_backing, bak, sizeof(struct vhost_blk_backing));
 
     /* If no serial set, generate a default */
@@ -283,6 +295,18 @@ int vhost_blk_set_backing(struct vhost_blk_backing *bak) {
 /* ── Cleanup ───────────────────────────────────────────────────────── */
 
 void vhost_blk_cleanup(void) {
+    /* Return the lazily allocated backing store to the PMM before
+     * dropping the struct — memset'ing it would orphan the 32 MB frame
+     * range allocated by vhost_blk_ensure_backing().  Only frames we
+     * allocated ourselves are freed: a backing installed via
+     * vhost_blk_set_backing() with a non-NULL data pointer stays owned
+     * by its caller. */
+    if (vhost_blk_backing_allocated && vhost_blk_backing.data) {
+        uint64_t num_pages = (32ULL * 1024 * 1024) / PAGE_SIZE;
+        pmm_free_frames_contiguous(
+            VIRT_TO_PHYS((uint64_t)(uintptr_t)vhost_blk_backing.data), (size_t)num_pages);
+        vhost_blk_backing_allocated = 0;
+    }
     memset(&vhost_blk_backing, 0, sizeof(vhost_blk_backing));
     vhost_blk_backing_valid = 0;
     vhost_blk_initialized = 0;
