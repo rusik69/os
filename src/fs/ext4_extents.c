@@ -323,7 +323,11 @@ static int ext4_ext_write_block(struct ext4_priv *ep, uint32_t block_num,
     int ret;
 
     for (uint32_t i = 0; i < sectors; i++) {
-        if (blockdev_write_sectors(ep->dev_id, (uint32_t)(lba + i), 1,
+        /* lba is 64-bit: block_num * sectors-per-block can exceed 2^32
+         * sectors (2TB on 512-byte-sector disks) on large filesystems.
+         * Truncating it to uint32_t would wrap the write to the wrong
+         * sector.  blk_submit_sync/blockdev_write_sectors take uint64_t. */
+        if (blockdev_write_sectors(ep->dev_id, lba + i, 1,
                                    buf + i * 512) != 0)
             return -EIO;
     }
