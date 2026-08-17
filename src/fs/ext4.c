@@ -1498,13 +1498,27 @@ int ext4_mount(const char *mountpoint, uint8_t dev_id)
         if (ep->incompat & EXT4_FEATURE_INCOMPAT_64BIT)
             total_blocks |= (uint64_t)ep->sb.s_blocks_count_hi << 32;
 
+        /* A zero block count is corrupt: it would make every group
+         * arithmetic degenerate (a mounted filesystem with 0 groups). */
+        if (total_blocks == 0) {
+            kprintf("[ext4] ERROR: invalid block count 0\n");
+            goto fail;
+        }
+
+        /* Compute ceil(total_blocks / blocks_per_group) WITHOUT the
+         * (a + b - 1) / b form: when total_blocks is near 2^64-1
+         * (corrupt superblock with the 64BIT feature), adding
+         * (blocks_per_group - 1) wraps the uint64_t and the group
+         * count collapses to 0 BEFORE the saturating clamp below can
+         * run.  (total_blocks - 1) / b + 1 is the exact ceiling and
+         * cannot overflow for any 64-bit block count. */
+        uint64_t total_groups_64 = (total_blocks - 1) / ep->blocks_per_group + 1;
+
         /* Saturating cast: for very large filesystems (64-bit feature,
          * sparse per-group counts) the group count can exceed UINT32_MAX.
          * Clamp to the maximum representable value so that all subsequent
          * block-group-number computations remain consistent (wrapping to
          * 0 would silently break every inode lookup and BGD access). */
-        uint64_t total_groups_64 = (total_blocks + ep->blocks_per_group - 1) /
-                                    ep->blocks_per_group;
         uint32_t total_groups;
         if (total_groups_64 > 0xFFFFFFFFULL) {
             kprintf("[ext4] WARNING: total block groups (%llu) exceeds "
