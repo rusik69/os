@@ -816,6 +816,13 @@ int virtio_fs_handle_request(int vq_idx)
         /* Get descriptor index from avail ring */
         uint16_t desc_idx = vq->avail->ring[vq->last_used_idx & (VRING_SIZE - 1)];
 
+        /* Validate descriptor index from device — must be within the desc table */
+        if (desc_idx >= VRING_SIZE) {
+            kprintf("[VIRTIO-FS] invalid descriptor index %u from avail ring\n",
+                    (unsigned int)desc_idx);
+            goto next;
+        }
+
         /* Walk the descriptor chain to collect the request */
         /* virtio-fs uses a single descriptor chain: [fuse_in_header | ... | fuse_out_header | ...] */
         struct vring_desc *desc = &vq->descs[desc_idx];
