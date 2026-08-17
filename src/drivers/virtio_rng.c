@@ -32,7 +32,9 @@
 /* ── Ring constants ────────────────────────────────────────────── */
 
 #define VRING_SIZE             16
-#define QUEUE_MEM_SIZE         4096
+/* Legacy layout: desc table (256B) + avail + used ring page-aligned at
+ * offset 4096; 8192 bytes covers desc+avail and the full used ring. */
+#define QUEUE_MEM_SIZE         8192
 
 /* Descriptor flags */
 #define VRING_DESC_F_NEXT      1
@@ -136,7 +138,7 @@ static int vrng_init_queue(void)
     q->descs = (struct vring_desc *)q->mem;
     q->avail = (struct vring_avail *)(q->mem +
                   sizeof(struct vring_desc) * VRING_SIZE);
-    q->used  = (struct vring_used  *)(q->mem + 2048);
+    q->used  = (struct vring_used  *)(q->mem + 4096);
 
     q->last_used_idx = 0;
     q->initialized   = 1;
@@ -185,9 +187,13 @@ static int vrng_read_entropy(void *buf, uint32_t len)
         return -1;
     }
 
-    /* The device wrote the random data; return how many bytes it wrote */
+    /* The device wrote the random data; return how many bytes it wrote.
+     * Clamp the device-reported length: a bogus used len must not make
+     * rng_add_entropy() read past entropy_buf. */
     uint16_t used_idx_ent = (prev_used) & (VRING_SIZE - 1);
     uint32_t actual_len = used->ring[used_idx_ent].len;
+    if (actual_len > len)
+        actual_len = len;
     return (int)actual_len;
 }
 
