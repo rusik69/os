@@ -48,7 +48,7 @@ static int btrfs_read_blocks(struct btrfs_priv *bp, uint64_t bytenr,
     uint32_t sectors = count * 512 / 512; /* count is in 512-byte sectors */
     /* but count may be in nodesize/sectorsize units */
     for (uint32_t i = 0; i < count; i++) {
-        if (blockdev_read_sectors(bp->dev_id, (uint32_t)(lba + i), 1,
+        if (blockdev_read_sectors(bp->dev_id, lba + i, 1,
                                    buf + i * 512) != 0)
             return -1;
     }
@@ -1743,7 +1743,7 @@ static int btrfs_read(void *priv, const char *path,
                     uint8_t *dest = (uint8_t *)buf + done;
 
                     for (uint32_t s = 0; s < nsect; s++) {
-                        if (blockdev_read_sectors(bp->dev_id, (uint32_t)(lba + s), 1,
+                        if (blockdev_read_sectors(bp->dev_id, lba + s, 1,
                                                    dest + s * 512) != 0) {
                             /* I/O error — return what we have */
                             goto read_done;
