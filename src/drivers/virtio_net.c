@@ -84,6 +84,24 @@
 /* Virtqueue size (must be power of 2) */
 #define VRING_SIZE 16
 
+/* Maximum ring size the driver's ring memory can hold.  Real legacy
+ * virtio devices lay their rings out for their own QUEUE_SIZE (QEMU
+ * virtio-net uses 256), not for the driver's 16-buffer pool: descriptor
+ * table (qsz*16), avail ring immediately after, used ring at the next
+ * 4096-byte boundary.  The old fixed layout computed avail/used slots
+ * with a power-of-two mask over a 4-byte-aligned used ring — both
+ * diverge from the device's idx % qsz indexing after the 16th entry,
+ * so RX completions were read from the wrong offsets and recycled
+ * avail entries were written to slots the device never reads.
+ * The driver itself still keeps only VRING_SIZE buffers in flight at
+ * once; the ring MEMORY size and slot-index arithmetic now follow the
+ * device's queue size (see virtio_rng / virtio_fs for the same fix). */
+#define VRING_MAX_SIZE 256
+/* 12288 bytes (3 pages) covers a full 256-entry ring: descriptor table
+ * (256*16 = 4096) + avail ring (2+2+512 = 516) + page-aligned used ring
+ * (2+2+2048 = 2052) = 10244 bytes, rounded up to 3 pages. */
+#define QUEUE_MEM_SIZE 12288
+
 /* Descriptor flags */
 #define VRING_DESC_F_NEXT  1
 #define VRING_DESC_F_WRITE 2
@@ -93,7 +111,7 @@
  * Each virtqueue consists of three areas packed into a single
  * page-aligned memory region:
  *
- *   1. Descriptor Table (array of struct vring_desc, VRING_SIZE entries)
+ *   1. Descriptor Table (array of struct vring_desc, qsz entries)
  *      ┌────────┬──────────┬───────┬──────┐
  *      │  addr  │   len    │ flags │ next │
  *      │ (8 B)  │  (4 B)   │ (2 B) │ (2 B)│
@@ -110,7 +128,7 @@
  *
  *   2. Available Ring (struct vring_avail)
  *      ┌───────┬──────┬────────────────────────────┐
- *      │ flags │  idx │  ring[0..VRING_SIZE-1]     │
+ *      │ flags │  idx │  ring[0..qsz-1]            │
  *      │ (2 B) │ (2 B)│  (each entry: 2 B)         │
  *      └───────┴──────┴────────────────────────────┘
  *      - flags: 0 normally; VIRTQ_AVAIL_F_NO_INTERRUPT (1) suppresses
@@ -120,11 +138,12 @@
  *      - ring[]: array of descriptor-chain head indices that the
  *        driver has made available to the device
  *      The device reads ring[avail->idx_prev .. avail->idx - 1] to
- *      find new descriptor chains to process.
+ *      find new descriptor chains to process; entry k of the ring
+ *      lives at slot k % qsz.
  *
  *   3. Used Ring (struct vring_used)
  *      ┌───────┬──────┬────────────────────────────────────┐
- *      │ flags │  idx │  ring[0..VRING_SIZE-1]             │
+ *      │ flags │  idx │  ring[0..qsz-1]                    │
  *      │ (2 B) │ (2 B)│  (each entry: id(4 B) + len(4 B)) │
  *      └───────┴──────┴────────────────────────────────────┘
  *      - flags: 0 normally; VIRTQ_USED_F_NO_NOTIFY (1) tells
@@ -134,21 +153,23 @@
  *      - ring[]: array of used_elem entries { id, len } where:
  *          id  — head index of the completed descriptor chain
  *          len — number of bytes the device wrote (for WRITE descs)
+ *      The device writes used_elem for completion k at slot k % qsz;
+ *      the 16-bit idx counters wrap at 65536, and slot arithmetic
+ *      using qsz keeps both sides aligned across the wrap.
  *
- * Memory layout within the 4096-byte queue memory:
- *   [0 .. sizeof(vring_desc)*VRING_SIZE-1]           — descriptor table
- *   [sizeof(vring_desc)*VRING_SIZE .. +sizeof(vring_avail)] — avail ring
- *   [padding to 4-byte boundary]                      — padding
- *   [aligned offset .. end]                           — used ring
+ * Memory layout within the queue memory (qsz = device QUEUE_SIZE):
+ *   [0 .. sizeof(vring_desc)*qsz-1]                  — descriptor table
+ *   [sizeof(vring_desc)*qsz .. +2+2+qsz*2]           — avail ring
+ *   [next 4096-byte boundary .. +2+2+qsz*8]          — used ring
  *
  * The helper functions vring_avail_ptr() and vring_used_ptr() compute
- * these offsets at runtime.
+ * these offsets at runtime from the queue size.
  *
  * Descriptor chain walk (TX example):
  *   descs[0] → (virtio_net_hdr, NEXT=1, next=1)
  *   descs[1] → (packet data, NEXT=0)
- *   avail->ring[avail->idx & (VRING_SIZE-1)] = 0  (head of chain)
- *   avail->idx++                                    (make available)
+ *   avail->ring[avail->idx % qsz] = 0  (head of chain)
+ *   avail->idx++                        (make available)
  *   Device reads the chain from head 0, processes header + data,
  *   writes used_elem { .id = 0, .len = bytes_processed },
  *   increments used->idx.
@@ -171,7 +192,7 @@ struct vring_desc {
 struct vring_avail {
     uint16_t flags;
     uint16_t idx;
-    uint16_t ring[VRING_SIZE];
+    uint16_t ring[VRING_MAX_SIZE];
 };
 
 struct vring_used_elem {
@@ -182,7 +203,7 @@ struct vring_used_elem {
 struct vring_used {
     uint16_t flags;
     uint16_t idx;
-    struct vring_used_elem ring[VRING_SIZE];
+    struct vring_used_elem ring[VRING_MAX_SIZE];
 };
 #pragma pack(pop)
 
@@ -343,14 +364,21 @@ static uint16_t vnet_iobase  = 0;
 #define RX_QUEUE_IDX 0
 #define TX_QUEUE_IDX 1
 #define CTRL_QUEUE_IDX 2
-static uint8_t  __attribute__((aligned(4096))) rx_queue_mem[4096];
-static uint8_t  __attribute__((aligned(4096))) tx_queue_mem[4096];
-static uint8_t  __attribute__((aligned(4096))) ctrl_queue_mem[4096];
+static uint8_t __attribute__((aligned(4096))) rx_queue_mem[QUEUE_MEM_SIZE];
+static uint8_t __attribute__((aligned(4096))) tx_queue_mem[QUEUE_MEM_SIZE];
+static uint8_t __attribute__((aligned(4096))) ctrl_queue_mem[QUEUE_MEM_SIZE];
 static uint8_t  rx_pkt_bufs[VRING_SIZE][RX_BUF_SIZE];
 static uint16_t rx_last_used = 0;
 static uint8_t  vnet_irq = 0;
 static uint8_t  tx_pkt_buf[TX_BUF_SIZE];
 static struct virtio_net_hdr tx_hdr;
+
+/* Device queue sizes (QUEUE_SIZE register, per queue).  Ring layout and
+ * avail/used slot-index arithmetic are derived from these — the device
+ * indexes its rings with idx % qsz (see the layout comment above). */
+static uint16_t rx_qsz = 0;
+static uint16_t tx_qsz = 0;
+static uint16_t ctrl_qsz = 0;
 
 /* ── Negotiated feature flags (set during init) ──────────────────── */
 static uint32_t vnet_negotiated_features = 0;
@@ -397,15 +425,18 @@ static inline uint32_t vio_inl(uint8_t off) {
          | ((uint32_t)inb((uint16_t)(vnet_iobase + off + 3)) << 24);
 }
 
-static struct vring_avail *vring_avail_ptr(void *base) {
-    return (struct vring_avail *)((uint8_t *)base +
-                                  sizeof(struct vring_desc) * VRING_SIZE);
+static struct vring_avail *vring_avail_ptr(void *base, uint16_t qsz) {
+    return (struct vring_avail *)((uint8_t *)base + sizeof(struct vring_desc) * qsz);
 }
 
-static struct vring_used *vring_used_ptr(void *base) {
-    size_t off = sizeof(struct vring_desc) * VRING_SIZE;
-    off += sizeof(uint16_t) * 2 + (size_t)VRING_SIZE * sizeof(uint16_t);
-    off = (off + 3) & ~3u;
+static struct vring_used *vring_used_ptr(void *base, uint16_t qsz) {
+    size_t off = sizeof(struct vring_desc) * qsz;
+    off += sizeof(uint16_t) * 2 + (size_t)qsz * sizeof(uint16_t);
+    /* Legacy vring layout: the used ring begins on the next 4096-byte
+     * boundary after the avail ring — the device computes its used-ring
+     * base the same way, so a non-4096 alignment here would read
+     * completions from a different address than the device writes. */
+    off = (off + 4095) & ~(size_t)4095;
     return (struct vring_used *)((uint8_t *)base + off);
 }
 
@@ -1913,8 +1944,8 @@ static int virtio_net_ctrl_send(uint8_t class, uint8_t command,
                                  const void *data, size_t data_len)
 {
     struct vring_desc  *descs = (struct vring_desc  *)ctrl_queue_mem;
-    struct vring_avail *avail = vring_avail_ptr(ctrl_queue_mem);
-    struct vring_used  *used  = vring_used_ptr(ctrl_queue_mem);
+    struct vring_avail *avail = vring_avail_ptr(ctrl_queue_mem, ctrl_qsz);
+    struct vring_used *used = vring_used_ptr(ctrl_queue_mem, ctrl_qsz);
     struct virtio_net_ctrl_hdr *hdr;
     int desc_count = 0;
     uint64_t irq_flags;
@@ -1985,7 +2016,7 @@ static int virtio_net_ctrl_send(uint8_t class, uint8_t command,
             ret = -EAGAIN;
             goto out;
         }
-        uint16_t slot = avail->idx & (VRING_SIZE - 1);
+        uint16_t slot = (uint16_t)(avail->idx % ctrl_qsz);
         avail->ring[slot] = 0;  /* descriptor 0 is always the chain head */
         __asm__ volatile("" ::: "memory");
         avail->idx++;
@@ -2172,13 +2203,16 @@ int virtio_net_init(void) {
     vio_outw(VIRTIO_PCI_QUEUE_SEL, RX_QUEUE_IDX);
     {
         uint16_t qsz = vio_inw(VIRTIO_PCI_QUEUE_SIZE);
-        if (qsz != 0 && qsz < VRING_SIZE) {
-            kprintf("virtio-net: queue size %u < %u\n", (unsigned int)qsz, (unsigned int)VRING_SIZE);
+        if (qsz == 0 || qsz > VRING_MAX_SIZE || qsz < VRING_SIZE) {
+            kprintf("virtio-net: unsupported RX queue size %u (need %u..%u)\n", (unsigned int)qsz,
+                    (unsigned int)VRING_SIZE, (unsigned int)VRING_MAX_SIZE);
             return -1;
         }
+        rx_qsz = qsz;
+        memset(rx_queue_mem, 0, sizeof(rx_queue_mem));
         struct vring_desc  *descs = (struct vring_desc  *)rx_queue_mem;
-        struct vring_avail *avail = vring_avail_ptr(rx_queue_mem);
-        struct vring_used  *used  = vring_used_ptr(rx_queue_mem);
+        struct vring_avail *avail = vring_avail_ptr(rx_queue_mem, rx_qsz);
+        struct vring_used *used = vring_used_ptr(rx_queue_mem, rx_qsz);
         avail->flags = 0;
         avail->idx = 0;
         used->flags = 0;
@@ -2188,7 +2222,7 @@ int virtio_net_init(void) {
             descs[i].len   = sizeof(rx_pkt_bufs[0]);
             descs[i].flags = VRING_DESC_F_WRITE;
             descs[i].next  = 0;
-            uint16_t slot = avail->idx & (VRING_SIZE - 1);
+            uint16_t slot = (uint16_t)(avail->idx % rx_qsz);
             avail->ring[slot] = (uint16_t)i;
             avail->idx++;
         }
@@ -2201,9 +2235,12 @@ int virtio_net_init(void) {
     vio_outw(VIRTIO_PCI_QUEUE_SEL, TX_QUEUE_IDX);
     {
         uint16_t qsz = vio_inw(VIRTIO_PCI_QUEUE_SIZE);
-        if (qsz != 0 && qsz < VRING_SIZE) return -1;
-        struct vring_avail *avail = vring_avail_ptr(tx_queue_mem);
-        struct vring_used  *used  = vring_used_ptr(tx_queue_mem);
+        if (qsz == 0 || qsz > VRING_MAX_SIZE || qsz < VRING_SIZE)
+            return -1;
+        tx_qsz = qsz;
+        memset(tx_queue_mem, 0, sizeof(tx_queue_mem));
+        struct vring_avail *avail = vring_avail_ptr(tx_queue_mem, tx_qsz);
+        struct vring_used *used = vring_used_ptr(tx_queue_mem, tx_qsz);
         avail->flags = 0;
         avail->idx = 0;
         used->flags = 0;
@@ -2214,14 +2251,17 @@ int virtio_net_init(void) {
     /* Control VQ (2) — only if CTRL_VQ was negotiated */
     if (vnet_negotiated_features & VIRTIO_NET_F_CTRL_VQ) {
         vio_outw(VIRTIO_PCI_QUEUE_SEL, CTRL_QUEUE_IDX);
-        uint16_t ctrl_qsz = vio_inw(VIRTIO_PCI_QUEUE_SIZE);
-        if (ctrl_qsz != 0 && ctrl_qsz < VRING_SIZE) {
-            kprintf("virtio-net: control queue size %u < %u, disabling control VQ\n",
-                    (unsigned int)ctrl_qsz, (unsigned int)VRING_SIZE);
+        uint16_t cqsz = vio_inw(VIRTIO_PCI_QUEUE_SIZE);
+        if (cqsz == 0 || cqsz > VRING_MAX_SIZE || cqsz < VRING_SIZE) {
+            kprintf("virtio-net: control queue size %u unsupported "
+                    "(need %u..%u), disabling control VQ\n",
+                    (unsigned int)cqsz, (unsigned int)VRING_SIZE, (unsigned int)VRING_MAX_SIZE);
             /* Non-fatal — continue without control VQ */
         } else {
-            struct vring_avail *avail = vring_avail_ptr(ctrl_queue_mem);
-            struct vring_used  *used  = vring_used_ptr(ctrl_queue_mem);
+            ctrl_qsz = cqsz;
+            memset(ctrl_queue_mem, 0, sizeof(ctrl_queue_mem));
+            struct vring_avail *avail = vring_avail_ptr(ctrl_queue_mem, ctrl_qsz);
+            struct vring_used *used = vring_used_ptr(ctrl_queue_mem, ctrl_qsz);
             avail->flags = 0;
             avail->idx = 0;
             used->flags = 0;
@@ -2273,8 +2313,8 @@ int virtio_net_send(const uint8_t *data, uint32_t len) {
     }
 
     struct vring_desc  *descs = (struct vring_desc  *)tx_queue_mem;
-    struct vring_avail *avail = vring_avail_ptr(tx_queue_mem);
-    struct vring_used  *used  = vring_used_ptr(tx_queue_mem);
+    struct vring_avail *avail = vring_avail_ptr(tx_queue_mem, tx_qsz);
+    struct vring_used *used = vring_used_ptr(tx_queue_mem, tx_qsz);
 
     /* Wait for the previous TX to complete before reusing the shared
      * descriptor chain and TX buffer.  The split-ring in-flight count is
@@ -2387,7 +2427,7 @@ int virtio_net_send(const uint8_t *data, uint32_t len) {
             tx_offload_stats.tx_offload_drops++;
             return -1;
         }
-        uint16_t idx = avail->idx & (VRING_SIZE - 1);
+        uint16_t idx = (uint16_t)(avail->idx % tx_qsz);
         avail->ring[idx] = 0;
         __asm__ volatile("" ::: "memory");
         avail->idx++;
@@ -2437,13 +2477,13 @@ int virtio_net_receive(void *buf, uint16_t max_len) {
     }
     lro_seg.active = 0;
 
-    struct vring_used *used = vring_used_ptr(rx_queue_mem);
-    struct vring_avail *avail = vring_avail_ptr(rx_queue_mem);
+    struct vring_used *used = vring_used_ptr(rx_queue_mem, rx_qsz);
+    struct vring_avail *avail = vring_avail_ptr(rx_queue_mem, rx_qsz);
 
     if (used->idx == rx_last_used) return 0;
 
     __asm__ volatile("" ::: "memory");
-    uint16_t uidx = rx_last_used & (VRING_SIZE - 1);
+    uint16_t uidx = (uint16_t)(rx_last_used % rx_qsz);
     uint32_t id = used->ring[uidx].id;
     uint32_t total = used->ring[uidx].len;
     rx_last_used++;
@@ -2539,7 +2579,7 @@ int virtio_net_receive(void *buf, uint16_t max_len) {
                 descs[cur_id].len   = sizeof(rx_pkt_bufs[0]);
                 descs[cur_id].flags = VRING_DESC_F_WRITE;
                 descs[cur_id].next  = 0;
-                uint16_t slot = avail->idx & (VRING_SIZE - 1);
+                uint16_t slot = (uint16_t)(avail->idx % rx_qsz);
                 avail->ring[slot] = cur_id;
                 __asm__ volatile("" ::: "memory");
                 avail->idx++;
@@ -2639,7 +2679,7 @@ deliver_raw_fallback:
             descs[cur_id].len   = sizeof(rx_pkt_bufs[0]);
             descs[cur_id].flags = VRING_DESC_F_WRITE;
             descs[cur_id].next  = 0;
-            uint16_t slot = avail->idx & (VRING_SIZE - 1);
+            uint16_t slot = (uint16_t)(avail->idx % rx_qsz);
             avail->ring[slot] = cur_id;
             __asm__ volatile("" ::: "memory");
             avail->idx++;
@@ -2716,7 +2756,7 @@ static int virtio_net_open(void *dev)
     vio_outb(VIRTIO_PCI_STATUS, status);
 
     /* Re-arm RX by notifying the device about available buffers */
-    struct vring_avail *avail = vring_avail_ptr(rx_queue_mem);
+    vring_avail_ptr(rx_queue_mem, rx_qsz);
     __asm__ volatile("" ::: "memory");
     vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, RX_QUEUE_IDX);
 
