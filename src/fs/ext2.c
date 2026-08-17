@@ -3257,8 +3257,9 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
         ep->block_size = 1024 << ep->sb.s_log_block_size;
         ep->blocks_per_group = ep->sb.s_blocks_per_group;
         ep->inodes_per_group = ep->sb.s_inodes_per_group;
-        uint32_t total_groups_r =
-            (ep->sb.s_blocks_count + ep->blocks_per_group - 1) / ep->blocks_per_group;
+        uint32_t total_groups_r = (uint32_t)(
+            ((uint64_t)ep->sb.s_blocks_count + ep->blocks_per_group - 1) /
+            ep->blocks_per_group);
         ep->num_block_groups = total_groups_r;
     }
 
@@ -3280,8 +3281,9 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
         ep->block_size = 1024 << ep->sb.s_log_block_size;
         ep->blocks_per_group = ep->sb.s_blocks_per_group;
         ep->inodes_per_group = ep->sb.s_inodes_per_group;
-        uint32_t total_groups_r =
-            (ep->sb.s_blocks_count + ep->blocks_per_group - 1) / ep->blocks_per_group;
+        uint32_t total_groups_r = (uint32_t)(
+            ((uint64_t)ep->sb.s_blocks_count + ep->blocks_per_group - 1) /
+            ep->blocks_per_group);
         ep->num_block_groups = total_groups_r;
     }
 
@@ -3298,8 +3300,9 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
                          ? (uint32_t)ep->sb.s_inode_size
                          : EXT2_GOOD_OLD_INODE_SIZE;
 
-    uint32_t total_groups =
-        (ep->sb.s_blocks_count + ep->blocks_per_group - 1) / ep->blocks_per_group;
+    uint32_t total_groups = (uint32_t)(
+        ((uint64_t)ep->sb.s_blocks_count + ep->blocks_per_group - 1) /
+        ep->blocks_per_group);
     ep->num_block_groups = total_groups;
 
     /* ── Load the block group descriptor table into cache ──────────
@@ -3819,7 +3822,9 @@ static int ext2_validate_bgd_entry(struct ext2_priv *ep, uint32_t group,
  *
  * Returns 0 if consistent, -EFSCORRUPTED on mismatch. */
 static int ext2_validate_bgd_count(struct ext2_priv *ep) {
-    uint32_t expected = (ep->sb.s_blocks_count + ep->blocks_per_group - 1) / ep->blocks_per_group;
+    uint32_t expected = (uint32_t)(
+        ((uint64_t)ep->sb.s_blocks_count + ep->blocks_per_group - 1) /
+        ep->blocks_per_group);
 
     if (!ep->bgd_cache || ep->num_block_groups == 0) {
         kprintf("[ext2] BGD cache not initialized\n");
@@ -4152,14 +4157,24 @@ int64_t ext2_resize(struct ext2_priv *ep, uint64_t new_total_blocks) {
 
     uint32_t current_groups = ep->num_block_groups;
     uint32_t blocks_per_group = ep->blocks_per_group;
-    uint32_t new_groups_needed =
-        (uint32_t)((new_total_blocks + blocks_per_group - 1) / blocks_per_group);
+    uint64_t new_groups_needed64 =
+        (new_total_blocks + blocks_per_group - 1) / blocks_per_group;
+    if (new_groups_needed64 > 0xFFFFFFFFULL)
+        return -EFBIG; /* too many groups for the 32-bit BGD indexing */
+    uint32_t new_groups_needed = (uint32_t)new_groups_needed64;
 
     if (new_groups_needed <= current_groups) {
         kprintf("[ext2] resize: new size %llu <= current size, nothing to do\n",
                 (unsigned long long)new_total_blocks);
         return (int64_t)ep->sb.s_blocks_count;
     }
+
+    /* Check that the resulting block count fits the 32-bit superblock
+     * field before mutating any state. */
+    uint64_t added_blocks =
+        (uint64_t)(new_groups_needed - current_groups) * blocks_per_group;
+    if (added_blocks > 0xFFFFFFFFULL - ep->sb.s_blocks_count)
+        return -EFBIG; /* would overflow the 32-bit block count */
 
     kprintf("[ext2] resize: growing from %u groups (%u blocks) to %u groups (%llu blocks)\n",
             current_groups, ep->sb.s_blocks_count, new_groups_needed,
@@ -4182,8 +4197,7 @@ int64_t ext2_resize(struct ext2_priv *ep, uint64_t new_total_blocks) {
     }
 
     /* Update superblock */
-    uint32_t added_blocks = (new_groups_needed - current_groups) * blocks_per_group;
-    ep->sb.s_blocks_count += added_blocks;
+    ep->sb.s_blocks_count += (uint32_t)added_blocks;
 
     /* Recalculate free blocks and inodes from BGD entries
      * (metadata blocks subtracted already in ext2_init_new_group) */

@@ -385,7 +385,7 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
                 (unsigned int)sb.s_inodes_count,
                 (unsigned int)sb.s_blocks_count,
                 (unsigned int)block_size,
-                (unsigned int)((sb.s_blocks_count + sb.s_blocks_per_group - 1)
+                (unsigned int)(((uint64_t)sb.s_blocks_count + sb.s_blocks_per_group - 1)
                                / sb.s_blocks_per_group),
                 (unsigned int)sb.s_state,
                 (unsigned int)sb.s_mnt_count,
@@ -404,8 +404,8 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
     block_size = 1024U << sb.s_log_block_size;
     uint32_t blocks_per_group = sb.s_blocks_per_group;
     uint32_t inodes_per_group = sb.s_inodes_per_group;
-    uint32_t num_groups = (sb.s_blocks_count + blocks_per_group - 1)
-                          / blocks_per_group;
+    uint32_t num_groups = (uint32_t)(((uint64_t)sb.s_blocks_count + blocks_per_group - 1)
+                          / blocks_per_group);
 
     /* Check mount count */
     if (sb.s_max_mnt_count > 0 &&
