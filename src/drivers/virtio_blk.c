@@ -19,6 +19,7 @@
 #include "types.h"
 #include "string.h"
 #include "smp.h"
+#include "spinlock.h"
 #include "errno.h"
 #ifdef MODULE
 #include "module.h"
@@ -185,6 +186,16 @@ struct vblk_queue {
     uint8_t  mem[QUEUE_MEM_SIZE] __attribute__((aligned(4096)));
     int      initialized;
 
+    /* Serializes access to the shared per-queue request state (req_hdr,
+     * status_byte, descriptor table, avail ring).  The queue index is
+     * chosen per-CPU for lock-free I/O when every CPU maps to its own
+     * queue, but when the device exposes fewer queues than CPUs (or CPU
+     * IDs fall outside the queue range) multiple CPUs share a queue and
+     * concurrent submissions would tear the descriptor chain mid-flight —
+     * each request reuses descriptor slots 0..2, so only one submission
+     * may be in flight per queue at a time. */
+    spinlock_t lock;
+
     /* Queue index in the device */
     uint16_t queue_idx;
 
@@ -286,6 +297,7 @@ static int vblk_init_queue(int qid) {
 
     struct vblk_queue *q = &vblk_queues[qid];
     memset(q, 0, sizeof(*q));
+    spinlock_init(&q->lock);
 
     q->queue_idx = (uint16_t)qid;
 
@@ -524,6 +536,15 @@ static int vblk_queue_request(int qid, uint32_t type,
     if (vblk_validate_chain(q, 0, 3) < 0)
         return -1;
 
+    /* Serialize concurrent submissions to this queue: every request
+     * reuses the same descriptor slots (0..2), req_hdr, and status_byte,
+     * so only one request may be in flight per queue.  The lock is held
+     * across the busy-wait — the device reads the descriptor chain and
+     * writes the status byte during that window, and a second submission
+     * rewriting them would tear the first request mid-flight. */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&q->lock, &irq_flags);
+
     struct vring_desc  *descs = q->descs;
     struct vring_avail *avail = q->avail;
     struct vring_used  *used  = q->used;
@@ -570,12 +591,15 @@ static int vblk_queue_request(int qid, uint32_t type,
     }
 
     if (timeout == 0) {
+        spinlock_irqsave_release(&q->lock, irq_flags);
         kprintf("virtio-blk: timeout on queue %d lba=%llu count=%u\n",
                 qid, lba, count);
         return -1;
     }
 
-    return (q->status_byte == 0) ? 0 : -1;
+    int ret = (q->status_byte == 0) ? 0 : -1;
+    spinlock_irqsave_release(&q->lock, irq_flags);
+    return ret;
 }
 
 /* ── Discard / write-zeroes request on a specific queue ──────────
@@ -601,6 +625,11 @@ static int vblk_queue_special(int qid, uint32_t type,
     /* Validate descriptor chain (3 descriptors: header, discard_desc, status) */
     if (vblk_validate_chain(q, 0, 3) < 0)
         return -1;
+
+    /* Serialize concurrent submissions to this queue (see
+     * vblk_queue_request — same shared-state argument). */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&q->lock, &irq_flags);
 
     struct vring_desc  *descs = q->descs;
     struct vring_avail *avail = q->avail;
@@ -652,12 +681,15 @@ static int vblk_queue_special(int qid, uint32_t type,
     }
 
     if (timeout == 0) {
+        spinlock_irqsave_release(&q->lock, irq_flags);
         kprintf("virtio-blk: timeout on special cmd type=%u lba=%llu count=%u\n",
                 (unsigned int)type, lba, count);
         return -1;
     }
 
-    return (q->status_byte == 0) ? 0 : -1;
+    int ret = (q->status_byte == 0) ? 0 : -1;
+    spinlock_irqsave_release(&q->lock, irq_flags);
+    return ret;
 }
 
 /* ── Select the queue for the current CPU ──────────────────────── */
