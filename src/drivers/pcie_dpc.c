@@ -11,6 +11,7 @@
 #include "printf.h"
 #include "errno.h"
 #include "pci.h"
+#include "delay.h"
 
 /* DPC capability registers */
 #define PCI_DPC_CAP          0x00
@@ -70,6 +71,27 @@ static int dpc_handle_trigger(int bus, int dev, int func)
                 source_id >> 8, (source_id >> 3) & 0x1F, source_id & 0x7);
 
         dpc_triggered_count++;
+
+        /* Per PCIe spec r5.0 §6.2.11.1, the DPC Trigger Status bit must
+         * not be cleared while the RP Busy bit is set — the clear write
+         * is ignored and the port remains contained, leaving the
+         * downstream link down while the caller believes recovery
+         * succeeded (i.e. stale device state is used afterwards).
+         * Wait for the RP to finish containing the error before
+         * disarming the trigger. */
+        int busy_waits = 0;
+        while (busy_waits < 100) {
+            uint16_t cur = pci_read16(bus, dev, func, dpc_cap + PCI_DPC_STATUS);
+            if (!(cur & DPC_STATUS_RP_BUSY))
+                break;
+            busy_waits++;
+            udelay(100);
+        }
+        if (busy_waits >= 100) {
+            kprintf("[DPC] RP busy timeout on %02x:%02x.%x — port remains contained\n",
+                    bus, dev, func);
+            return -EBUSY;
+        }
 
         /* Clear DPC trigger status, interrupt status, and restore */
         pci_write16(bus, dev, func, dpc_cap + PCI_DPC_STATUS,
