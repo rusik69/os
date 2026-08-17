@@ -336,6 +336,21 @@ int vmxnet3_transmit(struct vmxnet3_priv *priv,
     /* Fill the TX descriptor — point it at the caller's data */
     desc = &txq->descs[slot];
     memset(desc, 0, sizeof(*desc));
+
+    /* DMA-address overflow guard: VIRT_TO_PHYS() subtracts
+     * KERNEL_VMA_OFFSET, which unsigned-underflows to a wrapped
+     * ~2^64 "physical" address when @data lies outside the kernel
+     * direct map — e.g. a userspace buffer from sys_raw_send() or
+     * AF_PACKET packet_send(), both of which reach dev->transmit()
+     * via netif_send()/net_link_send().  The device would then
+     * DMA-read the frame from a bogus 128+ TB address and the
+     * packet would be silently lost.  Reject the frame instead of
+     * programming a wrapped DMA target (cf. e1000, which copies TX
+     * data into a pre-validated ring buffer before DMA). */
+    if ((uintptr_t)data < KERNEL_VMA_OFFSET) {
+        priv->tx_errors++;
+        return -EFAULT;
+    }
     desc->addr = VIRT_TO_PHYS((void *)(uintptr_t)data);
     desc->len  = (uint32_t)len;
     desc->eop  = 1;               /* end of packet (single-fragment frame) */
