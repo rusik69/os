@@ -249,11 +249,23 @@ static void vbl_init_vq(struct vbq *q, uint16_t queue_idx)
 	uint64_t phys = (uint64_t)(uintptr_t)q->mem;
 	vbl_outl(VIRTIO_PCI_QUEUE_PFN, (uint32_t)(phys >> 12));
 
-	/* Set up ring pointers into the queue memory buffer. */
+	/* Set up ring pointers into the queue memory buffer.  The used ring
+	 * must sit at the next 4 KiB boundary after the avail ring (legacy
+	 * vring alignment).  For VRING_SIZE=256 the device-side layout is
+	 * desc 0..4095, avail 4096..4611, used 8192..10243, which fits the
+	 * 16384-byte queue memory.  Pointing the used ring at offset 2048
+	 * (the old code) placed it INSIDE the descriptor table
+	 * (desc[128..255]): the device's used-ring DMA landed at 8192 while
+	 * the busy-wait read from a region aliased by its own descriptor
+	 * writes, so completion could never be observed reliably. */
 	q->descs = (struct vring_desc *)q->mem;
 	q->avail = (struct vring_avail *)(q->mem +
 		   sizeof(struct vring_desc) * VRING_SIZE);
-	q->used  = (struct vring_used *)(q->mem + 2048);
+
+	uint32_t avail_end = (uint32_t)sizeof(struct vring_desc) * VRING_SIZE +
+			     2 + 2 + (uint32_t)VRING_SIZE * 2;
+	uint32_t used_off = (avail_end + 4095) & ~4095u;
+	q->used  = (struct vring_used *)(q->mem + used_off);
 	q->last_used_idx = 0;
 	q->initialized   = 1;
 }
@@ -329,7 +341,13 @@ static int vbl_submit_chain_and_wait(struct vbq *q,
 	for (i = 0; i < n; i++) {
 		descs[i].addr  = addrs[i];
 		descs[i].len   = lens[i];
-		descs[i].flags = flags[i];
+		/* Intermediate descriptors must carry VRING_DESC_F_NEXT or the
+		 * device stops after the first descriptor and the rest of the
+		 * chain (e.g. the page-chunk of a free-page report) is never
+		 * consumed.  The tail descriptor has no F_NEXT; its next field
+		 * is ignored by the device. */
+		descs[i].flags = (uint16_t)(flags[i] |
+				((i < n - 1) ? VRING_DESC_F_NEXT : 0));
 		descs[i].next  = (uint16_t)((i < n - 1) ? (i + 1) : 0);
 	}
 
