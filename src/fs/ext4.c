@@ -174,7 +174,7 @@ int ext4_read_block(struct ext4_priv *ep, uint32_t block_num, uint8_t *buf)
     uint32_t sectors = ep->block_size / 512;
     if (sectors == 0) return ext4_corrupt(ep, "invalid block size");
     for (uint32_t i = 0; i < sectors; i++) {
-        if (blockdev_read_sectors(ep->dev_id, (uint32_t)(lba + i), 1, buf + i * 512) != 0)
+        if (blockdev_read_sectors(ep->dev_id, lba + i, 1, buf + i * 512) != 0)
             return ext4_corrupt(ep, "block I/O error");
     }
     return 0;
@@ -430,7 +430,7 @@ static int ext4_load_bgd_cache(struct ext4_priv *ep)
      * With flex_bg, the BGD table may extend into subsequent groups'
      * reserved space, but the PRIMARY copy is always at this location. */
     uint8_t block_buf[EXT4_MAX_BLOCK_SIZE];
-    uint32_t offset = 0;
+    uint64_t offset = 0;
 
     if (ep->block_size == 1024) {
         /* BGD table starts at block 2 */
@@ -438,7 +438,7 @@ static int ext4_load_bgd_cache(struct ext4_priv *ep)
             if (ext4_read_block(ep, 2 + b, block_buf) < 0)
                 return ext4_corrupt(ep, "failed to read BGD table");
             uint32_t copy = ep->block_size;
-            uint32_t remaining = bgd_bytes - offset;
+            uint64_t remaining = bgd_bytes - offset;
             if (copy > remaining) copy = remaining;
             memcpy((uint8_t *)ep->bgd_cache + offset, block_buf, copy);
             offset += copy;
@@ -454,8 +454,8 @@ static int ext4_load_bgd_cache(struct ext4_priv *ep)
         offset += chunk;
 
         /* Read remaining BGD blocks starting at block 1 */
-        uint32_t remaining = bgd_bytes - offset;
-        uint32_t extra_blocks = (remaining + ep->block_size - 1) / ep->block_size;
+        uint64_t remaining = bgd_bytes - offset;
+        uint32_t extra_blocks = (uint32_t)((remaining + ep->block_size - 1) / ep->block_size);
         for (uint32_t b = 0; b < extra_blocks; b++) {
             if (ext4_read_block(ep, 1 + b, block_buf) < 0)
                 return ext4_corrupt(ep, "failed to read BGD continuation block");
@@ -478,7 +478,7 @@ static int ext4_load_bgd_cache(struct ext4_priv *ep)
         bgd_count = ep->num_block_groups;
         for (uint32_t i = 0; i < bgd_count; i++) {
             struct ext4_bg_desc *bg = (struct ext4_bg_desc *)
-                ((uint8_t *)ep->bgd_cache + i * bgd_entry_size);
+                ((uint8_t *)ep->bgd_cache + (uint64_t)i * bgd_entry_size);
             if (ext4_verify_bg_checksum(ep, bg, i) < 0) {
                 kprintf("[ext4] NOTE: BGD %u checksum mismatch — continuing "
                         "read-only\n", i);
@@ -508,12 +508,16 @@ static int ext4_read_inode(struct ext4_priv *ep, uint32_t ino, struct ext4_inode
     if (ep->incompat & EXT4_FEATURE_INCOMPAT_64BIT)
         bgd_esize = 64;
     struct ext4_bg_desc *bgd = (struct ext4_bg_desc *)
-        ((uint8_t *)ep->bgd_cache + group * bgd_esize);
+        ((uint8_t *)ep->bgd_cache + (uint64_t)group * bgd_esize);
     uint32_t inode_table_block = bgd->bg_inode_table;
-    uint32_t byte_offset = index * ep->inode_size;
+    uint64_t byte_offset = (uint64_t)index * ep->inode_size;
 
-    uint32_t tbl_block = inode_table_block + byte_offset / ep->block_size;
-    uint32_t tbl_off   = byte_offset % ep->block_size;
+    uint64_t tbl_block64 =
+        (uint64_t)inode_table_block + byte_offset / ep->block_size;
+    if (tbl_block64 > 0xFFFFFFFFULL)
+        return ext4_corrupt(ep, "inode table block out of range");
+    uint32_t tbl_block = (uint32_t)tbl_block64;
+    uint32_t tbl_off   = (uint32_t)(byte_offset % ep->block_size);
 
     uint8_t block_buf[EXT4_MAX_BLOCK_SIZE];
     if (ext4_read_block(ep, tbl_block, block_buf) < 0)
@@ -1134,18 +1138,19 @@ static int ext4_verify_flex_bg(struct ext4_priv *ep)
     uint32_t bgd_entry_size = sizeof(struct ext4_bg_desc);
     if (ep->incompat & EXT4_FEATURE_INCOMPAT_64BIT)
         bgd_entry_size = 64;
-    uint32_t bgd_bytes = ep->num_block_groups * bgd_entry_size;
-    uint32_t bgd_offset_in_group;
-    bgd_offset_in_group = 2048;
+    uint64_t bgd_bytes = (uint64_t)ep->num_block_groups * bgd_entry_size;
+    const uint32_t bgd_offset_in_group = 2048;
 
     /* With flex_bg, the BGD table can extend into subsequent groups'
      * reserved GDT blocks.  Warn if it overflows the first group. */
-    uint32_t first_group_data_end = ep->block_size;
-    if (bgd_offset_in_group + bgd_bytes > first_group_data_end) {
-        uint32_t overflow = bgd_offset_in_group + bgd_bytes - first_group_data_end;
-        uint32_t overflow_blocks = (overflow + ep->block_size - 1) / ep->block_size;
-        kprintf("[ext4] BGD table spans %u blocks into reserved space\\n",
-            overflow_blocks + 1);
+    const uint32_t first_group_data_end = ep->block_size;
+    if ((uint64_t)bgd_offset_in_group + bgd_bytes > first_group_data_end) {
+        uint64_t overflow = (uint64_t)bgd_offset_in_group + bgd_bytes -
+                            first_group_data_end;
+        uint64_t overflow_blocks =
+            (overflow + ep->block_size - 1) / ep->block_size;
+        kprintf("[ext4] BGD table spans %llu blocks into reserved space\n",
+                (unsigned long long)(overflow_blocks + 1));
     }
 
     return 0;
@@ -1502,7 +1507,14 @@ int ext4_mount(const char *mountpoint, uint8_t dev_id)
     /* ── flex_bg size detection ── */
     if (ep->incompat & EXT4_FEATURE_INCOMPAT_FLEX_BG) {
         if (ep->sb.s_log_groups_per_flex > 0) {
-            /* Use the value from superblock (log2 of flex group count) */
+            /* Use the value from superblock (log2 of flex group count);
+             * a log >= 32 is invalid (shift UB, the size would not fit
+             * uint32_t). */
+            if (ep->sb.s_log_groups_per_flex >= 32) {
+                kprintf("[ext4] ERROR: invalid s_log_groups_per_flex=%u\n",
+                        ep->sb.s_log_groups_per_flex);
+                goto fail;
+            }
             ep->flex_bg_size = 1u << ep->sb.s_log_groups_per_flex;
         } else {
             /* Default flex_bg size is 16 (Linux kernel default) */
@@ -1516,42 +1528,56 @@ int ext4_mount(const char *mountpoint, uint8_t dev_id)
             goto fail;
 
         /* Log flex_bg layout: first few flex groups */
-        uint32_t num_flex_groups = (ep->num_block_groups + ep->flex_bg_size - 1)
-                                 / ep->flex_bg_size;
-        uint32_t last_flex_size = ep->num_block_groups -
-                                  (num_flex_groups - 1) * ep->flex_bg_size;
-        kprintf("[ext4]   flex groups: %u total (%u full + 1 partial of %u)\\n",
+        uint32_t num_flex_groups = (uint32_t)(
+            ((uint64_t)ep->num_block_groups + ep->flex_bg_size - 1) /
+            ep->flex_bg_size);
+        uint64_t last_flex_size64 = (uint64_t)ep->num_block_groups -
+                                    (uint64_t)(num_flex_groups - 1) *
+                                        ep->flex_bg_size;
+        uint32_t last_flex_size = (uint32_t)last_flex_size64;
+        kprintf("[ext4]   flex groups: %u total (%u full + 1 partial of %u)\n",
             num_flex_groups, num_flex_groups - 1, last_flex_size);
         if (num_flex_groups <= 6) {
             /* Show all flex group ranges for small filesystems */
             for (uint32_t fg = 0; fg < num_flex_groups; fg++) {
-                uint32_t first = fg * ep->flex_bg_size;
-                uint32_t last = first + ep->flex_bg_size - 1;
+                uint64_t first = (uint64_t)fg * ep->flex_bg_size;
+                uint64_t last = first + ep->flex_bg_size - 1;
                 if (last >= ep->num_block_groups)
                     last = ep->num_block_groups - 1;
-                kprintf("[ext4]     flex group %u: groups [%u, %u]\\n", fg, first, last);
+                kprintf("[ext4]     flex group %u: groups [%llu, %llu]\n",
+                    fg, (unsigned long long)first,
+                    (unsigned long long)last);
             }
         } else {
             /* Show first 3 and last 3 for large filesystems */
-            kprintf("[ext4]     flex group 0: groups [0, %u]\\n",
+            kprintf("[ext4]     flex group 0: groups [0, %u]\n",
                 ep->flex_bg_size - 1);
-            kprintf("[ext4]     flex group 1: groups [%u, %u]\\n",
-                ep->flex_bg_size, 2 * ep->flex_bg_size - 1);
-            kprintf("[ext4]     flex group 2: groups [%u, %u]\\n",
-                2 * ep->flex_bg_size, 3 * ep->flex_bg_size - 1);
-            kprintf("[ext4]     ...\\n");
-            kprintf("[ext4]     flex group %u: groups [%u, %u]\\n",
+            kprintf("[ext4]     flex group 1: groups [%u, %llu]\n",
+                ep->flex_bg_size,
+                (unsigned long long)(2ULL * ep->flex_bg_size - 1));
+            kprintf("[ext4]     flex group 2: groups [%u, %llu]\n",
+                (unsigned)(2ULL * ep->flex_bg_size),
+                (unsigned long long)(3ULL * ep->flex_bg_size - 1));
+            kprintf("[ext4]     ...\n");
+            kprintf("[ext4]     flex group %u: groups [%llu, %llu]\n",
                 num_flex_groups - 3,
-                (num_flex_groups - 3) * ep->flex_bg_size,
-                (num_flex_groups - 3) * ep->flex_bg_size + ep->flex_bg_size - 1);
-            kprintf("[ext4]     flex group %u: groups [%u, %u]\\n",
+                (unsigned long long)((uint64_t)(num_flex_groups - 3) *
+                                     ep->flex_bg_size),
+                (unsigned long long)((uint64_t)(num_flex_groups - 3) *
+                                         ep->flex_bg_size +
+                                     ep->flex_bg_size - 1));
+            kprintf("[ext4]     flex group %u: groups [%llu, %llu]\n",
                 num_flex_groups - 2,
-                (num_flex_groups - 2) * ep->flex_bg_size,
-                (num_flex_groups - 2) * ep->flex_bg_size + ep->flex_bg_size - 1);
-            kprintf("[ext4]     flex group %u: groups [%u, %u]\\n",
+                (unsigned long long)((uint64_t)(num_flex_groups - 2) *
+                                     ep->flex_bg_size),
+                (unsigned long long)((uint64_t)(num_flex_groups - 2) *
+                                         ep->flex_bg_size +
+                                     ep->flex_bg_size - 1));
+            kprintf("[ext4]     flex group %u: groups [%llu, %llu]\n",
                 num_flex_groups - 1,
-                (num_flex_groups - 1) * ep->flex_bg_size,
-                ep->num_block_groups - 1);
+                (unsigned long long)((uint64_t)(num_flex_groups - 1) *
+                                     ep->flex_bg_size),
+                (unsigned long long)ep->num_block_groups - 1);
         }
     }
 
