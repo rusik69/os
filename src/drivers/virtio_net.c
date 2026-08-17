@@ -351,7 +351,6 @@ static uint16_t rx_last_used = 0;
 static uint8_t  vnet_irq = 0;
 static uint8_t  tx_pkt_buf[TX_BUF_SIZE];
 static struct virtio_net_hdr tx_hdr;
-static uint16_t tx_last_used = 0;
 
 /* ── Negotiated feature flags (set during init) ──────────────────── */
 static uint32_t vnet_negotiated_features = 0;
@@ -2277,12 +2276,20 @@ int virtio_net_send(const uint8_t *data, uint32_t len) {
     struct vring_avail *avail = vring_avail_ptr(tx_queue_mem);
     struct vring_used  *used  = vring_used_ptr(tx_queue_mem);
 
-    /* Wait for previous TX to complete */
+    /* Wait for the previous TX to complete before reusing the shared
+     * descriptor chain and TX buffer.  The split-ring in-flight count is
+     * (avail->idx - used->idx) computed mod 2^16: 0 both before the very
+     * first send (nothing outstanding) and after each completion, so it
+     * is immune to the 16-bit index wrap and cannot deadlock the first
+     * call.  A plain `used->idx == tx_last_used` snapshot compare is
+     * wrong here: both start at 0, and with an empty TX avail ring the
+     * device never advances used->idx, so the first (and every) send
+     * would spin to the timeout and return -1, blackholing all TX. */
     uint64_t spin = 0;
-    while (used->idx == tx_last_used && spin++ < 1000000)
+    while ((uint16_t)(avail->idx - used->idx) != 0 && spin++ < 1000000)
         __asm__ volatile("" ::: "memory");
-    if (used->idx == tx_last_used) return -1;
-
+    if ((uint16_t)(avail->idx - used->idx) != 0)
+        return -1;
     /* Detect if we can use TSO/GSO offload for this packet */
     struct offload_info oinfo;
     int can_offload = 0;
@@ -2388,12 +2395,20 @@ int virtio_net_send(const uint8_t *data, uint32_t len) {
     }
 
     vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, TX_QUEUE_IDX);
-
-    spin = 0;
-    while (used->idx == tx_last_used && spin++ < 1000000)
-        __asm__ volatile("" ::: "memory");
-    if (used->idx == tx_last_used) return -1;
-    tx_last_used = used->idx;
+    /* Wait for the device to consume the descriptor we just submitted.
+     * The in-flight count (avail->idx - used->idx) is exact across the
+     * 16-bit index wrap because the ring is at most VRING_SIZE deep, so
+     * polling for its return to 0 is always well-defined — unlike a bare
+     * equality against a snapshot, which would spuriously succeed while
+     * the new TX is still in flight (or, worse, deadlock when both
+     * indices start at 0 on the very first send). */
+    {
+        spin = 0;
+        while ((uint16_t)(avail->idx - used->idx) != 0 && spin++ < 1000000)
+            __asm__ volatile("" ::: "memory");
+        if ((uint16_t)(avail->idx - used->idx) != 0)
+            return -1;
+    }
     return 0;
 }
 
