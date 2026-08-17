@@ -2385,6 +2385,15 @@ int virtio_net_receive(void *buf, uint16_t max_len) {
             }
             uint16_t cur_id = id;
             for (uint16_t i = 0; i < num_bufs; i++) {
+                /* Save the chain link BEFORE rewriting the descriptor:
+                 * descs[cur_id].next points to the next buffer of the
+                 * merged chain and would be lost once it is reset to 0. */
+                uint16_t nxt = 0;
+                if (i + 1 < num_bufs) {
+                    nxt = descs[cur_id].next;
+                    if (nxt >= VRING_SIZE)
+                        break; /* malformed chain: recycle only the valid prefix */
+                }
                 descs[cur_id].addr  = VIRT_TO_PHYS(rx_pkt_bufs[cur_id]);
                 descs[cur_id].len   = sizeof(rx_pkt_bufs[0]);
                 descs[cur_id].flags = VRING_DESC_F_WRITE;
@@ -2394,12 +2403,7 @@ int virtio_net_receive(void *buf, uint16_t max_len) {
                 __asm__ volatile("" ::: "memory");
                 avail->idx++;
                 __asm__ volatile("" ::: "memory");
-                if (i + 1 < num_bufs) {
-                    uint16_t nxt = descs[cur_id].next;
-                    if (nxt >= VRING_SIZE)
-                        break; /* malformed chain: recycle only the valid prefix */
-                    cur_id = nxt;
-                }
+                cur_id = nxt;
             }
             vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, RX_QUEUE_IDX);
         }
@@ -2468,6 +2472,15 @@ deliver_raw_fallback:
         }
         uint16_t cur_id = id;
         for (uint16_t i = 0; i < num_bufs; i++) {
+            /* Save the chain link BEFORE rewriting the descriptor:
+             * descs[cur_id].next points to the next buffer of the
+             * merged chain and would be lost once it is reset to 0. */
+            uint16_t nxt = 0;
+            if (i + 1 < num_bufs) {
+                nxt = descs[cur_id].next;
+                if (nxt >= VRING_SIZE)
+                    break; /* malformed chain: recycle only the valid prefix */
+            }
             descs[cur_id].addr  = VIRT_TO_PHYS(rx_pkt_bufs[cur_id]);
             descs[cur_id].len   = sizeof(rx_pkt_bufs[0]);
             descs[cur_id].flags = VRING_DESC_F_WRITE;
@@ -2477,12 +2490,7 @@ deliver_raw_fallback:
             __asm__ volatile("" ::: "memory");
             avail->idx++;
             __asm__ volatile("" ::: "memory");
-            if (i + 1 < num_bufs) {
-                uint16_t nxt = descs[cur_id].next;
-                if (nxt >= VRING_SIZE)
-                    break; /* malformed chain: recycle only the valid prefix */
-                cur_id = nxt;
-            }
+            cur_id = nxt;
         }
         vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, RX_QUEUE_IDX);
     }
