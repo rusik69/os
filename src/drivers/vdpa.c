@@ -59,7 +59,12 @@ static uint64_t soft_get_features(struct vdpa_device *dev) {
 
 static int soft_set_features(struct vdpa_device *dev, uint64_t features) {
     struct vdpa_soft_device *sdev = (struct vdpa_soft_device *)dev;
-    sdev->features = features & dev->features;
+    /* Store only the subset of the guest-selected features the device
+     * actually offers.  The negotiated set lives in the base vdpa_device
+     * field (as documented in vdpa.h); the offered mask (sdev->features)
+     * must stay immutable so a later GET_FEATURES still reports the full
+     * offer after re-negotiation. */
+    sdev->vdev.features = features & sdev->features;
     return 0;
 }
 
@@ -126,8 +131,11 @@ struct vdpa_soft_device *vdpa_soft_device_create(const char *name, uint8_t *blk_
     sdev->blk_data = blk_data;
     sdev->blk_sectors = blk_sectors;
 
-    /* Feature bits */
-    sdev->features = (1ULL << 0); /* basic feature */
+    /* Feature bits: none claimed.  The software backend has no functional
+     * data path (kick_vq is a scaffold) and no config-space accessor, so
+     * offering any virtio-blk feature bit (e.g. SIZE_MAX at bit 0) would
+     * violate "claimed features must have implementation". */
+    sdev->features = 0;
 
     kprintf("[VDPA] soft device '%s' created (%llu sectors)\n", name, blk_sectors);
     return sdev;
@@ -204,7 +212,7 @@ struct virtio_vdpa_adapter {
     struct vdpa_device *vdev;
     int registered;
     /* Emulated virtio PCI config space */
-    uint32_t host_features;
+    uint64_t host_features;   /* vDPA feature words are 64-bit */
     uint32_t guest_features;
     uint8_t status;
     uint16_t queue_sel;
@@ -239,8 +247,7 @@ int virtio_vdpa_add_device(struct vdpa_device *vdev) {
 
     /* Get host features from vDPA device */
     if (vdev->ops->get_features) {
-        uint64_t features64 = vdev->ops->get_features(vdev);
-        adap->host_features = (uint32_t)features64;
+        adap->host_features = vdev->ops->get_features(vdev);
     }
 
     /* Determine queue size */
@@ -278,50 +285,6 @@ int vdpa_init(void) {
         virtio_vdpa_add_device(&sdev->vdev);
     }
 
-    return 0;
-}
-
-/* Forward declarations for stub functions */
-struct vdpa_vq_state;
-
-/* ── Stub: vdpa_set_status ─────────────────────────────── */
-static int vdpa_set_status(__maybe_unused struct vdpa_device *dev, __maybe_unused uint8_t status) {
-    kprintf("[VDPA] vdpa_set_status: not yet implemented\n");
-    return 0;
-}
-
-/* ── Stub: vdpa_set_features ─────────────────────────────── */
-static int vdpa_set_features(__maybe_unused struct vdpa_device *dev,
-                             __maybe_unused uint64_t features) {
-    kprintf("[VDPA] vdpa_set_features: not yet implemented\n");
-    return 0;
-}
-
-/* ── Stub: vdpa_set_config ─────────────────────────────── */
-static int vdpa_set_config(__maybe_unused struct vdpa_device *dev, __maybe_unused uint32_t offset,
-                           __maybe_unused const void *buf, __maybe_unused uint32_t len) {
-    kprintf("[VDPA] vdpa_set_config: not yet implemented\n");
-    return 0;
-}
-
-/* ── Stub: vdpa_get_config ─────────────────────────────── */
-static int vdpa_get_config(__maybe_unused struct vdpa_device *dev, __maybe_unused uint32_t offset,
-                           __maybe_unused void *buf, __maybe_unused uint32_t len) {
-    kprintf("[VDPA] vdpa_get_config: not yet implemented\n");
-    return 0;
-}
-
-/* ── Stub: vdpa_get_vq_state ─────────────────────────────── */
-static int vdpa_get_vq_state(__maybe_unused struct vdpa_device *dev, __maybe_unused uint16_t vq_idx,
-                             __maybe_unused struct vdpa_vq_state *state) {
-    kprintf("[VDPA] vdpa_get_vq_state: not yet implemented\n");
-    return 0;
-}
-
-/* ── Stub: vdpa_set_vq_state ─────────────────────────────── */
-static int vdpa_set_vq_state(__maybe_unused struct vdpa_device *dev, __maybe_unused uint16_t vq_idx,
-                             __maybe_unused const struct vdpa_vq_state *state) {
-    kprintf("[VDPA] vdpa_set_vq_state: not yet implemented\n");
     return 0;
 }
 
