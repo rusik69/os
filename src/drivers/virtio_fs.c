@@ -968,10 +968,22 @@ int virtio_fs_init(void)
     vfs_outb(VIRTIO_PCI_STATUS, 0);
     vfs_outb(VIRTIO_PCI_STATUS, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
-    /* Negotiate features */
-    virtio_negotiate_features_ex(vfs_inl, vfs_outl, vfs_outb, vfs_inb,
-                                 VIRTIO_FS_F_FUSE_DAX,
-                                 0, NULL, "virtio-fs");
+    /* Negotiate features — only VIRTIO_FS_F_FUSE_DAX is offered (and only
+     * if the device actually supports it): the DAX window machinery below
+     * (FUSE_SETUP / FUSE_MAP_FILE / DAX reads) backs the bit with real
+     * code.  A failure here means the device rejected our feature set —
+     * do NOT set DRIVER_OK on a device we cannot drive. */
+    if (virtio_negotiate_features_ex(vfs_inl, vfs_outl, vfs_outb, vfs_inb,
+                                     VIRTIO_FS_F_FUSE_DAX,
+                                     0, NULL, "virtio-fs") < 0) {
+        kprintf("[VIRTIO-FS] feature negotiation failed\n");
+        return -1;
+    }
+
+    /* Read back the negotiated feature mask: the helper does not return
+     * it, and the DAX window probe below must only run when the device
+     * actually accepted the FUSE_DAX feature. */
+    uint32_t negotiated_feat = vfs_inl(VIRTIO_PCI_GUEST_FEAT);
 
     /* Set driver OK */
     vfs_outb(VIRTIO_PCI_STATUS,
@@ -1027,59 +1039,68 @@ int virtio_fs_init(void)
     {
         memset(&g_fs_dax, 0, sizeof(g_fs_dax));
 
-        /* Save PCI device for BAR probing */
-        memcpy(&g_fs_pci_dev, &dev, sizeof(g_fs_pci_dev));
+        /* Only probe for the DAX window when the device actually
+         * negotiated VIRTIO_FS_F_FUSE_DAX — mapping an arbitrary BAR
+         * as a DAX window and reporting it via FUSE_SETUP when the
+         * feature was never accepted claims a capability the device
+         * did not agree to. */
+        if (!(negotiated_feat & VIRTIO_FS_F_FUSE_DAX)) {
+            kprintf("[VIRTIO-FS] FUSE_DAX not negotiated, DAX window disabled\n");
+        } else {
+            /* Save PCI device for BAR probing */
+            memcpy(&g_fs_pci_dev, &dev, sizeof(g_fs_pci_dev));
 
-        /* Try BAR2 first (virtio-fs DAX window is typically BAR 2),
-         * then BAR4 for alternate layout. */
-        uint64_t dax_phys = 0;
-        uint64_t dax_len = 0;
-        int dax_bar = -1;
+            /* Try BAR2 first (virtio-fs DAX window is typically BAR 2),
+             * then BAR4 for alternate layout. */
+            uint64_t dax_phys = 0;
+            uint64_t dax_len = 0;
+            int dax_bar = -1;
 
-        for (int bar = 2; bar <= 4; bar += 2) {
-            uint64_t bar_val = dev.bar[bar];
-            if (bar_val != 0) {
-                /* Check if the BAR is a memory BAR (bit 0 = 0 = MMIO) */
-                if ((bar_val & 1) == 0) {
-                    uint64_t bar_phys = bar_val & ~0xFu;
-                    /* Read BAR size by writing all 1s and reading back */
-                    /* (simplified: assume 64MB for the DAX window) */
-                    dax_phys = bar_phys;
-                    dax_len = FUSE_DAX_WINDOW_SIZE;
-                    dax_bar = bar;
+            for (int bar = 2; bar <= 4; bar += 2) {
+                uint64_t bar_val = dev.bar[bar];
+                if (bar_val != 0) {
+                    /* Check if the BAR is a memory BAR (bit 0 = 0 = MMIO) */
+                    if ((bar_val & 1) == 0) {
+                        uint64_t bar_phys = bar_val & ~0xFu;
+                        /* Read BAR size by writing all 1s and reading back */
+                        /* (simplified: assume 64MB for the DAX window) */
+                        dax_phys = bar_phys;
+                        dax_len = FUSE_DAX_WINDOW_SIZE;
+                        dax_bar = bar;
 
-                    /* Read actual BAR size from the device */
-                    uint16_t old_bar_lo = (uint16_t)(bar_val & 0xFFFF);
-                    (void)old_bar_lo;
-                    break;
+                        /* Read actual BAR size from the device */
+                        uint16_t old_bar_lo = (uint16_t)(bar_val & 0xFFFF);
+                        (void)old_bar_lo;
+                        break;
+                    }
                 }
             }
-        }
 
-        if (dax_phys != 0 && dax_len > 0) {
-            g_fs_dax.phys_base   = dax_phys;
-            g_fs_dax.bar_offset  = 0;
-            g_fs_dax.window_len  = dax_len;
-            g_fs_dax.present     = 1;
+            if (dax_phys != 0 && dax_len > 0) {
+                g_fs_dax.phys_base   = dax_phys;
+                g_fs_dax.bar_offset  = 0;
+                g_fs_dax.window_len  = dax_len;
+                g_fs_dax.present     = 1;
 
-            /* Map the DAX window via io_map_create (write-combining for
-             * shared memory performance, or uncached for correctness) */
-            g_fs_dax.virt_addr = io_map_create(dax_phys, (size_t)dax_len,
-                                                IO_MAP_WC);
-            if (g_fs_dax.virt_addr) {
-                g_fs_dax.mapped = 1;
-                kprintf("[VIRTIO-FS] DAX window at phys=0x%llx len=%llu "
-                        "virt=%p (BAR %d)\n",
-                        (unsigned long long)dax_phys,
-                        (unsigned long long)dax_len,
-                        g_fs_dax.virt_addr, dax_bar);
+                /* Map the DAX window via io_map_create (write-combining for
+                 * shared memory performance, or uncached for correctness) */
+                g_fs_dax.virt_addr = io_map_create(dax_phys, (size_t)dax_len,
+                                                    IO_MAP_WC);
+                if (g_fs_dax.virt_addr) {
+                    g_fs_dax.mapped = 1;
+                    kprintf("[VIRTIO-FS] DAX window at phys=0x%llx len=%llu "
+                            "virt=%p (BAR %d)\n",
+                            (unsigned long long)dax_phys,
+                            (unsigned long long)dax_len,
+                            g_fs_dax.virt_addr, dax_bar);
+                } else {
+                    kprintf("[VIRTIO-FS] DAX window found at phys=0x%llx "
+                            "but mapping failed\n",
+                            (unsigned long long)dax_phys);
+                }
             } else {
-                kprintf("[VIRTIO-FS] DAX window found at phys=0x%llx "
-                        "but mapping failed\n",
-                        (unsigned long long)dax_phys);
+                kprintf("[VIRTIO-FS] no DAX BAR window found (no suitable BAR)\n");
             }
-        } else {
-            kprintf("[VIRTIO-FS] no DAX BAR window found (no suitable BAR)\n");
         }
     }
 
