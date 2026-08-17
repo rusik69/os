@@ -2351,6 +2351,7 @@ int virtio_net_receive(void *buf, uint16_t max_len) {
         static uint8_t lro_staging[RX_BUF_SIZE];
         uint32_t data_offset = sizeof(struct virtio_net_hdr);
         /* Accumulate data from all buffers in the mergeable chain */
+        int chain_broken = 0;
         {
             uint32_t remaining = plen;
             uint16_t cur_id = id;
@@ -2362,8 +2363,16 @@ int virtio_net_receive(void *buf, uint16_t max_len) {
                 memcpy(dst, rx_pkt_bufs[cur_id] + (i == 0 ? data_offset : 0), chunk);
                 dst += chunk;
                 remaining -= chunk;
-                if (i + 1 < num_bufs)
-                    cur_id = descs[cur_id].next;
+                if (i + 1 < num_bufs) {
+                    uint16_t nxt = descs[cur_id].next;
+                    if (nxt >= VRING_SIZE) {
+                        /* Malformed chain from device: keep valid prefix only */
+                        num_bufs = (uint16_t)(i + 1);
+                        chain_broken = 1;
+                        break;
+                    }
+                    cur_id = nxt;
+                }
             }
         }
 
@@ -2385,10 +2394,21 @@ int virtio_net_receive(void *buf, uint16_t max_len) {
                 __asm__ volatile("" ::: "memory");
                 avail->idx++;
                 __asm__ volatile("" ::: "memory");
-                if (i + 1 < num_bufs)
-                    cur_id = descs[cur_id].next;
+                if (i + 1 < num_bufs) {
+                    uint16_t nxt = descs[cur_id].next;
+                    if (nxt >= VRING_SIZE)
+                        break; /* malformed chain: recycle only the valid prefix */
+                    cur_id = nxt;
+                }
             }
             vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, RX_QUEUE_IDX);
+        }
+
+        if (chain_broken) {
+            /* Malformed descriptor chain: the valid prefix was recycled
+             * above, the tail is unrecoverable — drop the truncated packet. */
+            lro_stats.seg_failures++;
+            return 0;
         }
 
         if (lro_start_segmentation(vhdr->gso_type, vhdr->hdr_len,
@@ -2408,6 +2428,7 @@ deliver_raw:
     {
         if (plen > max_len) plen = max_len;
         uint32_t data_offset = sizeof(struct virtio_net_hdr);
+        int chain_broken = 0;
         {
             uint32_t remaining = plen;
             uint16_t cur_id = id;
@@ -2419,9 +2440,22 @@ deliver_raw:
                 memcpy(dst, rx_pkt_bufs[cur_id] + (i == 0 ? data_offset : 0), chunk);
                 dst += chunk;
                 remaining -= chunk;
-                if (i + 1 < num_bufs)
-                    cur_id = descs[cur_id].next;
+                if (i + 1 < num_bufs) {
+                    uint16_t nxt = descs[cur_id].next;
+                    if (nxt >= VRING_SIZE) {
+                        /* Malformed chain from device: keep valid prefix only */
+                        num_bufs = (uint16_t)(i + 1);
+                        chain_broken = 1;
+                        break;
+                    }
+                    cur_id = nxt;
+                }
             }
+        }
+        if (chain_broken) {
+            /* Malformed chain: the prefix gets recycled below and the
+             * truncated packet is dropped instead of returning stale data. */
+            plen = 0;
         }
     }
 
@@ -2443,8 +2477,12 @@ deliver_raw_fallback:
             __asm__ volatile("" ::: "memory");
             avail->idx++;
             __asm__ volatile("" ::: "memory");
-            if (i + 1 < num_bufs)
-                cur_id = descs[cur_id].next;
+            if (i + 1 < num_bufs) {
+                uint16_t nxt = descs[cur_id].next;
+                if (nxt >= VRING_SIZE)
+                    break; /* malformed chain: recycle only the valid prefix */
+                cur_id = nxt;
+            }
         }
         vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, RX_QUEUE_IDX);
     }
