@@ -2,7 +2,10 @@
  * src/drivers/vhost_scsi.c — In-kernel vhost SCSI target
  *
  * Exposes a SCSI LUN to the guest via virtio-scsi protocol.
- * Processes READ10, WRITE10, INQUIRY, TEST_UNIT_READY, REPORT_LUNS.
+ * Processes TEST_UNIT_READY, INQUIRY, READ_CAPACITY(10), READ10, WRITE10,
+ * REPORT_LUNS, MODE_SENSE(6), REQUEST_SENSE.  Commands are handled one at
+ * a time: no command queuing, no task attributes, and no task management
+ * functions (TMFs) are implemented.
  * Backed by a local memory buffer (block device).
  */
 
@@ -32,7 +35,10 @@ static void scsi_build_inquiry(struct scsi_inquiry_data *inq, struct vhost_scsi_
     inq->additional_length = 0x1F; /* 31 bytes */
     inq->flags[0] = 0x00;
     inq->flags[1] = 0x00;
-    inq->cmd_queue = 0x02; /* CmdQue=1, multi-port? */
+    /* CmdQue must stay clear (SPC-4 INQUIRY byte 7 bit 1): the target
+     * processes one command at a time, honours no tags or task
+     * attributes, and implements no task management functions. */
+    inq->cmd_queue = 0x00;
     memcpy(inq->vendor, lun->vendor, 8);
     memcpy(inq->product, lun->product, 16);
     memcpy(inq->revision, lun->revision, 4);
@@ -48,11 +54,15 @@ static void scsi_build_capacity10(struct scsi_capacity_data *cap, struct vhost_s
 /* Build REPORT LUNS data */
 static void scsi_build_report_luns(struct scsi_report_luns_data *rld, int num_luns) {
     memset(rld, 0, sizeof(*rld));
-    uint32_t list_len = (uint32_t)num_luns * 8;
+    /* Only LUN 0 is ever serviced (vhost_scsi_handle_cmd always selects
+     * it) and the LUN list array holds a single entry, so the reported
+     * list length must match the one entry actually returned, not the
+     * number of configured LUNs. */
+    uint32_t list_len = (num_luns > 0) ? 8u : 0u;
     rld->lun_list_length = __builtin_bswap32(list_len);
-    for (int i = 0; i < num_luns && i < 1; i++) {
+    if (num_luns > 0) {
         /* LUN 0: flat space (bus 0, target 0, lun 0) */
-        rld->luns[i] = __builtin_bswap64(0ULL);
+        rld->luns[0] = __builtin_bswap64(0ULL);
     }
 }
 
