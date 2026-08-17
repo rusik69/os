@@ -1453,6 +1453,19 @@ int ext4_mount(const char *mountpoint, uint8_t dev_id)
         goto fail;
     }
 
+    /* ── Per-group counts ──
+     * These on-disk fields are divisors in every block-group arithmetic
+     * path: (total_blocks + bpg - 1) / bpg (group count), and
+     * (ino - 1) / ipg, (ino - 1) % ipg (inode lookup).  A zeroed field
+     * from a corrupt/partially-written superblock would raise a #DE
+     * divide error in the kernel, so reject the mount instead. */
+    if (ep->sb.s_blocks_per_group == 0 || ep->sb.s_inodes_per_group == 0) {
+        kprintf("[ext4] ERROR: invalid per-group counts "
+                "(blocks_per_group=%u, inodes_per_group=%u)\n",
+                ep->sb.s_blocks_per_group, ep->sb.s_inodes_per_group);
+        goto fail;
+    }
+
     ep->blocks_per_group = ep->sb.s_blocks_per_group;
     ep->inodes_per_group = ep->sb.s_inodes_per_group;
     if (ep->sb.s_rev_level == EXT4_GOOD_OLD_REV) {
