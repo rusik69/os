@@ -271,6 +271,16 @@ int ghes_register_source(int notify_type, uint64_t status_addr,
     if (status_addr == 0 || status_length == 0)
         return -EINVAL;
 
+    /* Validate the error status block is addressable without 64-bit
+     * wraparound.  status_addr comes from the ACPI HEST table
+     * (firmware-supplied); if it lies within status_length of
+     * UINT64_MAX, the byte-wise read loop in ghes_read_error_block()
+     * and the error-status clear loop in ghes_process_source() (which
+     * WRITES zeros) would wrap their address arithmetic and touch
+     * arbitrary low physical memory. */
+    if (status_length > UINT64_MAX - status_addr)
+        return -EINVAL;
+
     spinlock_acquire(&g_ghes_lock);
     if (g_num_ghes_sources >= GHES_MAX_SOURCES) {
         spinlock_release(&g_ghes_lock);
