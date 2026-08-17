@@ -128,7 +128,11 @@ int btrfs_csum_verify_data(const uint8_t *csum_leaf_data,
 	if (block_index >= num_csums)
 		return -EINVAL;
 
-	stored_csum = csum_le32(csum_leaf_data + block_index * 4);
+	/* Index into the stored checksum array as (uint64_t) so the
+	 * count * csum-size multiplication cannot wrap in 32-bit
+	 * arithmetic on large disks/items (block_index >= 2^30 would
+	 * wrap a uint32_t multiply and read from the wrong address). */
+	stored_csum = csum_le32(csum_leaf_data + (uint64_t)block_index * 4);
 	computed_csum = crc32c(0, block_data, block_size);
 
 	if (computed_csum != stored_csum)
