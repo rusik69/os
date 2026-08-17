@@ -370,11 +370,15 @@ static void balloon_init(void)
             bal_outb(VIRTIO_PCI_STATUS,
                      VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
+            /* This driver runs a SOFTWARE balloon: inflate/deflate merely
+             * allocate/hold guest pages locally — it never sets up the
+             * inflate/deflate virtqueues, so the host is never told about
+             * pages (MUST_TELL_HOST), there is no OOM-deflation hook
+             * (DEFLATE_ON_OOM), and the compaction hooks are not wired
+             * into the migration path (COMPACTION).  Claimed features
+             * must have an implementation, so negotiate zero. */
             virtio_negotiate_features_ex(bal_inl, bal_outl, bal_outb, bal_inb,
-                                         VIRTIO_BALLOON_F_MUST_TELL_HOST |
-                                         VIRTIO_BALLOON_F_DEFLATE_ON_OOM |
-                                         VIRTIO_BALLOON_F_COMPACTION,
-                                         0, NULL, "balloon");
+                                         0, 0, NULL, "balloon");
 
             bal_outb(VIRTIO_PCI_STATUS,
                      VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER |
