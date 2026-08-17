@@ -64,10 +64,16 @@
 
 /* Maximum number of virtqueues we support (must be <= device max_queues) */
 #define VBLK_MAX_QUEUES        8
-/* Size of each virtqueue (power of 2) */
+/* Descriptor slots used by the driver-side ring structs and the chain-walk
+ * bound.  The device's actual queue size (QUEUE_SIZE) is read at runtime and
+ * must be >= 3 (the request chain: header, data, status). */
 #define VRING_SIZE             16
-/* Memory per queue: enough for vring_desc[16] + avail + used + header/status */
-#define QUEUE_MEM_SIZE         4096
+/* Queue memory: the ring layout is derived from the device's QUEUE_SIZE —
+ * descriptor table (16 bytes x qsize), avail ring right after it, used ring
+ * at the next 4 KiB boundary.  12 KiB covers a legacy 256-descriptor queue
+ * (QEMU virtio-blk default: desc 0..4095, avail 4096..4613, used 8192..10243);
+ * queues whose ring does not fit are rejected in vblk_init_queue(). */
+#define QUEUE_MEM_SIZE 12288
 
 /* Descriptor flags */
 #define VRING_DESC_F_NEXT      1
@@ -173,6 +179,10 @@ struct vblk_queue {
     /* Queue index in the device */
     uint16_t queue_idx;
 
+    /* Device queue size (QUEUE_SIZE), read at init.  The ring layout and
+     * avail-slot indexing below are derived from it. */
+    uint16_t qsize;
+
     /* Virtual queue pointers into mem[] */
     struct vring_desc  *descs;
     struct vring_avail *avail;
@@ -273,6 +283,19 @@ static int vblk_init_queue(int qid) {
     /* Select the queue in the device */
     vblk_select_queue((uint16_t)qid);
 
+    /* Read the device's queue size.  For legacy virtio-pci, QUEUE_SIZE is
+     * device-fixed: the ring geometry below MUST match it exactly, or the
+     * device writes its used ring over unrelated driver memory and
+     * completions are never observed at the driver's expected location. */
+    q->qsize = vb_inw(VIRTIO_PCI_QUEUE_SIZE);
+    if (q->qsize < 3) {
+        /* A request is a 3-descriptor chain (header, data, status). */
+        kprintf("virtio-blk: queue %d too small (%u descriptors), "
+                "need at least 3\n",
+                qid, (unsigned int)q->qsize);
+        return -1;
+    }
+
     /* Point the device at our queue memory */
     uint64_t phys = (uint64_t)(uintptr_t)q->mem;
     vb_outl(VIRTIO_PCI_QUEUE_PFN, (uint32_t)(phys >> 12));
@@ -285,11 +308,22 @@ static int vblk_init_queue(int qid) {
         return -1;
     }
 
-    /* Set up ring pointers into the queue memory */
+    /* Set up ring pointers into the queue memory per the device's queue
+     * size: descriptor table (16 bytes each), avail ring immediately after,
+     * used ring at the next 4 KiB boundary (legacy vring alignment). */
     q->descs = (struct vring_desc *)q->mem;
-    q->avail = (struct vring_avail *)(q->mem +
-                  sizeof(struct vring_desc) * VRING_SIZE);
-    q->used  = (struct vring_used  *)(q->mem + 2048);
+    q->avail = (struct vring_avail *)(q->mem + sizeof(struct vring_desc) * q->qsize);
+
+    uint32_t avail_end =
+        (uint32_t)sizeof(struct vring_desc) * q->qsize + 2 + 2 + (uint32_t)q->qsize * 2;
+    uint32_t used_off = (avail_end + 4095) & ~4095u;
+    if (used_off + 2 + 2 + 8u * q->qsize > QUEUE_MEM_SIZE) {
+        kprintf("virtio-blk: queue %d ring (%u descriptors) does not fit "
+                "in %u bytes of queue memory\n",
+                qid, (unsigned int)q->qsize, (unsigned int)QUEUE_MEM_SIZE);
+        return -1;
+    }
+    q->used = (struct vring_used *)(q->mem + used_off);
 
     q->last_used_idx = 0;
     q->initialized   = 1;
@@ -501,7 +535,7 @@ static int vblk_queue_request(int qid, uint32_t type,
 
     /* Submit to the avail ring */
     uint16_t prev_used = used->idx;
-    uint16_t avail_idx = avail->idx & (VRING_SIZE - 1);
+    uint16_t avail_idx = (uint16_t)(avail->idx % q->qsize);
     avail->ring[avail_idx] = 0;  /* descriptor index 0 (head of chain) */
     __asm__ volatile("" ::: "memory");
     avail->idx++;
@@ -583,7 +617,7 @@ static int vblk_queue_special(int qid, uint32_t type,
 
     /* Submit to the avail ring */
     uint16_t prev_used = used->idx;
-    uint16_t avail_idx = avail->idx & (VRING_SIZE - 1);
+    uint16_t avail_idx = (uint16_t)(avail->idx % q->qsize);
     avail->ring[avail_idx] = 0;
     __asm__ volatile("" ::: "memory");
     avail->idx++;
