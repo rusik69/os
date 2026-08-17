@@ -25,9 +25,12 @@
 #define VIRTIO_VENDOR          0x1AF4
 #define VIRTIO_RNG_DEVICE      0x1005
 
-/* ── Feature bits ──────────────────────────────────────────────── */
-
-#define VIRTIO_RNG_F_RNG_EE     (1u << 0)
+/* ── Feature bits ──────────────────────────────────────────────── *
+ * VIRTIO_RNG_F_RNG_EE (bit 0, extended entropy sources) is
+ * deliberately NOT offered during negotiation (see virtio_rng_init):
+ * it requires a second virtqueue (queue 1) with entropy-source
+ * request headers, which this driver does not implement.
+ */
 
 /* ── Ring constants ────────────────────────────────────────────── */
 
@@ -237,9 +240,14 @@ static void virtio_rng_init(void)
     vrng_outb(VIRTIO_PCI_STATUS,
               VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
-    /* Negotiate features */
+    /* Negotiate features — none.  VIRTIO_RNG_F_RNG_EE would promise the
+     * device that this driver can consume extended entropy from
+     * additional sources via a second virtqueue with entropy-source
+     * request headers; only the single default-entropy queue (queue 0)
+     * is implemented here, so offering it would claim a capability the
+     * driver cannot honour. */
     if (virtio_negotiate_features_ex(vrng_inl, vrng_outl, vrng_outb, vrng_inb,
-                                     VIRTIO_RNG_F_RNG_EE, 0, NULL,
+                                     0, 0, NULL,
                                      "virtio-rng") < 0) {
         kprintf("[VIRTIO-RNG] feature negotiation failed\n");
         return;
