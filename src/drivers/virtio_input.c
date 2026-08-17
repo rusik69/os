@@ -426,12 +426,20 @@ static void vi_process_events(struct vi_vq *q)
 
 		/* The descriptor index directly identifies the pool buffer.
 		 * (We submit each pool buffer at its own descriptor index.) */
-		if (desc_id < NUM_EVENT_BUFS && len >= sizeof(struct virtio_input_event)) {
-			/* Process the event the device wrote */
-			struct virtio_input_event ev = event_pool[desc_id];
+		if (desc_id < NUM_EVENT_BUFS) {
+			/* Process the event the device wrote (if it wrote one) */
+			if (len >= sizeof(struct virtio_input_event)) {
+				struct virtio_input_event ev = event_pool[desc_id];
+				vi_push_event(&ev);
+			}
 
-			/* Re-submit this buffer for the next event,
-			 * using its dedicated descriptor index. */
+			/* Re-submit this buffer for the next event, using its
+			 * dedicated descriptor index.  Re-submission is
+			 * UNCONDITIONAL: every buffer the device returns must
+			 * go back on the queue, or the pool is permanently
+			 * depleted (a short/zero-length used entry would
+			 * otherwise orphan the buffer and starve the queue
+			 * once all 64 are gone). */
 			descs[desc_id].addr  = (uint64_t)(uintptr_t)&event_pool[desc_id];
 			descs[desc_id].len   = (uint32_t)sizeof(event_pool[desc_id]);
 			descs[desc_id].flags = VRING_DESC_F_WRITE;
@@ -442,9 +450,6 @@ static void vi_process_events(struct vi_vq *q)
 			__asm__ volatile("" ::: "memory");
 			avail->idx++;
 			__asm__ volatile("" ::: "memory");
-
-			/* Queue event for processing */
-			vi_push_event(&ev);
 		}
 
 		processed++;
