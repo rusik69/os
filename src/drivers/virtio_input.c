@@ -4,7 +4,6 @@
  * Implements VirtIO input (keyboard, mouse, touchscreen, tablet)
  * for PCI device 1AF4:1052 (virtio-input).  Supports:
  *   - Event virtqueue (vq 0) for receiving input events
- *   - Status virtqueue (vq 1) for sending feedback events
  *   - VirtIO input configuration for capability discovery
  *   - Multi-touch protocol type B with slot tracking
  *   - Keyboard, mouse, and touch event forwarding
@@ -128,14 +127,10 @@ struct vi_vq {
 
 static int              input_present = 0;
 static uint16_t         input_iobase  = 0;
-static uint32_t         input_features = 0;
 static struct pci_device input_pci_dev;
 
 /* Event virtqueue (index 0) — device sends events on this */
 static struct vi_vq event_vq;
-
-/* Status virtqueue (index 1) — driver sends feedback/leds */
-static struct vi_vq status_vq;
 
 /* ── Multi-touch state ─────────────────────────────────────────── */
 
@@ -787,18 +782,23 @@ static void virtio_input_init(void)
 	vi_outb(VIRTIO_PCI_STATUS,
 		VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
-	/* Negotiate features using the enhanced negotiator */
+	/* Negotiate features using the enhanced negotiator.
+	 * VIRTIO_INPUT_F_EVENTS (bit 0) is the only feature offered: the
+	 * event virtqueue (vq 0) fully implements it.  VIRTIO_INPUT_F_STATUS
+	 * (bit 1) would promise the device that this driver consumes
+	 * status-virtqueue feedback events (LEDs, beeps); no such sender
+	 * exists in this kernel, so offering it would claim a capability
+	 * the driver cannot honour (upstream Linux virtio_input likewise
+	 * negotiates EVENTS only). */
 	if (virtio_negotiate_features_ex(
 		vi_inl, vi_outl, vi_outb, vi_inb,
-		VIRTIO_INPUT_F_EVENTS | VIRTIO_INPUT_F_STATUS,
+		VIRTIO_INPUT_F_EVENTS,
 		VIRTIO_INPUT_F_EVENTS,
 		NULL /* feat_table — no input-specific feature table yet */,
 		"virtio-input") < 0) {
 		kprintf("[VIRTIO-INPUT] feature negotiation failed\n");
 		return;
 	}
-
-	input_features = vi_inl(VIRTIO_PCI_GUEST_FEAT);
 
 	/* Read device capabilities before setting up queues */
 	vi_read_capabilities();
@@ -807,15 +807,6 @@ static void virtio_input_init(void)
 	if (vi_init_vq(&event_vq, 0) < 0) {
 		kprintf("[VIRTIO-INPUT] event queue init failed\n");
 		return;
-	}
-
-	/* Initialize status virtqueue (queue 1) if supported */
-	if (input_features & VIRTIO_INPUT_F_STATUS) {
-		if (vi_init_vq(&status_vq, 1) < 0) {
-			kprintf("[VIRTIO-INPUT] status queue init failed\n");
-			/* Non-fatal — continue without status queue */
-			status_vq.initialized = 0;
-		}
 	}
 
 	/* Set FEATURES_OK */
@@ -861,10 +852,9 @@ static void virtio_input_init(void)
 	spinlock_init(&event_lock);
 
 	kprintf("[VIRTIO-INPUT] VirtIO input (multi-touch capable) "
-		"at %02x:%02x.%d, I/O 0x%04x, event vq=%s%s\n",
+		"at %02x:%02x.%d, I/O 0x%04x, event vq=%s\n",
 		dev.bus, dev.slot, dev.func, input_iobase,
-		event_vq.initialized ? "OK" : "FAIL",
-		status_vq.initialized ? " status=OK" : "");
+		event_vq.initialized ? "OK" : "FAIL");
 
 	/* Collect initial events */
 	vi_process_events(&event_vq);
