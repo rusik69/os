@@ -34,16 +34,21 @@
 
 /* ── Ring constants ────────────────────────────────────────────── */
 
-#define VRING_SIZE             16
-/* Legacy layout: desc table (256B) + avail + used ring page-aligned at
- * offset 4096; 8192 bytes covers desc+avail and the full used ring. */
-#define QUEUE_MEM_SIZE         8192
+/* Maximum number of ring entries this driver can support.  The actual
+ * ring size is the device's QUEUE_SIZE: the ring geometry below MUST be
+ * derived from it, or the device writes its used ring over unrelated
+ * driver memory (see vrng_init_queue). */
+#define VRING_MAX_SIZE         256
+/* 12288 bytes (3 pages) covers a full 256-entry ring: descriptor table
+ * (256*16 = 4096) + avail ring (2+2+512 = 516) + page-aligned used ring
+ * (2+2+2048 = 2052) = 10244 bytes, rounded up to 3 pages. */
+#define QUEUE_MEM_SIZE         12288
 
 /* Descriptor flags */
 #define VRING_DESC_F_NEXT      1
 #define VRING_DESC_F_WRITE     2
 
-/* ── Virtio ring structures (packed, legacy layout) ────────────── */
+/* ── Virtio ring structures (split ring, legacy layout) ────────── */
 
 #pragma pack(push, 1)
 struct vring_desc {
@@ -56,7 +61,7 @@ struct vring_desc {
 struct vring_avail {
     uint16_t flags;
     uint16_t idx;
-    uint16_t ring[VRING_SIZE];
+    uint16_t ring[VRING_MAX_SIZE];
 };
 
 struct vring_used_elem { uint32_t id; uint32_t len; };
@@ -64,7 +69,7 @@ struct vring_used_elem { uint32_t id; uint32_t len; };
 struct vring_used {
     uint16_t flags;
     uint16_t idx;
-    struct vring_used_elem ring[VRING_SIZE];
+    struct vring_used_elem ring[VRING_MAX_SIZE];
 };
 #pragma pack(pop)
 
@@ -76,6 +81,12 @@ struct vrng_queue {
 
     /* Queue index (always 0 for legacy RNG) */
     uint16_t queue_idx;
+
+    /* Device queue size (QUEUE_SIZE register).  The ring geometry below
+     * is derived from this value, which for legacy virtio-pci is
+     * device-fixed: it MUST match the driver's layout or the device
+     * writes its used ring over unrelated driver memory. */
+    uint16_t qsize;
 
     /* Virtual queue pointers into mem[] */
     struct vring_desc  *descs;
@@ -133,20 +144,54 @@ static int vrng_init_queue(void)
     /* Select queue 0 */
     vrng_select_queue(0);
 
+    /* Read the device's queue size.  For legacy virtio-pci, QUEUE_SIZE
+     * is device-fixed: the ring geometry below MUST match it exactly, or
+     * the device writes its used ring over unrelated driver memory and
+     * completions are never observed at the driver's expected location. */
+    uint16_t qsz = vrng_inw(VIRTIO_PCI_QUEUE_SIZE);
+    if (qsz == 0 || qsz > VRING_MAX_SIZE) {
+        kprintf("[VIRTIO-RNG] unsupported queue size %u (max %u)\n",
+                (unsigned int)qsz, (unsigned int)VRING_MAX_SIZE);
+        return -1;
+    }
+    q->qsize = qsz;
+
     /* Point the device at our queue memory (physical page number) */
     uint64_t phys = (uint64_t)(uintptr_t)q->mem;
     vrng_outl(VIRTIO_PCI_QUEUE_PFN, (uint32_t)(phys >> 12));
 
-    /* Set up ring pointers into the queue memory */
+    /* Verify the device accepted the queue allocation (legacy virtio spec):
+     * after writing QUEUE_PFN, the device writes 0 if it cannot accept it. */
+    if (vrng_inl(VIRTIO_PCI_QUEUE_PFN) == 0) {
+        kprintf("[VIRTIO-RNG] device rejected queue PFN 0x%x\n",
+                (unsigned int)(phys >> 12));
+        return -1;
+    }
+
+    /* Set up ring pointers into the queue memory per the device's queue
+     * size: descriptor table (16 bytes each), avail ring immediately after,
+     * used ring at the next 4 KiB boundary (legacy vring alignment). */
     q->descs = (struct vring_desc *)q->mem;
     q->avail = (struct vring_avail *)(q->mem +
-                  sizeof(struct vring_desc) * VRING_SIZE);
-    q->used  = (struct vring_used  *)(q->mem + 4096);
+                  sizeof(struct vring_desc) * q->qsize);
+
+    uint32_t avail_end =
+        (uint32_t)sizeof(struct vring_desc) * q->qsize + 2 + 2 +
+        (uint32_t)q->qsize * 2;
+    uint32_t used_off = (avail_end + 4095) & ~4095u;
+    if (used_off + 2 + 2 + 8u * q->qsize > QUEUE_MEM_SIZE) {
+        kprintf("[VIRTIO-RNG] queue ring (%u descriptors) does not fit "
+                "in %u bytes of queue memory\n",
+                (unsigned int)q->qsize, (unsigned int)QUEUE_MEM_SIZE);
+        return -1;
+    }
+    q->used = (struct vring_used *)(q->mem + used_off);
 
     q->last_used_idx = 0;
     q->initialized   = 1;
 
-    kprintf("[VIRTIO-RNG] queue 0 initialised (vring_size=%d)\n", VRING_SIZE);
+    kprintf("[VIRTIO-RNG] queue 0 initialised (vring_size=%u)\n",
+            (unsigned int)q->qsize);
     return 0;
 }
 
@@ -169,7 +214,7 @@ static int vrng_read_entropy(void *buf, uint32_t len)
 
     /* Submit to the avail ring */
     uint16_t prev_used = used->idx;
-    uint16_t avail_idx = avail->idx & (VRING_SIZE - 1);
+    uint16_t avail_idx = (uint16_t)(avail->idx % q->qsize);
     avail->ring[avail_idx] = 0;  /* descriptor index 0 (head of chain) */
     __asm__ volatile("" ::: "memory");
     avail->idx++;
@@ -182,7 +227,7 @@ static int vrng_read_entropy(void *buf, uint32_t len)
     /* Busy-wait for completion */
     uint32_t timeout = 100000;
     while (used->idx == prev_used && timeout--) {
-        __asm__ volatile("pause");
+        __asm__ volatile("pause" ::: "memory");
     }
 
     if (timeout == 0) {
@@ -193,7 +238,7 @@ static int vrng_read_entropy(void *buf, uint32_t len)
     /* The device wrote the random data; return how many bytes it wrote.
      * Clamp the device-reported length: a bogus used len must not make
      * rng_add_entropy() read past entropy_buf. */
-    uint16_t used_idx_ent = (prev_used) & (VRING_SIZE - 1);
+    uint16_t used_idx_ent = (uint16_t)(prev_used % q->qsize);
     uint32_t actual_len = used->ring[used_idx_ent].len;
     if (actual_len > len)
         actual_len = len;
