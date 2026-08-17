@@ -55,11 +55,12 @@
  *   TX offload (TSO/GSO/GRO):
  *     - VIRTIO_NET_F_HOST_TSO4:        host can receive TSOv4 (TX offload)
  *     - VIRTIO_NET_F_HOST_TSO6:        host can receive TSOv6 (TX offload)
- *     - VIRTIO_NET_F_HOST_ECN:         host can receive TSO with ECN
  *     - VIRTIO_NET_F_HOST_UFO:         host can receive UFO (TX offload)
  *     - VIRTIO_NET_F_CSUM:             host can compute checksums (TX csum offload)
  *     - VIRTIO_NET_F_GSO:              generic segmentation offload
  *     - VIRTIO_NET_F_MRG_RXBUF:        mergeable RX buffers (for GRO)
+ *   (HOST_ECN is NOT claimed: the TX path never emits GSO_TCP_ECN, so
+ *    the device must not be led to expect ECN-aware segmentation.)
  *   Common:
  *     - VIRTIO_F_NOTIFY_ON_EMPTY:      notify when avail ring goes empty
  */
@@ -69,7 +70,7 @@
      VIRTIO_NET_F_GUEST_ECN | VIRTIO_NET_F_GUEST_UFO | \
      VIRTIO_NET_F_GUEST_CSUM | \
      VIRTIO_NET_F_HOST_TSO4 | VIRTIO_NET_F_HOST_TSO6 | \
-     VIRTIO_NET_F_HOST_ECN | VIRTIO_NET_F_HOST_UFO | \
+     VIRTIO_NET_F_HOST_UFO | \
      VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GSO | \
      VIRTIO_NET_F_MRG_RXBUF | \
      VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_CTRL_RX | \
@@ -2184,6 +2185,7 @@ int virtio_net_send(const uint8_t *data, uint32_t len) {
 
     if (vnet_negotiated_features & (VIRTIO_NET_F_HOST_TSO4 |
                                      VIRTIO_NET_F_HOST_TSO6 |
+                                     VIRTIO_NET_F_HOST_UFO |
                                      VIRTIO_NET_F_CSUM |
                                      VIRTIO_NET_F_GSO)) {
         if (parse_packet_offload(data, len, &oinfo) == 0)
@@ -2191,7 +2193,18 @@ int virtio_net_send(const uint8_t *data, uint32_t len) {
     }
 
     if (can_offload && oinfo.gso_type != VIRTIO_NET_HDR_GSO_NONE &&
-        (vnet_negotiated_features & VIRTIO_NET_F_GSO)) {
+        (vnet_negotiated_features & VIRTIO_NET_F_GSO) &&
+        /* The generic VIRTIO_NET_F_GSO bit alone is not enough: each
+         * gso_type additionally requires its own negotiated host
+         * feature (virtio spec 5.1.3.1 — Linux gates TSOv4 on
+         * HOST_TSO4, TSOv6 on HOST_TSO6, UFO on HOST_UFO). */
+        (((oinfo.gso_type == VIRTIO_NET_HDR_GSO_TCPV4 ||
+           oinfo.gso_type == VIRTIO_NET_HDR_GSO_TCP_ECN) &&
+          (vnet_negotiated_features & VIRTIO_NET_F_HOST_TSO4)) ||
+         (oinfo.gso_type == VIRTIO_NET_HDR_GSO_TCPV6 &&
+          (vnet_negotiated_features & VIRTIO_NET_F_HOST_TSO6)) ||
+         (oinfo.gso_type == VIRTIO_NET_HDR_GSO_UDP &&
+          (vnet_negotiated_features & VIRTIO_NET_F_HOST_UFO)))) {
         /* ── TSO/GSO hardware offload ── */
         setup_tx_hdr_offload(&tx_hdr, &oinfo);
         memcpy(tx_pkt_buf, data, len);
@@ -2206,6 +2219,22 @@ int virtio_net_send(const uint8_t *data, uint32_t len) {
         descs[1].next  = 0;
 
         tx_offload_stats.tso_packets++;
+
+    } else if (can_offload && oinfo.gso_type != VIRTIO_NET_HDR_GSO_NONE &&
+               oinfo.payload_len > DEFAULT_MSS &&
+               /* virtio_net_sw_gso() only segments TCPv4/TCPv6/ECN —
+                * it has no UDP header fixup.  A large UDP packet whose
+                * HOST_UFO was not negotiated falls through to the
+                * checksum-only/raw path instead of being mis-segmented. */
+               oinfo.gso_type != VIRTIO_NET_HDR_GSO_UDP) {
+        /* ── Software GSO fallback (device lacks HW TSO for this type,
+         * or GSO/per-type feature not negotiated).  Must run before the
+         * checksum-only branch so a >MSS packet is segmented in software
+         * instead of being handed to the device as one unsegmentable
+         * oversized frame. ── */
+        tx_offload_stats.sw_gso_packets++;
+        tx_offload_stats.sw_gso_bytes += len;
+        return virtio_net_sw_gso(data, len);
 
     } else if (can_offload && oinfo.needs_csum &&
                (vnet_negotiated_features & VIRTIO_NET_F_CSUM)) {
@@ -2223,13 +2252,6 @@ int virtio_net_send(const uint8_t *data, uint32_t len) {
         descs[1].next  = 0;
 
         tx_offload_stats.csum_offload++;
-
-    } else if (can_offload && oinfo.gso_type != VIRTIO_NET_HDR_GSO_NONE &&
-               oinfo.payload_len > DEFAULT_MSS) {
-        /* ── Software GSO fallback (device doesn't support HW TSO) ── */
-        tx_offload_stats.sw_gso_packets++;
-        tx_offload_stats.sw_gso_bytes += len;
-        return virtio_net_sw_gso(data, len);
 
     } else {
         /* ── Raw send (no offload) ── */
