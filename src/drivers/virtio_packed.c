@@ -346,15 +346,29 @@ int virtio_packed_get_buf(struct virtio_packed_vq *vq, uint32_t *len_out)
 
 	/* Return the descriptor index */
 	if (desc->flags & VRING_DESC_F_NEXT) {
-		/* For chained descriptors, return the head index */
+		/*
+		 * Chained descriptors: the device marks every descriptor of a
+		 * used chain, and each chain descriptor occupies its own ring
+		 * slot, so the whole chain must be consumed here — not just
+		 * the head.  Advancing last_used by a single slot would leave
+		 * it mid-chain (the next get_buf would see the second
+		 * descriptor's USED bit and double-complete the same I/O) and
+		 * under-count free_count by n-1 per chain, wedging the ring
+		 * as "full" while slots are still free.
+		 */
 		uint16_t ret_idx = idx;
 
-		vq->last_used = (uint16_t)((idx + 1) & (vq->queue_size - 1));
-		vq->free_count++;
+		do {
+			vq->last_used =
+				(uint16_t)((vq->last_used + 1) & (vq->queue_size - 1));
+			vq->free_count++;
 
-		/* Toggle used_wrap on wraparound */
-		if (vq->last_used == 0)
-			vq->used_wrap ^= 1;
+			/* Toggle used_wrap on wraparound */
+			if (vq->last_used == 0)
+				vq->used_wrap ^= 1;
+
+			desc = &vq->ring->desc[vq->last_used];
+		} while (desc->flags & VRING_DESC_F_NEXT);
 
 		return (int)ret_idx;
 	}
