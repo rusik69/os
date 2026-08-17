@@ -377,22 +377,6 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
     struct ext2_superblock sb;
     memcpy(&sb, sb_buf, sizeof(sb));
 
-    /* Report superblock info before check (S153) */
-    if (!(flags & FSCK_FLAG_QUIET)) {
-        kprintf("[FSCK] Superblock info: %u inodes, %u blocks, "
-                "block_size=%u, %u groups, state=0x%04x, "
-                "mount_count=%u/%u, magic=0x%04x\n",
-                (unsigned int)sb.s_inodes_count,
-                (unsigned int)sb.s_blocks_count,
-                (unsigned int)block_size,
-                (unsigned int)(((uint64_t)sb.s_blocks_count + sb.s_blocks_per_group - 1)
-                               / sb.s_blocks_per_group),
-                (unsigned int)sb.s_state,
-                (unsigned int)sb.s_mnt_count,
-                (unsigned int)sb.s_max_mnt_count,
-                (unsigned int)sb.s_magic);
-    }
-
     /* Superblock magic check (S148) */
     if (sb.s_magic != EXT2_SUPER_MAGIC) {
         kprintf("[FSCK] ERROR: Bad superblock magic 0x%04x (expected 0xEF53)\n",
@@ -401,11 +385,60 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
         return -EFSCORRUPTED;
     }
 
+    /* Step 1: Validate superblock geometry BEFORE any block-group
+     * arithmetic (mirrors fsck_check_superblock()).  Without this, a
+     * corrupt superblock with s_blocks_per_group == 0 divides by zero
+     * in the num_groups computation below, s_log_block_size >= 22 makes
+     * the 1024U << s_log_block_size shift overflow/wrap block_size, and
+     * per-group counts exceeding the block_size*8 bitmap bit coverage
+     * cause out-of-bounds bitmap scans plus uint32 overflow in the
+     * group index arithmetic (g * inodes_per_group). */
+    if (sb.s_inodes_count == 0 || sb.s_blocks_count == 0 ||
+        sb.s_blocks_per_group == 0 || sb.s_inodes_per_group == 0 ||
+        sb.s_log_block_size > 5) {
+        kprintf("[FSCK] ERROR: Superblock geometry invalid "
+                "(inodes=%u blocks=%u blocks_per_group=%u "
+                "inodes_per_group=%u log_block_size=%u)\n",
+                (unsigned int)sb.s_inodes_count,
+                (unsigned int)sb.s_blocks_count,
+                (unsigned int)sb.s_blocks_per_group,
+                (unsigned int)sb.s_inodes_per_group,
+                (unsigned int)sb.s_log_block_size);
+        if (errors_out) *errors_out = 1;
+        return -EFSCORRUPTED;
+    }
+
     block_size = 1024U << sb.s_log_block_size;
+    if (sb.s_blocks_per_group > block_size * 8 ||
+        sb.s_inodes_per_group > block_size * 8) {
+        kprintf("[FSCK] ERROR: Per-group counts exceed bitmap coverage "
+                "(block_size=%u blocks_per_group=%u inodes_per_group=%u)\n",
+                (unsigned int)block_size,
+                (unsigned int)sb.s_blocks_per_group,
+                (unsigned int)sb.s_inodes_per_group);
+        if (errors_out) *errors_out = 1;
+        return -EFSCORRUPTED;
+    }
+
     uint32_t blocks_per_group = sb.s_blocks_per_group;
     uint32_t inodes_per_group = sb.s_inodes_per_group;
     uint32_t num_groups = (uint32_t)(((uint64_t)sb.s_blocks_count + blocks_per_group - 1)
                           / blocks_per_group);
+
+    /* Report superblock info before check (S153) */
+    if (!(flags & FSCK_FLAG_QUIET)) {
+        kprintf("[FSCK] Superblock info: %u inodes, %u blocks, "
+                "block_size=%u, %u groups, state=0x%04x, "
+                "mount_count=%u/%u, magic=0x%04x\n",
+                (unsigned int)sb.s_inodes_count,
+                (unsigned int)sb.s_blocks_count,
+                (unsigned int)block_size,
+                (unsigned int)num_groups,
+                (unsigned int)sb.s_state,
+                (unsigned int)sb.s_mnt_count,
+                (unsigned int)sb.s_max_mnt_count,
+                (unsigned int)sb.s_magic);
+    }
 
     /* Check mount count */
     if (sb.s_max_mnt_count > 0 &&
@@ -508,9 +541,9 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
         uint32_t inodes_in_group = inodes_per_group;
         if (g == num_groups - 1) {
             uint32_t total_inodes_sb = sb.s_inodes_count;
-            uint32_t used = g * inodes_per_group;
+            uint64_t used = (uint64_t)g * inodes_per_group;
             inodes_in_group = (total_inodes_sb > used)
-                              ? (total_inodes_sb - used) : 0;
+                              ? (uint32_t)(total_inodes_sb - used) : 0;
         }
 
         /* ── Step 3a: Check block bitmap (S148) ──────────────────── */
@@ -603,9 +636,10 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
         if (inode_size > 512) inode_size = 512;
 
         for (uint32_t ii = 0; ii < inodes_in_group; ii++) {
-            uint32_t ino = g * inodes_per_group + ii + 1;
-            if (ino > sb.s_inodes_count)
+            uint64_t ino64 = (uint64_t)g * inodes_per_group + ii + 1;
+            if (ino64 > sb.s_inodes_count)
                 break;
+            uint32_t ino = (uint32_t)ino64;
 
             /* Skip if inode is not allocated */
             if (!bitmap_test(inode_bitmap, ii))
@@ -798,8 +832,8 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
             uint32_t inodes_in_group = inodes_per_group;
             if (g == num_groups - 1) {
                 uint32_t total = sb.s_inodes_count;
-                uint32_t used = g * inodes_per_group;
-                inodes_in_group = (total > used) ? (total - used) : 0;
+                uint64_t used = (uint64_t)g * inodes_per_group;
+                inodes_in_group = (total > used) ? (uint32_t)(total - used) : 0;
             }
 
             uint32_t inode_size = sb.s_inode_size;
@@ -807,9 +841,10 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
             if (inode_size > 512) inode_size = 512;
 
             for (uint32_t ii = 0; ii < inodes_in_group; ii++) {
-                uint32_t ino = g * inodes_per_group + ii + 1;
-                if (ino > sb.s_inodes_count)
+                uint64_t ino64 = (uint64_t)g * inodes_per_group + ii + 1;
+                if (ino64 > sb.s_inodes_count)
                     break;
+                uint32_t ino = (uint32_t)ino64;
 
                 /* Read inode (start from the sector containing it
                  * to avoid stack overflow on large blocks) */
@@ -877,14 +912,15 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
             uint32_t inodes_in_group = inodes_per_group;
             if (g == num_groups - 1) {
                 uint32_t total = sb.s_inodes_count;
-                uint32_t used = g * inodes_per_group;
-                inodes_in_group = (total > used) ? (total - used) : 0;
+                uint64_t used = (uint64_t)g * inodes_per_group;
+                inodes_in_group = (total > used) ? (uint32_t)(total - used) : 0;
             }
 
             for (uint32_t ii = 0; ii < inodes_in_group; ii++) {
-                uint32_t ino = g * inodes_per_group + ii + 1;
-                if (ino > sb.s_inodes_count)
+                uint64_t ino64 = (uint64_t)g * inodes_per_group + ii + 1;
+                if (ino64 > sb.s_inodes_count)
                     break;
+                uint32_t ino = (uint32_t)ino64;
                 if (ino >= total_inodes)
                     break;
 
