@@ -2502,16 +2502,70 @@ int virtio_net_receive(void *buf, uint16_t max_len) {
     struct virtio_net_hdr *vhdr = (struct virtio_net_hdr *)rx_pkt_bufs[id];
 
     /* Determine number of buffers in this mergeable RX buffer chain.
-     * When VIRTIO_NET_F_MRG_RXBUF is negotiated, the device may chain
-     * multiple descriptors for a single packet.  num_buffers tells us
-     * how many descriptors were consumed, and we must walk the chain
-     * via next pointers to read data from all buffers and recycle each. */
+     * When VIRTIO_NET_F_MRG_RXBUF is negotiated, the device may use
+     * multiple buffers for a single packet and reports the count in
+     * num_buffers. */
     uint16_t num_bufs = 1;
     if (vnet_negotiated_features & VIRTIO_NET_F_MRG_RXBUF) {
         num_bufs = vhdr->num_buffers;
         if (num_bufs == 0 || num_bufs > VRING_SIZE)
             num_bufs = 1;
     }
+
+    /* Resolve the full chain of buffer ids up front.  The mergeable-RX
+     * contract is that a packet spanning N buffers yields N consecutive
+     * used elements — ONE PER BUFFER, each carrying that buffer's own
+     * descriptor id and the byte count written into it — with used->idx
+     * advanced by N (QEMU fills all N entries before the flush; legacy
+     * split-ring devices never write descriptor-table next pointers, so
+     * walking descs[].next — which the driver itself keeps at 0 — would
+     * recycle descriptor 0 repeatedly, double-enqueuing one buffer onto
+     * the avail ring while leaking every real chain buffer).  Each
+     * buffer must therefore be recycled exactly once, and the ids come
+     * from the used ring, in order, starting right after the head. */
+    uint16_t chain_ids[VRING_SIZE];
+    uint32_t chain_lens[VRING_SIZE];
+    uint16_t nb = num_bufs;
+    int chain_incomplete = 0;
+    uint32_t head_used = (uint32_t)rx_last_used - 1; /* absolute idx of this used element */
+    chain_ids[0] = (uint16_t)id;
+    chain_lens[0] = total;
+    for (uint16_t i = 1; i < num_bufs; i++) {
+        uint32_t eidx = head_used + i;
+        /* The device publishes all entries of a merged packet before
+         * advancing used->idx; an unpublished continuation is malformed. */
+        if ((uint16_t)(used->idx - (uint16_t)eidx) == 0)
+            break;
+        uint16_t cslot = (uint16_t)(eidx % rx_qsz);
+        uint32_t cid = used->ring[cslot].id;
+        if (cid >= VRING_SIZE)
+            break;
+        /* A repeated id would make us re-post one buffer twice (double
+         * ownership) — refuse the chain rather than corrupt the ring. */
+        uint8_t dup = 0;
+        for (uint16_t j = 0; j < i; j++) {
+            if (chain_ids[j] == (uint16_t)cid) {
+                dup = 1;
+                break;
+            }
+        }
+        if (dup)
+            break;
+        chain_ids[i] = (uint16_t)cid;
+        chain_lens[i] = used->ring[cslot].len;
+        nb = (uint16_t)(i + 1);
+    }
+    if (nb < num_bufs)
+        chain_incomplete = 1;
+    /* Swallow every used element this packet consumed; the continuation
+     * entries are part of this chain, not standalone packets. */
+    rx_last_used = (uint16_t)(head_used + nb);
+
+    /* The head's used len counts header + bytes in the head buffer; the
+     * full packet payload spans all buffers of the chain. */
+    for (uint16_t i = 1; i < nb; i++)
+        plen += chain_lens[i];
+    uint32_t full_plen = plen;
 
     if (lro_enabled && vhdr->gso_type != VIRTIO_NET_HDR_GSO_NONE &&
         vhdr->hdr_len > 0 && vhdr->gso_size > 0) {
@@ -2527,79 +2581,58 @@ int virtio_net_receive(void *buf, uint16_t max_len) {
         /*
          * Start LRO segmentation.  The raw data is in rx_pkt_bufs[id]
          * starting after the virtio_net_hdr header.  We copy it to a
-         * staging area because the buffer will be recycled for new RX.
+         * staging area because the buffers will be recycled for new RX.
          */
+        if (chain_incomplete) {
+            /* Cannot reassemble a truncated/malformed chain — drop.
+             * deliver_raw_fallback still recycles the valid prefix. */
+            goto deliver_raw;
+        }
         static uint8_t lro_staging[RX_BUF_SIZE];
         uint32_t data_offset = sizeof(struct virtio_net_hdr);
-        /* Accumulate data from all buffers in the mergeable chain */
-        int chain_broken = 0;
+        /* Accumulate data from all buffers of the chain (ids come from
+         * the used ring, see the resolution above). */
         {
             uint32_t remaining = plen;
-            uint16_t cur_id = id;
             uint8_t *dst = lro_staging;
-            for (uint16_t i = 0; i < num_bufs && remaining > 0; i++) {
+            for (uint16_t i = 0; i < nb && remaining > 0; i++) {
                 uint32_t chunk = RX_BUF_SIZE;
                 if (i == 0) chunk = RX_BUF_SIZE - data_offset;
                 if (chunk > remaining) chunk = remaining;
-                memcpy(dst, rx_pkt_bufs[cur_id] + (i == 0 ? data_offset : 0), chunk);
+                memcpy(dst, rx_pkt_bufs[chain_ids[i]] + (i == 0 ? data_offset : 0), chunk);
                 dst += chunk;
                 remaining -= chunk;
-                if (i + 1 < num_bufs) {
-                    uint16_t nxt = descs[cur_id].next;
-                    if (nxt >= VRING_SIZE) {
-                        /* Malformed chain from device: keep valid prefix only */
-                        num_bufs = (uint16_t)(i + 1);
-                        chain_broken = 1;
-                        break;
-                    }
-                    cur_id = nxt;
-                }
             }
         }
 
-        /* Recycle all RX descriptors used by this packet */
+        /* Recycle every buffer of this chain — each exactly once */
         {
-            /* Device just consumed num_bufs entries, so we must have room */
-            if (!vring_avail_has_room(avail, used, num_bufs)) {
+            /* Device just consumed nb entries, so we must have room */
+            if (!vring_avail_has_room(avail, used, nb)) {
                 lro_stats.dropped_oversize++;
                 goto deliver_raw_fallback;
             }
-            uint16_t cur_id = id;
-            for (uint16_t i = 0; i < num_bufs; i++) {
-                /* Save the chain link BEFORE rewriting the descriptor:
-                 * descs[cur_id].next points to the next buffer of the
-                 * merged chain and would be lost once it is reset to 0. */
-                uint16_t nxt = 0;
-                if (i + 1 < num_bufs) {
-                    nxt = descs[cur_id].next;
-                    if (nxt >= VRING_SIZE)
-                        break; /* malformed chain: recycle only the valid prefix */
-                }
-                descs[cur_id].addr  = VIRT_TO_PHYS(rx_pkt_bufs[cur_id]);
-                descs[cur_id].len   = sizeof(rx_pkt_bufs[0]);
-                descs[cur_id].flags = VRING_DESC_F_WRITE;
-                descs[cur_id].next  = 0;
+            for (uint16_t i = 0; i < nb; i++) {
+                uint16_t cur = chain_ids[i];
+                descs[cur].addr  = VIRT_TO_PHYS(rx_pkt_bufs[cur]);
+                descs[cur].len   = sizeof(rx_pkt_bufs[0]);
+                descs[cur].flags = VRING_DESC_F_WRITE;
+                descs[cur].next  = 0;
                 uint16_t slot = (uint16_t)(avail->idx % rx_qsz);
-                avail->ring[slot] = cur_id;
+                avail->ring[slot] = cur;
                 __asm__ volatile("" ::: "memory");
                 avail->idx++;
                 __asm__ volatile("" ::: "memory");
-                cur_id = nxt;
             }
             vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, RX_QUEUE_IDX);
         }
 
-        if (chain_broken) {
-            /* Malformed descriptor chain: the valid prefix was recycled
-             * above, the tail is unrecoverable — drop the truncated packet. */
-            lro_stats.seg_failures++;
-            return 0;
-        }
-
         if (lro_start_segmentation(vhdr->gso_type, vhdr->hdr_len,
                                     vhdr->gso_size, lro_staging, plen) < 0) {
-            /* Segmentation failed — fall through to deliver raw packet */
-            goto deliver_raw_fallback;
+            /* Segmentation failed — buffers were already recycled, so the
+             * packet is dropped here and the ring stays consistent. */
+            lro_stats.seg_failures++;
+            return 0;
         }
 
         /* Deliver the first segment */
@@ -2611,80 +2644,60 @@ int virtio_net_receive(void *buf, uint16_t max_len) {
 
 deliver_raw:
     {
-        if (plen > max_len) plen = max_len;
         uint32_t data_offset = sizeof(struct virtio_net_hdr);
-        int chain_broken = 0;
-        {
+        if (chain_incomplete) {
+            /* Cannot reassemble a truncated/malformed chain — drop the
+             * packet; the valid prefix is still recycled below. */
+            plen = 0;
+        } else {
+            if (plen > max_len) plen = max_len;
+            /* Copy the packet, walking the chain buffers in used-ring
+             * order (ids resolved above) instead of descriptor next
+             * pointers that the device never writes. */
             uint32_t remaining = plen;
-            uint16_t cur_id = id;
             uint8_t *dst = (uint8_t *)buf;
-            for (uint16_t i = 0; i < num_bufs && remaining > 0; i++) {
+            for (uint16_t i = 0; i < nb && remaining > 0; i++) {
                 uint32_t chunk = RX_BUF_SIZE;
                 if (i == 0) chunk = RX_BUF_SIZE - data_offset;
                 if (chunk > remaining) chunk = remaining;
-                memcpy(dst, rx_pkt_bufs[cur_id] + (i == 0 ? data_offset : 0), chunk);
+                memcpy(dst, rx_pkt_bufs[chain_ids[i]] + (i == 0 ? data_offset : 0), chunk);
                 dst += chunk;
                 remaining -= chunk;
-                if (i + 1 < num_bufs) {
-                    uint16_t nxt = descs[cur_id].next;
-                    if (nxt >= VRING_SIZE) {
-                        /* Malformed chain from device: keep valid prefix only */
-                        num_bufs = (uint16_t)(i + 1);
-                        chain_broken = 1;
-                        break;
-                    }
-                    cur_id = nxt;
-                }
             }
-        }
-        if (chain_broken) {
-            /* Malformed chain: the prefix gets recycled below and the
-             * truncated packet is dropped instead of returning stale data. */
-            plen = 0;
-        }
 
-        /* VIRTIO_NET_F_GUEST_CSUM: when the device sets NEEDS_CSUM, the
-         * TCP/UDP checksum field holds only a payload sum — finish the
-         * pseudo-header computation here or the stack's receive-side
-         * validation silently discards the frame.  Only complete a full,
-         * untruncated frame: a clamped copy would yield a checksum that
-         * no longer matches the (larger) frame the IP length field claims. */
-        if (plen > 0 && !chain_broken &&
-            (vhdr->flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) &&
-            plen == total - skip) {
-            vnet_complete_rx_checksum((uint8_t *)buf, plen,
-                                      vhdr->csum_start, vhdr->csum_offset);
+            /* VIRTIO_NET_F_GUEST_CSUM: when the device sets NEEDS_CSUM, the
+             * TCP/UDP checksum field holds only a payload sum — finish the
+             * pseudo-header computation here or the stack's receive-side
+             * validation silently discards the frame.  Only complete a full,
+             * untruncated frame: a clamped copy would yield a checksum that
+             * no longer matches the (larger) frame the IP length field claims. */
+            if (plen > 0 &&
+                (vhdr->flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) &&
+                plen == full_plen) {
+                vnet_complete_rx_checksum((uint8_t *)buf, plen,
+                                          vhdr->csum_start, vhdr->csum_offset);
+            }
         }
     }
 
 deliver_raw_fallback:
-    /* Recycle the RX descriptor */
+    /* Recycle every buffer of this chain — each exactly once */
     {
-        /* Device just consumed num_bufs entries, so we must have room */
-        if (!vring_avail_has_room(avail, used, num_bufs)) {
+        /* Device just consumed nb entries, so we must have room */
+        if (!vring_avail_has_room(avail, used, nb)) {
             return 0;
         }
-        uint16_t cur_id = id;
-        for (uint16_t i = 0; i < num_bufs; i++) {
-            /* Save the chain link BEFORE rewriting the descriptor:
-             * descs[cur_id].next points to the next buffer of the
-             * merged chain and would be lost once it is reset to 0. */
-            uint16_t nxt = 0;
-            if (i + 1 < num_bufs) {
-                nxt = descs[cur_id].next;
-                if (nxt >= VRING_SIZE)
-                    break; /* malformed chain: recycle only the valid prefix */
-            }
-            descs[cur_id].addr  = VIRT_TO_PHYS(rx_pkt_bufs[cur_id]);
-            descs[cur_id].len   = sizeof(rx_pkt_bufs[0]);
-            descs[cur_id].flags = VRING_DESC_F_WRITE;
-            descs[cur_id].next  = 0;
+        for (uint16_t i = 0; i < nb; i++) {
+            uint16_t cur = chain_ids[i];
+            descs[cur].addr  = VIRT_TO_PHYS(rx_pkt_bufs[cur]);
+            descs[cur].len   = sizeof(rx_pkt_bufs[0]);
+            descs[cur].flags = VRING_DESC_F_WRITE;
+            descs[cur].next  = 0;
             uint16_t slot = (uint16_t)(avail->idx % rx_qsz);
-            avail->ring[slot] = cur_id;
+            avail->ring[slot] = cur;
             __asm__ volatile("" ::: "memory");
             avail->idx++;
             __asm__ volatile("" ::: "memory");
-            cur_id = nxt;
         }
         vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, RX_QUEUE_IDX);
     }
