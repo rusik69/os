@@ -70,26 +70,33 @@ static inline uint32_t vio_inl(uint8_t off)
 int virtio_iommu_map(uint64_t virt_start, uint64_t virt_end,
                       uint64_t phys_start, uint32_t flags)
 {
-    if (virtio_iommu_num_mappings >= VIRTIO_IOMMU_MAX_MAPPINGS)
-        return -1;
+    struct virtio_iommu_map_entry *entry = NULL;
 
-    struct virtio_iommu_map_entry *entry =
-        &virtio_iommu_mappings[virtio_iommu_num_mappings];
-
-    /* Check for overlap with existing entries */
+    /* Find a reusable slot; drop any overlapping existing mappings. */
     for (int i = 0; i < virtio_iommu_num_mappings; i++) {
         struct virtio_iommu_map_entry *e = &virtio_iommu_mappings[i];
-        if (e->used) {
-            /* Check if ranges overlap */
-            if (virt_start <= e->virt_end && virt_end >= e->virt_start) {
-                kprintf("[VIRTIO-IOMMU] WARNING: mapping overlap "
-                        "0x%llx-0x%llx with existing 0x%llx-0x%llx\n",
-                        virt_start, virt_end,
-                        e->virt_start, e->virt_end);
-                /* Overwrite the old entry (simple: delete then add) */
-                e->used = 0;
-            }
+        if (!e->used) {
+            if (!entry)
+                entry = e;              /* free slot candidate */
+            continue;
         }
+        /* Check if ranges overlap */
+        if (virt_start <= e->virt_end && virt_end >= e->virt_start) {
+            kprintf("[VIRTIO-IOMMU] WARNING: mapping overlap "
+                    "0x%llx-0x%llx with existing 0x%llx-0x%llx\n",
+                    virt_start, virt_end,
+                    e->virt_start, e->virt_end);
+            /* Drop the old mapping and reuse its slot (delete then add) */
+            e->used = 0;
+            entry = e;
+        }
+    }
+
+    if (!entry) {
+        if (virtio_iommu_num_mappings >= VIRTIO_IOMMU_MAX_MAPPINGS)
+            return -1;
+        entry = &virtio_iommu_mappings[virtio_iommu_num_mappings];
+        virtio_iommu_num_mappings++;
     }
 
     entry->virt_start = virt_start;
@@ -98,8 +105,6 @@ int virtio_iommu_map(uint64_t virt_start, uint64_t virt_end,
     entry->flags      = flags;
     entry->domain     = 0; /* default domain */
     entry->used       = 1;
-
-    virtio_iommu_num_mappings++;
 
     kprintf("[VIRTIO-IOMMU] MAP 0x%llx-0x%llx → phys 0x%llx flags=0x%x\n",
             virt_start, virt_end, phys_start, flags);
@@ -257,10 +262,23 @@ int virtio_iommu_init(void)
         vio_outb(VIRTIO_PCI_STATUS, 0);
         vio_outb(VIRTIO_PCI_STATUS, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
-        /* Negotiate features */
-        virtio_negotiate_features_ex(vio_inl, vio_outl, vio_outb, vio_inb,
-                                     VIRTIO_IOMMU_F_MAP_UNMAP | VIRTIO_IOMMU_F_BYPASS,
-                                     0, NULL, "virtio-iommu");
+        /* Negotiate features.  The driver implements all IOMMU logic in
+         * software (local mapping table + identity fallback) and never
+         * submits MAP/UNMAP/ATTACH requests through a virtqueue, so it
+         * must not claim device features (VIRTIO_IOMMU_F_MAP_UNMAP,
+         * VIRTIO_IOMMU_F_BYPASS, ...) it cannot back with an
+         * implementation. */
+        if (virtio_negotiate_features_ex(vio_inl, vio_outl, vio_outb, vio_inb,
+                                         0, 0, NULL, "virtio-iommu") < 0) {
+            /* Reset the device and continue in software-only mode; do NOT
+             * set DRIVER_OK on a device that rejected FEATURES_OK. */
+            vio_outb(VIRTIO_PCI_STATUS, 0);
+            virtio_iommu_iobase = 0;
+            virtio_iommu_initialized = 1;
+            kprintf("[VIRTIO-IOMMU] feature negotiation failed; "
+                    "continuing in software-only mode\n");
+            return 0;
+        }
 
         /* Driver OK */
         vio_outb(VIRTIO_PCI_STATUS,
