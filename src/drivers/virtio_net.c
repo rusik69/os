@@ -469,6 +469,110 @@ static uint16_t lro_tcp_csum4(uint32_t src_ip, uint32_t dst_ip,
     return (uint16_t)~sum;
 }
 
+/* ── Complete a device-supplied partial transport checksum ─────────
+ * When VIRTIO_NET_F_GUEST_CSUM has been negotiated, the device may set
+ * VIRTIO_NET_HDR_F_NEEDS_CSUM in the virtio header of a received frame:
+ * the TCP/UDP checksum field holds only the payload sum and the driver
+ * must add the pseudo-header and finish the ones-complement fold before
+ * handing the frame to the stack (virtio spec §5.1.6.2.2).  The socket
+ * layer (net_tcp.c handle_tcp / net_udp.c handle_udp) validates the
+ * checksum on receive and silently drops mismatches, so frames left
+ * uncompleted would be discarded — claiming GUEST_CSUM without this
+ * step would be claiming a feature the driver cannot honour.
+ *
+ * 'frame' is the assembled Ethernet frame (virtio header stripped),
+ * 'len' its length, 'csum_start' the offset from the frame start to the
+ * start of the transport header being checksummed and 'csum_offset' the
+ * offset from there to the 2-byte checksum field.  The computation
+ * mirrors net_transport_checksum() so the completed value matches the
+ * stack's receive validation exactly.  Only IPv4 TCP/UDP frames are
+ * completed — the stack's transport checksum helper is IPv4-only —
+ * non-IP frames are left untouched (they are never checksum-offloaded).
+ */
+static void vnet_complete_rx_checksum(uint8_t *frame, uint32_t len,
+                                      uint16_t csum_start, uint16_t csum_offset)
+{
+    struct eth_header *eth;
+    struct ip_header *ip;
+    struct tcp_pseudo pseudo;
+    uint16_t eth_type;
+    uint8_t *ck_field;
+    uint8_t *data;
+    uint16_t data_len;
+    uint32_t sum = 0;
+    int ihl;
+    int i;
+
+    /* Bounds: Ethernet header + full IPv4 header must fit, the checksum
+     * field must lie within the frame, and the checksummed transport
+     * region must start after the IP header. */
+    if (len < sizeof(struct eth_header) + sizeof(struct ip_header))
+        return;
+    if ((uint32_t)csum_start + (uint32_t)csum_offset + 2 > len)
+        return;
+    if (csum_start < sizeof(struct eth_header))
+        return;
+
+    eth = (struct eth_header *)frame;
+    eth_type = ntohs(eth->type);
+    if (eth_type != ETH_TYPE_IP)
+        return;  /* IPv4 only: stack's transport checksum is IPv4-only */
+
+    ip = (struct ip_header *)(frame + sizeof(struct eth_header));
+    ihl = (ip->version_ihl & 0x0F) * 4;
+    if (ihl < (int)sizeof(struct ip_header) ||
+        sizeof(struct eth_header) + (uint32_t)ihl > len)
+        return;
+    if (csum_start < sizeof(struct eth_header) + (uint32_t)ihl)
+        return;
+
+    data = frame + csum_start;
+    data_len = (uint16_t)(len - csum_start);
+    ck_field = frame + csum_start + csum_offset;
+
+    /* Pseudo-header (RFC 793): src, dst, zero, protocol, transport length.
+     * ip->src_ip/dst_ip are already network order, same layout the stack
+     * builds in net_transport_checksum(). */
+    pseudo.src_ip   = ip->src_ip;
+    pseudo.dst_ip   = ip->dst_ip;
+    pseudo.zero     = 0;
+    pseudo.protocol = ip->protocol;
+    pseudo.tcp_len  = htons(data_len);
+
+    {
+        const uint8_t *pb = (const uint8_t *)&pseudo;
+        for (i = 0; i < (int)sizeof(pseudo); i += 2) {
+            uint16_t w;
+            __builtin_memcpy(&w, pb + i, 2);
+            sum += w;
+        }
+    }
+
+    /* Zero the checksum field, then sum the transport segment */
+    ck_field[0] = 0;
+    ck_field[1] = 0;
+    {
+        const uint8_t *dp = data;
+        int dl = (int)data_len;
+        while (dl > 1) {
+            uint16_t w;
+            __builtin_memcpy(&w, dp, 2);
+            sum += w;
+            dp += 2;
+            dl -= 2;
+        }
+        if (dl == 1)
+            sum += *dp;
+    }
+
+    while (sum >> 16)
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    {
+        uint16_t ck = (uint16_t)~sum;
+        __builtin_memcpy(ck_field, &ck, 2);
+    }
+}
+
 /* ── Segment a single TCPv4 LRO packet ─────────────────────────────
  *
  * Called once when an LRO packet is first received.  Stores state in
@@ -2482,6 +2586,19 @@ deliver_raw:
             /* Malformed chain: the prefix gets recycled below and the
              * truncated packet is dropped instead of returning stale data. */
             plen = 0;
+        }
+
+        /* VIRTIO_NET_F_GUEST_CSUM: when the device sets NEEDS_CSUM, the
+         * TCP/UDP checksum field holds only a payload sum — finish the
+         * pseudo-header computation here or the stack's receive-side
+         * validation silently discards the frame.  Only complete a full,
+         * untruncated frame: a clamped copy would yield a checksum that
+         * no longer matches the (larger) frame the IP length field claims. */
+        if (plen > 0 && !chain_broken &&
+            (vhdr->flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) &&
+            plen == total - skip) {
+            vnet_complete_rx_checksum((uint8_t *)buf, plen,
+                                      vhdr->csum_start, vhdr->csum_offset);
         }
     }
 
