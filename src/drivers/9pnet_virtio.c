@@ -29,6 +29,13 @@
 
 #define VIRTIO_9P_F_MOUNT_TAG    (1u << 0)
 
+/* Feature name table for this device type — keeps the negotiation
+ * logs human-readable (VIRTIO_9P_F_MOUNT_TAG is device-specific, so
+ * virtio_common_features cannot name it). */
+static const struct virtio_feature_entry virtio_9p_features[] = {
+    VIRTIO_FEATURE(VIRTIO_9P_F_MOUNT_TAG), {.bit = 0, .name = NULL} /* terminator */
+};
+
 /* ── 9P message types (subset of 9P2000.L) ─────────────────────── */
 
 #define P9_TVERSION     100
@@ -266,8 +273,20 @@ static void v9pnet_virtio_init(void)
     v9p_outb(VIRTIO_PCI_STATUS,
              VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
-    virtio_negotiate_features_ex(v9p_inl, v9p_outl, v9p_outb, v9p_inb,
-                                 VIRTIO_9P_F_MOUNT_TAG, 0, NULL, "virtio-9p");
+    /* Negotiate features — claim VIRTIO_9P_F_MOUNT_TAG (backed by the
+     * mount-tag config read below).  If the device rejects our feature
+     * set, it cannot be driven: do NOT set DRIVER_OK on it. */
+    if (virtio_negotiate_features_ex(v9p_inl, v9p_outl, v9p_outb, v9p_inb, VIRTIO_9P_F_MOUNT_TAG, 0,
+                                     virtio_9p_features, "virtio-9p") < 0) {
+        kprintf("[9pnet-virtio] feature negotiation failed — device unusable\n");
+        return;
+    }
+
+    /* Read back the negotiated feature mask: the helper does not return
+     * it.  The mount-tag config field is ONLY valid when the device
+     * actually accepted VIRTIO_9P_F_MOUNT_TAG — reading it otherwise
+     * yields undefined/garbage config data. */
+    uint32_t negotiated = v9p_inl(VIRTIO_PCI_GUEST_FEAT);
 
     v9p_outb(VIRTIO_PCI_STATUS,
              VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER |
@@ -277,12 +296,14 @@ static void v9pnet_virtio_init(void)
      * Virtio-9p config layout: [le16 tag_len][u8 tag[tag_len]]
      * The tag is NOT null-terminated in config space — tag_len
      * determines the number of tag bytes. */
-    memset(v9p_mount_tag, 0, sizeof(v9p_mount_tag));
-    uint16_t tag_len = v9p_inw(0x14);               /* 16-bit length field */
-    if (tag_len >= sizeof(v9p_mount_tag))
-        tag_len = sizeof(v9p_mount_tag) - 1;        /* clamp to fit buffer */
-    for (uint16_t i = 0; i < tag_len; i++)
-        v9p_mount_tag[i] = (char)v9p_inb((uint8_t)(0x16 + i));
+    if (negotiated & VIRTIO_9P_F_MOUNT_TAG) {
+        memset(v9p_mount_tag, 0, sizeof(v9p_mount_tag));
+        uint16_t tag_len = v9p_inw(0x14); /* 16-bit length field */
+        if (tag_len >= sizeof(v9p_mount_tag))
+            tag_len = sizeof(v9p_mount_tag) - 1; /* clamp to fit buffer */
+        for (uint16_t i = 0; i < tag_len; i++)
+            v9p_mount_tag[i] = (char)v9p_inb((uint8_t)(0x16 + i));
+    }
 
     v9p_present = 1;
 
