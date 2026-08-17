@@ -328,6 +328,18 @@ int vhost_scsi_add_lun(struct vhost_scsi_lun *lun) {
 /* ── Cleanup ───────────────────────────────────────────────────────── */
 
 void vhost_scsi_cleanup(void) {
+    /* Return each LUN's lazily allocated backing store to the PMM before
+     * dropping the table — memset'ing the array would orphan the 16 MB
+     * frame range allocated by vhost_scsi_lun_ensure_data(). */
+    for (int i = 0; i < vhost_scsi_num_luns; i++) {
+        struct vhost_scsi_lun *lun = &vhost_scsi_luns[i];
+        if (lun->data) {
+            uint64_t num_pages = (16ULL * 1024 * 1024) / PAGE_SIZE;
+            pmm_free_frames_contiguous(VIRT_TO_PHYS((uint64_t)(uintptr_t)lun->data),
+                                       (size_t)num_pages);
+            lun->data = NULL;
+        }
+    }
     memset(vhost_scsi_luns, 0, sizeof(vhost_scsi_luns));
     vhost_scsi_num_luns = 0;
     vhost_scsi_initialized = 0;
