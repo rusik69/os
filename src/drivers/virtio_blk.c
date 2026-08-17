@@ -64,10 +64,19 @@
 
 /* Maximum number of virtqueues we support (must be <= device max_queues) */
 #define VBLK_MAX_QUEUES        8
-/* Descriptor slots used by the driver-side ring structs and the chain-walk
- * bound.  The device's actual queue size (QUEUE_SIZE) is read at runtime and
- * must be >= 3 (the request chain: header, data, status). */
+/* Descriptor-slot bound for the driver-side chain walk.  A request is a
+ * 3-descriptor chain (header, data, status), and the descriptor table is
+ * indexed only at 0..2, so 16 is a generous upper bound.  The device's
+ * actual queue size (QUEUE_SIZE) is read at runtime and must be >= 3. */
 #define VRING_SIZE             16
+/* Capacity of the avail/used ring arrays in struct vring_avail/used.
+ * These must cover the device-reported qsize: the slot index written is
+ * avail->idx % q->qsize, so qsize slots are addressed.  The 12 KiB queue
+ * memory fit-check in vblk_init_queue() rejects any qsize whose ring does
+ * not fit (max ~454 slots), and the qsize < VBLK_RING_SLOTS guard below
+ * enforces this invariant explicitly — otherwise avail->ring[] writes would
+ * run past the declared array bound. */
+#define VBLK_RING_SLOTS        512
 /* Queue memory: the ring layout is derived from the device's QUEUE_SIZE —
  * descriptor table (16 bytes x qsize), avail ring right after it, used ring
  * at the next 4 KiB boundary.  12 KiB covers a legacy 256-descriptor queue
@@ -118,7 +127,7 @@ struct vring_desc {
 struct vring_avail {
     uint16_t flags;
     uint16_t idx;
-    uint16_t ring[VRING_SIZE];
+    uint16_t ring[VBLK_RING_SLOTS];
 };
 
 struct vring_used_elem { uint32_t id; uint32_t len; };
@@ -126,7 +135,7 @@ struct vring_used_elem { uint32_t id; uint32_t len; };
 struct vring_used {
     uint16_t flags;
     uint16_t idx;
-    struct vring_used_elem ring[VRING_SIZE];
+    struct vring_used_elem ring[VBLK_RING_SLOTS];
 };
 #pragma pack(pop)
 
@@ -293,6 +302,15 @@ static int vblk_init_queue(int qid) {
         kprintf("virtio-blk: queue %d too small (%u descriptors), "
                 "need at least 3\n",
                 qid, (unsigned int)q->qsize);
+        return -1;
+    }
+    if (q->qsize > VBLK_RING_SLOTS) {
+        /* The avail/used ring arrays are sized to VBLK_RING_SLOTS; the
+         * slot index written is avail->idx % qsize, so a larger qsize
+         * would write past the declared arrays. */
+        kprintf("virtio-blk: queue %d too large (%u descriptors), "
+                "max %u\n", qid, (unsigned int)q->qsize,
+                (unsigned int)VBLK_RING_SLOTS);
         return -1;
     }
 
