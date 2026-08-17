@@ -9,6 +9,7 @@
 #include "types.h"
 #include "printf.h"
 #include "string.h"
+#include "errno.h"
 #include "io.h"
 #include "pci.h"
 #include "virtio.h"
@@ -202,9 +203,12 @@ static void virtio_scsi_init(void)
     vs_outb(VIRTIO_PCI_STATUS,
             VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
+    /* Claim only features this driver actually implements.  There is no
+     * virtqueue transport yet (no requestq/controlq/eventq setup), so the
+     * VIRTIO_SCSI_F_* bits (INOUT/HOTPLUG/CHANGE/T10_PI) must NOT be
+     * negotiated: offering a feature promises the driver honours it. */
     virtio_negotiate_features_ex(vs_inl, vs_outl, vs_outb, vs_inb,
-                                 VIRTIO_SCSI_F_INOUT | VIRTIO_SCSI_F_HOTPLUG,
-                                 0, NULL, "virtio-scsi");
+                                 0, 0, NULL, "virtio-scsi");
 
     vs_outb(VIRTIO_PCI_STATUS,
             VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER |
@@ -233,7 +237,7 @@ static int virtio_scsi_cmd(void *dev, void *cmd)
     (void)dev;
     (void)cmd;
     kprintf("[VIRTIO] virtio_scsi_cmd: not yet implemented\n");
-    return 0;
+    return -EOPNOTSUPP;
 }
 /* ── Stub: virtio_scsi_task_mgt ─────────────────────────────── */
 static int virtio_scsi_task_mgt(void *dev, void *tm)
@@ -241,5 +245,5 @@ static int virtio_scsi_task_mgt(void *dev, void *tm)
     (void)dev;
     (void)tm;
     kprintf("[VIRTIO] virtio_scsi_task_mgt: not yet implemented\n");
-    return 0;
+    return -EOPNOTSUPP;
 }
