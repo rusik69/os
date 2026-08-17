@@ -286,7 +286,20 @@ struct gpu_resource {
 /* ── Virtqueue for GPU commands ───────────────────────────────── */
 
 #define VRING_GPU_SIZE          16
-#define GPU_QUEUE_MEM_SIZE      4096
+/* Ring capacity for the avail/used rings.  The device indexes both rings
+ * with its own reported queue size (avail->idx % qsz, used->idx % qsz), so
+ * the arrays must cover that many slots — QEMU virtio-gpu reports 1024.
+ * Devices reporting more than GPU_RING_SLOTS are rejected at init.  The
+ * descriptor table only ever holds the 2-entry command chain, so
+ * VRING_GPU_SIZE remains the driver-side chain bound. */
+#define GPU_RING_SLOTS          1024
+/* Queue memory: descriptor table (16 B x qsz) + avail ring (4 + 2qsz B)
+ * immediately after, used ring at the next 4 KiB boundary (legacy vring
+ * alignment).  For qsz = 1024 that is 16384 + 2052 -> 20480 + 8196 = 28676 B,
+ * rounded up to 8 pages.  The geometry must match the device's own layout
+ * exactly — otherwise the device writes its used ring over unrelated driver
+ * memory and completions are never observed at the driver's location. */
+#define GPU_QUEUE_MEM_SIZE      32768
 #define VRING_DESC_F_NEXT       1
 #define VRING_DESC_F_WRITE      2
 
@@ -300,7 +313,7 @@ struct vring_desc {
 struct vring_avail {
     uint16_t flags;
     uint16_t idx;
-    uint16_t ring[VRING_GPU_SIZE];
+    uint16_t ring[GPU_RING_SLOTS];
 };
 
 struct vring_used_elem {
@@ -311,7 +324,7 @@ struct vring_used_elem {
 struct vring_used {
     uint16_t flags;
     uint16_t idx;
-    struct vring_used_elem ring[VRING_GPU_SIZE];
+    struct vring_used_elem ring[GPU_RING_SLOTS];
 };
 
 /* ── Command-response pair for synchronous submission ─────────── */
@@ -340,6 +353,7 @@ static uint8_t gpu_queue_mem[GPU_QUEUE_MEM_SIZE] __attribute__((aligned(4096)));
 static struct vring_desc  *gpu_descs;
 static struct vring_avail *gpu_avail;
 static struct vring_used  *gpu_used;
+static uint16_t gpu_qsize;
 static uint16_t gpu_last_used_idx;
 
 /* Command slots (each can have one in-flight command) */
@@ -395,19 +409,47 @@ static void gpu_select_queue(uint16_t idx)
     vgpu_outw(VIRTIO_PCI_QUEUE_SEL, idx);
 }
 
-static int gpu_init_virtqueue(void)
+static int gpu_init_virtqueue(uint16_t qsz)
 {
+    size_t avail_off, used_off;
+
+    /* The device-indexed slot is i % qsz for both rings, so the ring
+     * arrays must cover qsz slots (validated against GPU_RING_SLOTS
+     * by the caller) and the layout must mirror the device's own:
+     * descriptor table, avail ring immediately after, used ring at the
+     * next 4 KiB boundary. */
+    if (qsz == 0 || qsz > GPU_RING_SLOTS)
+        return -EINVAL;
+
     memset(gpu_queue_mem, 0, sizeof(gpu_queue_mem));
 
     /* Point the device at our queue memory */
     uint64_t phys = (uint64_t)(uintptr_t)gpu_queue_mem;
     vgpu_outl(VIRTIO_PCI_QUEUE_PFN, (uint32_t)(phys >> 12));
 
-    /* Set up ring pointers into the queue memory */
+    /* Verify the device accepted the queue allocation (legacy virtio
+     * spec: the device writes 0 to QUEUE_PFN if it cannot accept it). */
+    if (vgpu_inl(VIRTIO_PCI_QUEUE_PFN) == 0)
+        return -EIO;
+
+    /* Set up ring pointers into the queue memory per the device's queue
+     * size: descriptor table (16 bytes each), avail ring immediately
+     * after, used ring at the next 4 KiB boundary (legacy vring
+     * alignment). */
+    gpu_qsize = qsz;
     gpu_descs = (struct vring_desc *)gpu_queue_mem;
-    gpu_avail = (struct vring_avail *)(gpu_queue_mem +
-                  sizeof(struct vring_desc) * VRING_GPU_SIZE);
-    gpu_used  = (struct vring_used  *)(gpu_queue_mem + 2048);
+    avail_off = (size_t)qsz * sizeof(struct vring_desc);
+    gpu_avail = (struct vring_avail *)(gpu_queue_mem + avail_off);
+
+    used_off = (avail_off + sizeof(uint16_t) * 2 +
+                (size_t)qsz * sizeof(uint16_t) + 4095) & ~(size_t)4095;
+    if (used_off + sizeof(uint16_t) * 2 +
+        (size_t)qsz * sizeof(struct vring_used_elem) > sizeof(gpu_queue_mem)) {
+        kprintf("[VIRTIO-GPU] queue ring (%u descriptors) does not fit "
+                "in queue memory\n", (unsigned int)qsz);
+        return -EINVAL;
+    }
+    gpu_used = (struct vring_used *)(gpu_queue_mem + used_off);
 
     gpu_last_used_idx = 0;
     memset(&gpu_cmd_slot, 0, sizeof(gpu_cmd_slot));
@@ -463,8 +505,12 @@ static int gpu_send_cmd(const struct virtio_gpu_ctrl_hdr *hdr,
     desc[1].flags = VRING_DESC_F_WRITE;
     desc[1].next  = 0;
 
-    /* Submit to avail ring */
-    uint16_t avail_idx = gpu_avail->idx & (VRING_GPU_SIZE - 1);
+    /* Submit to avail ring.  The device reads ring[i % qsz] for each new
+     * entry, so the slot index must be computed with the device's queue
+     * size (not the driver's descriptor bound) — with qsz a power of two
+     * on all real devices this is the low bits of the 16-bit idx counter;
+     * the modulo form also stays correct for non-power-of-two sizes. */
+    uint16_t avail_idx = (uint16_t)(gpu_avail->idx % gpu_qsize);
     gpu_avail->ring[avail_idx] = 0;  /* descriptor index 0 (head of chain) */
     __asm__ volatile("" ::: "memory");
     gpu_avail->idx++;
@@ -1521,12 +1567,20 @@ static void __init virtio_gpu_init(void)
     vgpu_outb(VIRTIO_PCI_STATUS,
               VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
-    /* Check queue size before feature negotiation (already probed PCI device) */
+    /* Check queue size before feature negotiation (already probed PCI device).
+     * The rings must cover the device-reported size: the device indexes
+     * avail/used with i % qsz, and qsz > GPU_RING_SLOTS would write past
+     * the ring arrays. */
     gpu_select_queue(0);
     uint16_t qsz = vgpu_inw(VIRTIO_PCI_QUEUE_SIZE);
     if (qsz < VRING_GPU_SIZE) {
         kprintf("[VIRTIO-GPU] queue size %u < required %u\n",
                 (unsigned int)qsz, (unsigned int)VRING_GPU_SIZE);
+        return;
+    }
+    if (qsz > GPU_RING_SLOTS) {
+        kprintf("[VIRTIO-GPU] queue size %u > maximum %u\n",
+                (unsigned int)qsz, (unsigned int)GPU_RING_SLOTS);
         return;
     }
 
@@ -1541,7 +1595,7 @@ static void __init virtio_gpu_init(void)
                                  "virtio-gpu");
 
     /* Initialize the command virtqueue */
-    if (gpu_init_virtqueue() < 0) {
+    if (gpu_init_virtqueue(qsz) < 0) {
         kprintf("[VIRTIO-GPU] failed to initialize virtqueue\n");
         return;
     }
