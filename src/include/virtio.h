@@ -548,7 +548,7 @@ int virtio_pci_modern_map_bars(struct vpci_modern_device *vdev);
  * 'supported' and 'required' work like virtio_negotiate_features_ex.
  * Returns 0 on success, -1 on failure. */
 int virtio_pci_modern_init_device(struct vpci_modern_device *vdev,
-                                  uint32_t supported, uint32_t required,
+                                  uint64_t supported, uint64_t required,
                                   const struct virtio_feature_entry *feat_table,
                                   const char *driver_name);
 

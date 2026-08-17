@@ -407,7 +407,7 @@ static void virtio_pci_modern_set_driver_features(
 }
 
 int virtio_pci_modern_init_device(struct vpci_modern_device *vdev,
-                                  uint32_t supported, uint32_t required,
+                                  uint64_t supported, uint64_t required,
                                   const struct virtio_feature_entry *feat_table,
                                   const char *driver_name)
 {
@@ -461,30 +461,34 @@ int virtio_pci_modern_init_device(struct vpci_modern_device *vdev,
 	        buf[0] ? buf : "(none)");
 
 	/*
-	 * Step 5: Negotiate features.
-	 * For the modern transport, we use only the lower 32 bits for
-	 * feature negotiation (virtio 1.0 uses 32-bit feature space
-	 * within the device-specific sub-features; the upper 32 bits
-	 * are reserved for future use in many implementations).
+	 * Step 5: Negotiate features over the full 64-bit feature space.
+	 * The modern transport selects each 32-bit half of the feature
+	 * registers via device_feature_select / driver_feature_select,
+	 * so features above bit 31 (e.g. VIRTIO_NET_F_RSS at bit 60,
+	 * VIRTIO_NET_F_HASH_REPORT at bit 58) are valid and must not be
+	 * silently dropped — truncating here would claim we accept the
+	 * device's 64-bit feature advertising while never negotiating
+	 * (or validating) any high-half bit.
 	 */
-	uint32_t host_lo = (uint32_t)(host_feat & 0xFFFFFFFFu);
-
 	/* Validate required features */
-	if ((host_lo & required) != required) {
-		uint32_t missing = required & ~host_lo;
+	if ((host_feat & required) != required) {
+		uint64_t missing = required & ~host_feat;
 		buf[0] = '\0';
-		virtio_format_features(buf, sizeof(buf), missing,
+		virtio_format_features(buf, sizeof(buf), (uint32_t)missing,
 		                       feat_table, virtio_common_features);
-		kprintf("%s: ERROR: device missing required features (0x%08X): %s\n",
-		        driver_name, (unsigned int)missing,
+		kprintf("%s: ERROR: device missing required features "
+		        "(0x%08X_%08X): %s\n",
+		        driver_name,
+		        (unsigned int)(missing >> 32),
+		        (unsigned int)(missing & 0xFFFFFFFFu),
 		        buf[0] ? buf : "(unknown)");
 		return -1;
 	}
 
-	uint32_t guest_feat = host_lo & supported;
+	uint64_t guest_feat = host_feat & supported;
 
 	/* Write negotiated features */
-	virtio_pci_modern_set_driver_features(vdev, (uint64_t)guest_feat);
+	virtio_pci_modern_set_driver_features(vdev, guest_feat);
 	__asm__ volatile("" ::: "memory");
 
 	/* Step 6: Set FEATURES_OK */
@@ -499,15 +503,19 @@ int virtio_pci_modern_init_device(struct vpci_modern_device *vdev,
 	st = vpci_cfg_readb(vdev, offsetof(struct virtio_pci_common_cfg,
 	                                     device_status));
 	if (!(st & VIRTIO_STATUS_FEATURES_OK)) {
-		kprintf("%s: ERROR: device rejected negotiated features (0x%08X, status=0x%02X)\n",
-		        driver_name, (unsigned int)guest_feat, (unsigned int)st);
+		kprintf("%s: ERROR: device rejected negotiated features "
+		        "(0x%08X_%08X, status=0x%02X)\n",
+		        driver_name,
+		        (unsigned int)(guest_feat >> 32),
+		        (unsigned int)(guest_feat & 0xFFFFFFFFu),
+		        (unsigned int)st);
 		return -1;
 	}
 
 	/* Step 8: Check feature dependencies */
 	{
 		char dep_err[128];
-		if (virtio_check_dependencies(guest_feat, dep_err,
+		if (virtio_check_dependencies((uint32_t)guest_feat, dep_err,
 		                               sizeof(dep_err)) < 0) {
 			kprintf("%s: WARNING: %s — continuing (device may misbehave)\n",
 			        driver_name, dep_err);
@@ -516,10 +524,12 @@ int virtio_pci_modern_init_device(struct vpci_modern_device *vdev,
 
 	/* Log negotiated features */
 	buf[0] = '\0';
-	virtio_format_features(buf, sizeof(buf), guest_feat,
+	virtio_format_features(buf, sizeof(buf), (uint32_t)guest_feat,
 	                       feat_table, virtio_common_features);
-	kprintf("%s: negotiated features (0x%08X): %s\n", driver_name,
-	        (unsigned int)guest_feat, buf[0] ? buf : "(none)");
+	kprintf("%s: negotiated features (0x%08X_%08X): %s\n", driver_name,
+	        (unsigned int)(guest_feat >> 32),
+	        (unsigned int)(guest_feat & 0xFFFFFFFFu),
+	        buf[0] ? buf : "(none)");
 
 	/*
 	 * Step 9: Set DRIVER_OK — device is now live.
