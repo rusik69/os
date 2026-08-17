@@ -317,7 +317,9 @@ struct vring_used {
 /* ── Command-response pair for synchronous submission ─────────── */
 
 #define GPU_CMD_BUF_SIZE    512
-#define GPU_RESP_BUF_SIZE   256
+/* Must hold the largest response: the EDID response is
+ * 24 (hdr) + 4 (size) + 4 (padding) + 1024 (edid) = 1056 bytes. */
+#define GPU_RESP_BUF_SIZE 1056
 
 struct gpu_cmd_slot {
     uint8_t  cmd_buf[GPU_CMD_BUF_SIZE];
@@ -485,10 +487,10 @@ static int gpu_send_cmd(const struct virtio_gpu_ctrl_hdr *hdr,
         return -ETIME;
     }
 
-    /* Copy response */
+    /* Copy response: header plus any extra payload (e.g. EDID data) */
     struct virtio_gpu_ctrl_hdr *resp = (struct virtio_gpu_ctrl_hdr *)slot->resp_buf;
     if (resp_out)
-        memcpy(resp_out, resp, sizeof(*resp));
+        memcpy(resp_out, resp, sizeof(*resp) + resp_extra_len);
 
     uint32_t resp_type = resp->type;
     slot->in_use = 0;
