@@ -1,15 +1,18 @@
 /*
  * src/drivers/virtio_console.c — VirtIO console driver
  *
- * Implements VirtIO console (PCI 1AF4:1003) with multi-port support
- * (VIRTIO_CONSOLE_F_MULTIPORT) and hvc (hypervisor virtual console)
- * integration.
- * Follows existing virtio probe patterns (virtio_blk, virtio_net).
+ * Detects the VirtIO console (PCI 1AF4:1003) and reports its presence.
+ * Single console port only: there is no virtqueue transport yet (no
+ * receiveq/transmitq setup) and no control queue, so the device-specific
+ * features (VIRTIO_CONSOLE_F_SIZE / F_MULTIPORT / F_EMERG_WRITE) are
+ * deliberately NOT negotiated — offering a feature promises the driver
+ * honours it.  Follows existing virtio probe patterns (virtio_blk, virtio_net).
  */
 
 #include "types.h"
 #include "printf.h"
 #include "string.h"
+#include "errno.h"
 #include "io.h"
 #include "pci.h"
 #include "virtio.h"
@@ -80,11 +83,16 @@ static void __init virtio_console_init(void)
     vc_outb(VIRTIO_PCI_STATUS,
             VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
-    virtio_negotiate_features_ex(vc_inl, vc_outl, vc_outb, vc_inb,
-                                 VIRTIO_CONSOLE_F_SIZE |
-                                 VIRTIO_CONSOLE_F_MULTIPORT |
-                                 VIRTIO_CONSOLE_F_EMERG_WRITE,
-                                 0, NULL, "virtio-console");
+    /* Claim no device-specific features.  F_SIZE, F_MULTIPORT and
+     * F_EMERG_WRITE have no implementation here: there is no virtqueue
+     * (so no multiport control queue), no config-space size handling and
+     * no emergency-write register access.  Negotiating them would promise
+     * the device capabilities the driver cannot honour. */
+    if (virtio_negotiate_features_ex(vc_inl, vc_outl, vc_outb, vc_inb,
+                                     0, 0, NULL, "virtio-console") < 0) {
+        kprintf("[VIRTIO-CONSOLE] feature negotiation failed, device unused\n");
+        return;
+    }
 
     vc_outb(VIRTIO_PCI_STATUS,
             VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER |
@@ -92,14 +100,6 @@ static void __init virtio_console_init(void)
 
     console_present = 1;
     console_num_ports = 1;
-
-    /* Check if multiport is supported */
-    uint32_t host = vc_inl(VIRTIO_PCI_HOST_FEAT);
-    if (host & VIRTIO_CONSOLE_F_MULTIPORT) {
-        console_num_ports = VIRTIO_CONSOLE_MAX_PORTS;
-        kprintf("[VIRTIO-CONSOLE] multi-port supported (%d ports)\n",
-                console_num_ports);
-    }
 
     kprintf("[VIRTIO-CONSOLE] VirtIO console at %02x:%02x.%d, I/O 0x%04x, ports=%d\n",
             dev.bus, dev.slot, dev.func, console_iobase, console_num_ports);
@@ -118,23 +118,23 @@ MODULE_VERSION("1.0");
 static int virtio_console_open(__maybe_unused void *dev)
 {
     kprintf("[VIRTIO] virtio_console_open: not yet implemented\n");
-    return 0;
+    return -EOPNOTSUPP;
 }
 /* ── Stub: virtio_console_close ─────────────────────────────── */
 static int virtio_console_close(__maybe_unused void *dev)
 {
     kprintf("[VIRTIO] virtio_console_close: not yet implemented\n");
-    return 0;
+    return -EOPNOTSUPP;
 }
 /* ── Stub: virtio_console_write ─────────────────────────────── */
 static int virtio_console_write(__maybe_unused void *dev, __maybe_unused const void *buf, __maybe_unused size_t count)
 {
     kprintf("[VIRTIO] virtio_console_write: not yet implemented\n");
-    return 0;
+    return -EOPNOTSUPP;
 }
-/* ── Stub: virtio_console_read ─────────────────────────────── */
+/* ── Stub: virtio_console_read ──────────────────────────────── */
 static int virtio_console_read(__maybe_unused void *dev, __maybe_unused void *buf, __maybe_unused size_t count)
 {
     kprintf("[VIRTIO] virtio_console_read: not yet implemented\n");
-    return 0;
+    return -EOPNOTSUPP;
 }
