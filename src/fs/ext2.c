@@ -818,9 +818,18 @@ static int ext2_alloc_inode(struct ext2_priv *ep, uint32_t *ino_out, uint32_t *g
                 continue;
             if (ext2_read_block(ep, bgd->bg_inode_bitmap, bitmap) < 0)
                 continue;
+            /* Geometry guard: groups whose inode range starts at or past
+             * s_inodes_count hold no valid inodes (inconsistent superblock
+             * geometry).  Skip them so the last-group remainder below
+             * cannot unsigned-underflow and the inode bitmap scan stays
+             * inside the bitmap block.  uint64_t arithmetic also avoids
+             * wrapping g * inodes_per_group on large filesystems. */
+            uint64_t inode_base = (uint64_t)g * ep->inodes_per_group;
+            if (inode_base >= ep->sb.s_inodes_count)
+                continue;
             uint32_t inodes_in_group = ep->inodes_per_group;
             if (g == ep->num_block_groups - 1) {
-                uint32_t rem = ep->sb.s_inodes_count - g * ep->inodes_per_group;
+                uint32_t rem = (uint32_t)(ep->sb.s_inodes_count - inode_base);
                 if (rem < inodes_in_group)
                     inodes_in_group = rem;
             }
@@ -849,9 +858,18 @@ static int ext2_alloc_inode(struct ext2_priv *ep, uint32_t *ino_out, uint32_t *g
                 continue;
             if (ext2_read_block(ep, bgd->bg_inode_bitmap, bitmap) < 0)
                 continue;
+            /* Geometry guard: groups whose inode range starts at or past
+             * s_inodes_count hold no valid inodes (inconsistent superblock
+             * geometry).  Skip them so the last-group remainder below
+             * cannot unsigned-underflow and the inode bitmap scan stays
+             * inside the bitmap block.  uint64_t arithmetic also avoids
+             * wrapping g * inodes_per_group on large filesystems. */
+            uint64_t inode_base = (uint64_t)g * ep->inodes_per_group;
+            if (inode_base >= ep->sb.s_inodes_count)
+                continue;
             uint32_t inodes_in_group = ep->inodes_per_group;
             if (g == ep->num_block_groups - 1) {
-                uint32_t rem = ep->sb.s_inodes_count - g * ep->inodes_per_group;
+                uint32_t rem = (uint32_t)(ep->sb.s_inodes_count - inode_base);
                 if (rem < inodes_in_group)
                     inodes_in_group = rem;
             }
@@ -3633,6 +3651,17 @@ static int ext2_validate_superblock(const struct ext2_superblock *sb) {
     if (sb->s_log_block_size > 5)
         return -EFSCORRUPTED;
 
+    /* Bitmap capacity: each block group's block bitmap and inode bitmap
+     * occupy exactly one block, so they can represent at most
+     * block_size * 8 bits.  A larger s_blocks_per_group or
+     * s_inodes_per_group means every bitmap set/clear/find operation
+     * would index outside the bitmap block (and beyond this driver's
+     * fixed 4096-byte bitmap buffers) — reject as corrupt. */
+    uint64_t bits_per_block = (uint64_t)(1024U << sb->s_log_block_size) * 8;
+    if ((uint64_t)sb->s_blocks_per_group > bits_per_block ||
+        (uint64_t)sb->s_inodes_per_group > bits_per_block)
+        return -EFSCORRUPTED;
+
     /* Inode size must be at least 128 bytes (standard ext2 inode size) */
     if (sb->s_inode_size > 0 && sb->s_inode_size < 128)
         return -EFSCORRUPTED;
@@ -3642,6 +3671,15 @@ static int ext2_validate_superblock(const struct ext2_superblock *sb) {
     uint64_t computed_groups =
         ((uint64_t)sb->s_blocks_count + sb->s_blocks_per_group - 1) / sb->s_blocks_per_group;
     if (computed_groups == 0 || computed_groups > 1048576ULL)
+        return -EFSCORRUPTED;
+
+    /* Inode groups cannot exceed block groups: every inode resides in a
+     * block group.  Reject inconsistent geometry where the inode count
+     * spans more groups than the block count — the per-group inode
+     * remainder would otherwise be derived from mismatched counts. */
+    uint64_t inode_groups =
+        ((uint64_t)sb->s_inodes_count + sb->s_inodes_per_group - 1) / sb->s_inodes_per_group;
+    if (inode_groups > computed_groups)
         return -EFSCORRUPTED;
 
     return 0;
