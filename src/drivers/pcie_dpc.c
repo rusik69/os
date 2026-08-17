@@ -6,12 +6,12 @@
  * containment. DPC disables a port when an uncorrectable error
  * occurs, preventing propagation to the rest of the hierarchy.
  */
-#include "types.h"
-#include "string.h"
-#include "printf.h"
+#include "delay.h"
 #include "errno.h"
 #include "pci.h"
-#include "delay.h"
+#include "printf.h"
+#include "string.h"
+#include "types.h"
 
 /* DPC capability registers */
 #define PCI_DPC_CAP          0x00
@@ -88,8 +88,8 @@ static int dpc_handle_trigger(int bus, int dev, int func)
             udelay(100);
         }
         if (busy_waits >= 100) {
-            kprintf("[DPC] RP busy timeout on %02x:%02x.%x — port remains contained\n",
-                    bus, dev, func);
+            kprintf("[DPC] RP busy timeout on %02x:%02x.%x — port remains contained\n", bus, dev,
+                    func);
             return -EBUSY;
         }
 
@@ -121,17 +121,17 @@ module_init(dpc_init);
 static int pcie_dpc_init(__maybe_unused void *dev)
 {
     kprintf("[PCIE] pcie_dpc_init: not yet implemented\n");
-    return 0;
+    return -EOPNOTSUPP;
 }
 /* ── Stub: pcie_dpc_handler ─────────────────────────────── */
 static int pcie_dpc_handler(__maybe_unused void *dev)
 {
     kprintf("[PCIE] pcie_dpc_handler: not yet implemented\n");
-    return 0;
+    return -EOPNOTSUPP;
 }
 /* ── Stub: pcie_dpc_reset ─────────────────────────────── */
 static int pcie_dpc_reset(__maybe_unused void *dev)
 {
     kprintf("[PCIE] pcie_dpc_reset: not yet implemented\n");
-    return 0;
+    return -EOPNOTSUPP;
 }
