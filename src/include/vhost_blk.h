@@ -12,8 +12,12 @@
 #define VHOST_BLK_T_IN            0
 #define VHOST_BLK_T_OUT           1
 #define VHOST_BLK_T_FLUSH         4
+#define VHOST_BLK_T_GET_ID        8
 #define VHOST_BLK_T_DISCARD       11
 #define VHOST_BLK_T_WRITE_ZEROES  13
+
+/* Device ID string length (virtio-blk GET_ID payload, NUL-padded) */
+#define VHOST_BLK_ID_BYTES        20
 
 /* vhost-blk response status */
 #define VHOST_BLK_S_OK            0

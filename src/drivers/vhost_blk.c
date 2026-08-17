@@ -2,7 +2,7 @@
  * src/drivers/vhost_blk.c — In-kernel vhost block device
  *
  * Provides a virtio-blk compatible backend for the guest.
- * Supports: READ, WRITE, FLUSH, GET_ID, DISCARD.
+ * Supports: READ, WRITE, FLUSH, GET_ID, DISCARD, WRITE_ZEROES.
  * Backed by a memory buffer (file stored in memory).
  */
 
@@ -152,6 +152,14 @@ static int vhost_blk_process_request(struct vhost_blk_req_hdr *hdr, uint8_t *dat
         /* Flush: no-op for memory-backed device */
         *status = VHOST_BLK_S_OK;
         kprintf("[vhost-blk] FLUSH\n");
+        return 0;
+    }
+
+    case VHOST_BLK_T_GET_ID: {
+        /* Return the 20-byte NUL-padded device ID string (virtio-blk spec) */
+        if (data_buf)
+            memcpy(data_buf, bak->serial, VHOST_BLK_ID_BYTES);
+        *status = VHOST_BLK_S_OK;
         return 0;
     }
 
