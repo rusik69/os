@@ -62,6 +62,14 @@ void nfs_xdr_put_string(uint8_t **p, const char *s)
 uint32_t nfs_xdr_get_string(const uint8_t **p, char *buf, uint32_t maxlen)
 {
     uint32_t len = nfs_xdr_get_u32(p);
+    if (maxlen == 0) {
+        /* Zero-capacity destination: consume the wire string (data +
+         * padding) so the parse cursor stays aligned, but store nothing.
+         * Without this guard "len = maxlen - 1" wraps to 4G and the
+         * copy below reads/writes out of bounds. */
+        *p += (uint32_t)((uint64_t)len + ((uint64_t)(-len) & 3));
+        return 0;
+    }
     if (len >= maxlen)
         len = maxlen - 1;
     nfs_xdr_get_bytes(p, (uint8_t *)buf, len);

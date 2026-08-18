@@ -128,6 +128,14 @@ static void xdr_get_bytes(const uint8_t **p, uint8_t *dst, uint32_t len)
 static uint32_t xdr_get_string(const uint8_t **p, char *buf, uint32_t maxlen)
 {
     uint32_t wire_len = xdr_get_u32(p);
+    if (maxlen == 0) {
+        /* Zero-capacity destination: consume the wire string (data +
+         * padding) so the parse cursor stays aligned, but store nothing.
+         * Without this guard "len = maxlen - 1" wraps to 4G and the
+         * copy below reads/writes out of bounds. */
+        *p += (uint32_t)((uint64_t)wire_len + ((uint64_t)(-wire_len) & 3));
+        return 0;
+    }
     uint32_t len = wire_len;
     if (len >= maxlen) len = maxlen - 1;
     xdr_get_bytes(p, (uint8_t *)buf, len);

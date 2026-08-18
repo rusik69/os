@@ -100,6 +100,29 @@ static inline void xdr_put_uint64(uint8_t **p, uint64_t v)
     xdr_put_u32(p, (uint32_t)(v & 0xFFFFFFFF));
 }
 
+/* Advance a parse cursor past a length-prefixed XDR blob (len data bytes
+ * plus 4-byte alignment padding), clamped to the valid region [cp, end).
+ * RPC request fields are all of the form "length u32 + data"; a crafted
+ * huge length must not push the cursor past the received message, or the
+ * following field reads/copies go out of bounds. */
+static const uint8_t *xdr_advance_bounded(const uint8_t *cp, const uint8_t *end, uint32_t len) {
+    if (cp >= end)
+        return end;
+    uint64_t adv = (uint64_t)len + ((uint64_t)((-len) & 3));
+    if (adv > (uint64_t)(end - cp))
+        return end;
+    return cp + (size_t)adv;
+}
+
+/* Read a 4-byte big-endian field, returning 0 when the field straddles
+ * the end of the received message.  The cursor stays put in that case so
+ * a truncated message cannot walk it past the call buffer. */
+static uint32_t xdr_get_u32_bounded(const uint8_t **cp, const uint8_t *end) {
+    if ((size_t)(end - *cp) < 4)
+        return 0;
+    return xdr_get_u32(cp);
+}
+
 /* ── Export management ──────────────────────────────────────────────── */
 
 int nfsd_add_export(const char *export_path, const char *local_path)
@@ -926,12 +949,19 @@ static void nfsd_proc_getattr(struct nfsd_rpc_state *rpc,
 {
     uint8_t *p = reply;
     const uint8_t *cp = rpc->call_data;
+    const uint8_t *end = cp + rpc->call_len;
 
     /* Parse file handle */
     uint32_t fh_len = xdr_get_u32(&cp);
     const uint8_t *fh_data = cp;
-    cp += fh_len;
-    while (fh_len & 3) { cp++; fh_len++; }
+    /* Clamp the wire length to the received message so a crafted huge
+     * length can neither push the cursor out of the buffer nor make the
+     * FH data read below go past the end of the call data. */
+    if (cp >= end)
+        fh_len = 0;
+    else if (fh_len > (uint32_t)(end - cp))
+        fh_len = (uint32_t)(end - cp);
+    cp = xdr_advance_bounded(cp, end, fh_len);
 
     /* Resolve FH to a path and stat it */
     struct nfsd_export *ex = NULL;
@@ -964,30 +994,41 @@ static void nfsd_proc_setattr(struct nfsd_rpc_state *rpc,
 {
     uint8_t *p = reply;
     const uint8_t *cp = rpc->call_data;
+    const uint8_t *end = cp + rpc->call_len;
 
     /* Parse file handle */
     uint32_t fh_len = xdr_get_u32(&cp);
     const uint8_t *fh_data = cp;
-    cp += fh_len;
-    while (fh_len & 3) { cp++; fh_len++; }
+    /* Clamp the wire length to the received message so a crafted huge
+     * length can neither push the cursor out of the buffer nor make the
+     * FH data read below go past the end of the call data. */
+    if (cp >= end)
+        fh_len = 0;
+    else if (fh_len > (uint32_t)(end - cp))
+        fh_len = (uint32_t)(end - cp);
+    cp = xdr_advance_bounded(cp, end, fh_len);
 
-    /* Parse sattr3 (RFC 1813, Section 3.3) */
-    uint32_t set_mode   = xdr_get_u32(&cp);
-    uint32_t mode       = xdr_get_u32(&cp);
-    uint32_t set_uid    = xdr_get_u32(&cp);
-    uint32_t uid        = xdr_get_u32(&cp);
-    uint32_t set_gid    = xdr_get_u32(&cp);
-    uint32_t gid        = xdr_get_u32(&cp);
-    uint32_t set_size   = xdr_get_u32(&cp);
-    uint64_t new_size   = ((uint64_t)xdr_get_u32(&cp) << 32) | xdr_get_u32(&cp);
-    uint32_t set_atime  = xdr_get_u32(&cp);
-    uint32_t atime_how  = xdr_get_u32(&cp);
-    uint64_t atime_val  = ((uint64_t)xdr_get_u32(&cp) << 32) | xdr_get_u32(&cp);
-    uint32_t atime_nsec = xdr_get_u32(&cp);
-    uint32_t set_mtime  = xdr_get_u32(&cp);
-    uint32_t mtime_how  = xdr_get_u32(&cp);
-    uint64_t mtime_val  = ((uint64_t)xdr_get_u32(&cp) << 32) | xdr_get_u32(&cp);
-    uint32_t mtime_nsec = xdr_get_u32(&cp);
+    /* Parse sattr3 (RFC 1813, Section 3.3) — bounded field reads so a
+     * truncated message reads 0 instead of walking past the buffer. */
+    uint32_t set_mode = xdr_get_u32_bounded(&cp, end);
+    uint32_t mode = xdr_get_u32_bounded(&cp, end);
+    uint32_t set_uid = xdr_get_u32_bounded(&cp, end);
+    uint32_t uid = xdr_get_u32_bounded(&cp, end);
+    uint32_t set_gid = xdr_get_u32_bounded(&cp, end);
+    uint32_t gid = xdr_get_u32_bounded(&cp, end);
+    uint32_t set_size = xdr_get_u32_bounded(&cp, end);
+    uint64_t new_size =
+        ((uint64_t)xdr_get_u32_bounded(&cp, end) << 32) | xdr_get_u32_bounded(&cp, end);
+    uint32_t set_atime = xdr_get_u32_bounded(&cp, end);
+    uint32_t atime_how = xdr_get_u32_bounded(&cp, end);
+    uint64_t atime_val =
+        ((uint64_t)xdr_get_u32_bounded(&cp, end) << 32) | xdr_get_u32_bounded(&cp, end);
+    uint32_t atime_nsec = xdr_get_u32_bounded(&cp, end);
+    uint32_t set_mtime = xdr_get_u32_bounded(&cp, end);
+    uint32_t mtime_how = xdr_get_u32_bounded(&cp, end);
+    uint64_t mtime_val =
+        ((uint64_t)xdr_get_u32_bounded(&cp, end) << 32) | xdr_get_u32_bounded(&cp, end);
+    uint32_t mtime_nsec = xdr_get_u32_bounded(&cp, end);
 
     /* Resolve FH to a local path */
     struct nfsd_export *ex = NULL;
@@ -1071,14 +1112,21 @@ static void nfsd_proc_access(struct nfsd_rpc_state *rpc,
 {
     uint8_t *p = reply;
     const uint8_t *cp = rpc->call_data;
+    const uint8_t *end = cp + rpc->call_len;
 
     /* Parse FH */
     uint32_t fh_len = xdr_get_u32(&cp);
     const uint8_t *fh_data = cp;
-    cp += fh_len;
-    while (fh_len & 3) { cp++; fh_len++; }
+    /* Clamp the wire length to the received message so a crafted huge
+     * length can neither push the cursor out of the buffer nor make the
+     * FH data read below go past the end of the call data. */
+    if (cp >= end)
+        fh_len = 0;
+    else if (fh_len > (uint32_t)(end - cp))
+        fh_len = (uint32_t)(end - cp);
+    cp = xdr_advance_bounded(cp, end, fh_len);
 
-    uint32_t access_bits = xdr_get_u32(&cp);
+    uint32_t access_bits = xdr_get_u32_bounded(&cp, end);
     (void)access_bits;
 
     /* Resolve FH to path */
@@ -1111,17 +1159,36 @@ static void nfsd_proc_lookup(struct nfsd_rpc_state *rpc,
 {
     uint8_t *p = reply;
     const uint8_t *cp = rpc->call_data;
+    const uint8_t *end = cp + rpc->call_len;
 
     /* Parse dir FH */
     uint32_t fh_len = xdr_get_u32(&cp);
     const uint8_t *fh_data = cp;
-    cp += fh_len;
-    while (fh_len & 3) { cp++; fh_len++; }
+    /* Clamp the wire length to the received message so a crafted huge
+     * length can neither push the cursor out of the buffer nor make the
+     * FH data read below go past the end of the call data. */
+    if (cp >= end)
+        fh_len = 0;
+    else if (fh_len > (uint32_t)(end - cp))
+        fh_len = (uint32_t)(end - cp);
+    cp = xdr_advance_bounded(cp, end, fh_len);
 
-    /* Parse name */
-    uint32_t name_len = xdr_get_u32(&cp);
+    /* Parse name — bound the length-field read first so a truncated
+     * message cannot walk the cursor, then clamp the copy to what is
+     * actually left in the message so a crafted long name can never
+     * read past the end of the call buffer. */
+    uint32_t name_len;
+    if ((size_t)(end - cp) < 4)
+        name_len = 0;
+    else
+        name_len = xdr_get_u32(&cp);
     char name[256];
     if (name_len > 255) name_len = 255;
+    {
+        size_t rem = (cp <= end) ? (size_t)(end - cp) : 0;
+        if (name_len > rem)
+            name_len = (uint32_t)rem;
+    }
     memcpy(name, cp, name_len);
     name[name_len] = '\0';
 
@@ -1219,28 +1286,44 @@ static void nfsd_proc_write(struct nfsd_rpc_state *rpc,
 {
     uint8_t *p = reply;
     const uint8_t *cp = rpc->call_data;
+    const uint8_t *end = cp + rpc->call_len;
 
     /* Parse FH */
     uint32_t fh_len = xdr_get_u32(&cp);
     const uint8_t *fh_data = cp;
-    cp += fh_len;
-    while (fh_len & 3) { cp++; fh_len++; }
+    /* Clamp the wire length to the received message so a crafted huge
+     * length can neither push the cursor out of the buffer nor make the
+     * FH data read below go past the end of the call data. */
+    if (cp >= end)
+        fh_len = 0;
+    else if (fh_len > (uint32_t)(end - cp))
+        fh_len = (uint32_t)(end - cp);
+    cp = xdr_advance_bounded(cp, end, fh_len);
 
-    /* Offset (uint64) */
-    uint64_t offset = ((uint64_t)xdr_get_u32(&cp) << 32) | xdr_get_u32(&cp);
+    /* Offset (uint64) — bounded reads so a truncated message cannot walk
+     * the cursor past the call buffer. */
+    uint64_t offset =
+        ((uint64_t)xdr_get_u32_bounded(&cp, end) << 32) | xdr_get_u32_bounded(&cp, end);
 
     /* Count */
-    uint32_t count = xdr_get_u32(&cp);
+    uint32_t count = xdr_get_u32_bounded(&cp, end);
 
     /* Stable flag */
-    uint32_t stable = xdr_get_u32(&cp);
+    uint32_t stable = xdr_get_u32_bounded(&cp, end);
     (void)stable;
 
-    /* Data length + data */
-    uint32_t data_len = xdr_get_u32(&cp);
+    /* Data length + data — clamp the copy to what is actually left in
+     * the received message so a crafted count/len can never read past
+     * the end of the call buffer. */
+    uint32_t data_len = xdr_get_u32_bounded(&cp, end);
     const uint8_t *data = cp;
     if (data_len > count)
         data_len = count;
+    {
+        size_t rem = (cp <= end) ? (size_t)(end - cp) : 0;
+        if (data_len > rem)
+            data_len = (uint32_t)rem;
+    }
 
     /* Resolve FH to local file path */
     struct nfsd_export *ex = NULL;
@@ -1298,17 +1381,29 @@ static void nfsd_proc_read(struct nfsd_rpc_state *rpc,
 {
     uint8_t *p = reply;
     const uint8_t *cp = rpc->call_data;
+    const uint8_t *end = cp + rpc->call_len;
 
     /* Parse FH */
     uint32_t fh_len = xdr_get_u32(&cp);
     const uint8_t *fh_data = cp;
-    cp += fh_len;
-    while (fh_len & 3) { cp++; fh_len++; }
+    /* Clamp the wire length to the received message so a crafted huge
+     * length can neither push the cursor out of the buffer nor make the
+     * FH data read below go past the end of the call data. */
+    if (cp >= end)
+        fh_len = 0;
+    else if (fh_len > (uint32_t)(end - cp))
+        fh_len = (uint32_t)(end - cp);
+    cp = xdr_advance_bounded(cp, end, fh_len);
 
-    /* Offset */
-    uint64_t offset = ((uint64_t)xdr_get_u32(&cp) << 32) | xdr_get_u32(&cp);
-    /* Count */
-    uint32_t count = xdr_get_u32(&cp);
+    /* Offset (uint64) — bounded reads so a truncated message cannot walk
+     * the cursor past the call buffer. */
+    uint64_t offset =
+        ((uint64_t)xdr_get_u32_bounded(&cp, end) << 32) | xdr_get_u32_bounded(&cp, end);
+    /* Count — clamp to the reply data buffer so a crafted count cannot
+     * overflow data_buf below. */
+    uint32_t count = xdr_get_u32_bounded(&cp, end);
+    if (count > NFSD_MAX_DATA)
+        count = NFSD_MAX_DATA;
 
     /* Resolve FH to file path */
     struct nfsd_export *ex = NULL;
@@ -1356,25 +1451,35 @@ static void nfsd_proc_readdir(struct nfsd_rpc_state *rpc,
 {
     uint8_t *p = reply;
     const uint8_t *cp = rpc->call_data;
+    const uint8_t *end = cp + rpc->call_len;
 
     /* Parse FH */
     uint32_t fh_len = xdr_get_u32(&cp);
     const uint8_t *fh_data = cp;
-    cp += fh_len;
-    while (fh_len & 3) { cp++; fh_len++; }
+    /* Clamp the wire length to the received message so a crafted huge
+     * length can neither push the cursor out of the buffer nor make the
+     * FH data read below go past the end of the call data. */
+    if (cp >= end)
+        fh_len = 0;
+    else if (fh_len > (uint32_t)(end - cp))
+        fh_len = (uint32_t)(end - cp);
+    cp = xdr_advance_bounded(cp, end, fh_len);
 
-    /* Cookie (opaque) */
-    uint64_t cookie = ((uint64_t)xdr_get_u32(&cp) << 32) | xdr_get_u32(&cp);
+    /* Cookie (opaque) — bounded reads so a truncated message cannot walk
+     * the cursor past the call buffer. */
+    uint64_t cookie =
+        ((uint64_t)xdr_get_u32_bounded(&cp, end) << 32) | xdr_get_u32_bounded(&cp, end);
     (void)cookie;
 
     /* Verifier */
-    uint64_t verifier = ((uint64_t)xdr_get_u32(&cp) << 32) | xdr_get_u32(&cp);
+    uint64_t verifier =
+        ((uint64_t)xdr_get_u32_bounded(&cp, end) << 32) | xdr_get_u32_bounded(&cp, end);
     (void)verifier;
 
     /* Count */
-    uint32_t dircount = xdr_get_u32(&cp);
+    uint32_t dircount = xdr_get_u32_bounded(&cp, end);
     (void)dircount;
-    uint32_t maxcount = xdr_get_u32(&cp);
+    uint32_t maxcount = xdr_get_u32_bounded(&cp, end);
     (void)maxcount;
 
     /* Resolve FH to directory path */
@@ -1423,12 +1528,19 @@ static void nfsd_proc_fsstat(struct nfsd_rpc_state *rpc,
 {
     uint8_t *p = reply;
     const uint8_t *cp = rpc->call_data;
+    const uint8_t *end = cp + rpc->call_len;
 
     /* Parse FH */
     uint32_t fh_len = xdr_get_u32(&cp);
     const uint8_t *fh_data = cp;
-    cp += fh_len;
-    while (fh_len & 3) { cp++; fh_len++; }
+    /* Clamp the wire length to the received message so a crafted huge
+     * length can neither push the cursor out of the buffer nor make the
+     * FH data read below go past the end of the call data. */
+    if (cp >= end)
+        fh_len = 0;
+    else if (fh_len > (uint32_t)(end - cp))
+        fh_len = (uint32_t)(end - cp);
+    cp = xdr_advance_bounded(cp, end, fh_len);
 
     /* Resolve FH to get export */
     struct nfsd_export *ex = NULL;
@@ -1550,11 +1662,24 @@ static void mountd_proc_mnt(struct nfsd_rpc_state *rpc,
 {
     uint8_t *p = reply;
     const uint8_t *cp = rpc->call_data;
+    const uint8_t *end = cp + rpc->call_len;
 
-    /* Parse export path */
-    uint32_t path_len = xdr_get_u32(&cp);
+    /* Parse export path — bound the length-field read first so a truncated
+     * message cannot walk the cursor, then clamp the copy to what is
+     * actually left in the message so a crafted long path can never read
+     * past the end of the call buffer. */
+    uint32_t path_len;
+    if ((size_t)(end - cp) < 4)
+        path_len = 0;
+    else
+        path_len = xdr_get_u32(&cp);
     char path[256];
     if (path_len > 255) path_len = 255;
+    {
+        size_t rem = (cp <= end) ? (size_t)(end - cp) : 0;
+        if (path_len > rem)
+            path_len = (uint32_t)rem;
+    }
     memcpy(path, cp, path_len);
     path[path_len] = '\0';
 
@@ -1701,11 +1826,24 @@ static void mountd_proc_umnt(struct nfsd_rpc_state *rpc,
 {
     uint8_t *p = reply;
     const uint8_t *cp = rpc->call_data;
+    const uint8_t *end = cp + rpc->call_len;
 
-    /* Parse export path */
-    uint32_t path_len = xdr_get_u32(&cp);
+    /* Parse export path — bound the length-field read first so a truncated
+     * message cannot walk the cursor, then clamp the copy to what is
+     * actually left in the message so a crafted long path can never read
+     * past the end of the call buffer. */
+    uint32_t path_len;
+    if ((size_t)(end - cp) < 4)
+        path_len = 0;
+    else
+        path_len = xdr_get_u32(&cp);
     char path[256];
     if (path_len > 255) path_len = 255;
+    {
+        size_t rem = (cp <= end) ? (size_t)(end - cp) : 0;
+        if (path_len > rem)
+            path_len = (uint32_t)rem;
+    }
     memcpy(path, cp, path_len);
     path[path_len] = '\0';
 
@@ -1874,18 +2012,22 @@ static void nfsd_handle_connection(int conn_id)
     rpc.version = xdr_get_u32(&cp);
     rpc.procedure = xdr_get_u32(&cp);
 
+    /* The fixed header (xid..procedure, auth flavor + length, verifier
+     * flavor + length) is 40 bytes.  Reject anything shorter so the
+     * boundary arithmetic below can never underflow on a crafted record. */
+    if (record_len < 40)
+        return;
+
     /* Credential flavor */
     rpc.auth_flavor = (uint8_t)xdr_get_u32(&cp);
     uint32_t cred_len = xdr_get_u32(&cp);
-    cp += cred_len;
-    while (cred_len & 3) { cp++; cred_len++; }
+    cp = xdr_advance_bounded(cp, buf + record_len, cred_len);
 
     /* Verifier */
     uint32_t verf_flavor = xdr_get_u32(&cp);
     (void)verf_flavor;
     uint32_t verf_len = xdr_get_u32(&cp);
-    cp += verf_len;
-    while (verf_len & 3) { cp++; verf_len++; }
+    cp = xdr_advance_bounded(cp, buf + record_len, verf_len);
 
     /* Copy remaining as call data */
     uint32_t remaining = record_len - (uint32_t)(cp - buf);
