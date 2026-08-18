@@ -1643,6 +1643,9 @@ static int btrfs_read(void *priv, const char *path,
         uint64_t search_obj = ino;
         uint8_t  search_type = BTRFS_EXTENT_DATA_KEY;
         uint64_t search_off = 0;
+        uint64_t prev_obj = search_obj;
+        uint8_t  prev_type = search_type;
+        uint64_t prev_off = search_off;
 
         while (done < to_read) {
             uint32_t item_idx;
@@ -1773,6 +1776,22 @@ wrap_search:
                 if (search_type == 0)
                     search_obj = cur_obj + 1;
             }
+
+            /* Guard against a corrupt/cyclic extent tree: the search
+             * key must strictly advance past the previous iteration's
+             * key every time.  btrfs_search_tree assumes keys in a node
+             * are sorted; a node with unsorted keys (or a tree cycle)
+             * makes its binary search return arbitrary items, which
+             * would otherwise let the search key oscillate and loop
+             * forever.  Bail out instead of hanging the kernel. */
+            if (search_obj < prev_obj ||
+                (search_obj == prev_obj &&
+                 (search_type < prev_type ||
+                  (search_type == prev_type && search_off <= prev_off))))
+                break;
+            prev_obj = search_obj;
+            prev_type = search_type;
+            prev_off = search_off;
         }
     }
 
