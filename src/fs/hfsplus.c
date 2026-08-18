@@ -233,8 +233,13 @@ static int hfsplus_search_node(struct hfsplus_priv *hp, uint8_t *node_buf,
     /* The offsets count from the end: the first record is stored at
      * offset[node_size - 2] and it points to the first record. */
     for (int i = num_recs - 1; i >= 0; i--) {
-        uint16_t rec_off = r16((uint8_t *)(node_buf + node_size - (i + 1) * 2 - 2));
-        if (rec_off >= node_size) continue;
+        /* Offset table slot for record i sits at node_size - 2 - 2*i.
+         * A crafted num_recs larger than the node can hold would push
+         * the slot read before the buffer. */
+        if ((uint32_t)i * 2 + 2 > node_size)
+            continue;
+        uint16_t rec_off = r16((uint8_t *)(node_buf + node_size - 2 - 2 * i));
+        if ((uint32_t)rec_off + 2 > node_size) continue;
 
         /* For leaf nodes, the record starts with a key, then data */
         uint8_t *rec = node_buf + rec_off;
@@ -373,9 +378,12 @@ static int hfsplus_catalog_lookup(struct hfsplus_priv *hp,
                 break;
             } else {
                 /* Not found, try first child */
-                uint16_t *offsets = (uint16_t *)(node_buf + node_size);
                 if (desc->num_recs > 0) {
                     uint16_t first_off = r16((uint8_t *)(node_buf + node_size - 2));
+                    /* Validate the offset: a crafted entry would underflow
+                     * rec_sz and dereference far past the node buffer. */
+                    if (first_off >= node_size || node_size - first_off < 6)
+                        break;
                     uint8_t *first_rec = node_buf + first_off;
                     uint32_t rec_sz = node_size - first_off;
                     current_node = r32(first_rec + rec_sz - 4);
@@ -487,20 +495,31 @@ static int hfsplus_readdir(void *priv, const char *path)
         if (desc->kind == BT_LEAF_NODE) {
             uint16_t num_recs = desc->num_recs;
             for (int i = 0; i < (int)num_recs; i++) {
-                uint16_t rec_off = r16(node_buf + node_size - (i + 1) * 2 - 2);
-                if (rec_off >= node_size) continue;
+                /* Offset table slot for record i sits at node_size - 2 - 2*i.
+                 * A crafted num_recs larger than the node can hold would push
+                 * the slot read before the buffer. */
+                if ((uint32_t)i * 2 + 2 > node_size)
+                    break;
+                uint16_t rec_off = r16(node_buf + node_size - 2 - 2 * i);
+                if ((uint32_t)rec_off + 2 > node_size) continue;
                 uint8_t *rec = node_buf + rec_off;
                 uint16_t key_len = r16(rec);
-                if (key_len < 6) continue;
-                /* Key: key_length(2) + parent_id(4) + name_length(2) + name */
+                /* Key: key_length(2) + parent_id(4) + name_length(2) + name.
+                 * Bound key_len on the high side too: an unbounded key_len
+                 * underflows the data_len computation below and lets the
+                 * catalog record dereference land far past the node buffer. */
+                if (key_len < 8 || key_len > node_size - rec_off) continue;
                 uint32_t rec_parent_id = r32(rec + 2);
                 if (rec_parent_id != parent_id) continue;
 
                 uint16_t entry_name_len = r16(rec + 6);
-                if (entry_name_len > 255) continue;
+                /* The UTF-16BE name must fit inside the key, or a crafted
+                 * long name decodes from beyond the node buffer. */
+                if (entry_name_len > 255 ||
+                    (uint32_t)entry_name_len * 2 > (uint32_t)key_len - 8) continue;
 
                 char entry_name[256];
-                for (uint16_t j = 0; j < entry_name_len && j < 255; j++)
+                for (uint16_t j = 0; j < entry_name_len; j++)
                     entry_name[j] = (char)rec[8 + j * 2 + 1]; /* UTF-16BE -> ASCII */
                 entry_name[entry_name_len] = '\0';
 
@@ -514,12 +533,15 @@ static int hfsplus_readdir(void *priv, const char *path)
             }
             done = 1;
         } else if (desc->kind == BT_INDEX_NODE) {
-            uint16_t *offsets = (uint16_t *)(node_buf + node_size);
             if (desc->num_recs > 0) {
                 uint16_t first_off = r16((uint8_t *)(node_buf + node_size - 2));
-                uint8_t *first_rec = node_buf + first_off;
-                uint32_t rec_sz = node_size - first_off;
-                current_node = r32(first_rec + rec_sz - 4);
+                if (first_off >= node_size || node_size - first_off < 6) {
+                    done = 1;
+                } else {
+                    uint8_t *first_rec = node_buf + first_off;
+                    uint32_t rec_sz = node_size - first_off;
+                    current_node = r32(first_rec + rec_sz - 4);
+                }
             } else {
                 done = 1;
             }
