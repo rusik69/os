@@ -37,13 +37,7 @@ static uint32_t hex8(const char *s) {
     return v;
 }
 
-/* Align up to 4 bytes */
-static uint32_t align4(uint32_t v) {
-    return (v + 3) & ~3u;
-}
-
 int cpio_extract_initramfs(uint32_t addr, uint32_t size) {
-    (void)size;
     uint8_t *buf = (uint8_t *)(uint64_t)addr;
     uint32_t offset = 0;
     int count = 0;
@@ -53,7 +47,7 @@ int cpio_extract_initramfs(uint32_t addr, uint32_t size) {
     for (;;) {
         struct cpio_newc_header *hdr = (struct cpio_newc_header *)(buf + offset);
 
-        if (offset + 110 > size) break;
+        if ((uint64_t)offset + 110 > size) break;
 
         /* Check magic */
         if (hdr->c_magic[0] != '0' || hdr->c_magic[1] != '7' ||
@@ -66,23 +60,22 @@ int cpio_extract_initramfs(uint32_t addr, uint32_t size) {
         uint32_t filesize = hex8(hdr->c_filesize);
         uint32_t mode     = hex8(hdr->c_mode);
 
-        /* Header + filename (aligned to 4) */
-        uint32_t hdr_size = 110 + namesize;
-        hdr_size = align4(hdr_size);
-        uint32_t data_size = align4(filesize);
+        /* Header + filename (aligned to 4).  Metadata sanity: namesize and
+         * filesize come from the archive.  A header claiming an oversized
+         * name or data region wraps uint32 arithmetic — the advance could
+         * land back on the same offset (infinite loop on a crafted chain),
+         * the data pointer could read far out of bounds, and a huge
+         * namesize reaching memcpy as a negative int length would copy
+         * unbounded memory.  Compute the entry geometry in 64-bit and
+         * require the whole entry to fit the remaining archive. */
+        uint64_t hdr_size = ((uint64_t)110 + namesize + 3) & ~3ull;
+        uint64_t data_size = ((uint64_t)filesize + 3) & ~3ull;
 
         const char *filename = (const char *)(buf + offset + 110);
-        uint32_t data_offset = offset + hdr_size;
+        uint32_t data_offset = (uint32_t)((uint64_t)offset + hdr_size);
 
-        /* Metadata sanity: namesize/filesize come from the archive and are
-         * otherwise trusted.  A header claiming an oversized name or data
-         * region wraps the uint32 offset arithmetic below — the advance can
-         * land back on the same offset, pinning the loop forever (infinite
-         * loop on a corrupt/crafted chain), and the data pointer reads far
-         * out of bounds.  Require the whole entry to fit the remaining
-         * archive. */
-        if (offset > size || hdr_size > size - offset ||
-            data_size > size - offset - hdr_size) {
+        if ((uint64_t)offset > size || hdr_size > (uint64_t)size - offset ||
+            data_size > (uint64_t)size - offset - hdr_size) {
             kprintf("[cpio] entry at offset %u: namesize=%u filesize=%u "
                     "exceeds archive bounds, stopping\n",
                     offset, namesize, filesize);
@@ -96,9 +89,11 @@ int cpio_extract_initramfs(uint32_t addr, uint32_t size) {
 
         /* Skip "." entries */
         if (filename[0] != '\0' && !(namesize == 2 && filename[0] == '.' && filename[1] == '\0')) {
-            /* Ensure filename is null-terminated within bounds */
+            /* Ensure filename is null-terminated within bounds (size kept
+             * unsigned so a crafted namesize can never become a negative
+             * int that memcpy would widen to a huge size_t) */
             char namebuf[128];
-            int nlen = (int)(namesize - 1); /* exclude null terminator */
+            uint32_t nlen = namesize > 0 ? namesize - 1 : 0; /* exclude null terminator */
             if (nlen > 127) nlen = 127;
             memcpy(namebuf, filename, nlen);
             namebuf[nlen] = '\0';
@@ -119,7 +114,7 @@ int cpio_extract_initramfs(uint32_t addr, uint32_t size) {
                 if (filesize > 0) {
                     char *target = (char *)(buf + data_offset);
                     char tmp[256];
-                    int tlen = (int)filesize;
+                    uint32_t tlen = filesize;
                     if (tlen > 255) tlen = 255;
                     memcpy(tmp, target, tlen);
                     tmp[tlen] = '\0';
@@ -131,7 +126,7 @@ int cpio_extract_initramfs(uint32_t addr, uint32_t size) {
         }
 
         /* Advance past the data (aligned to 4) */
-        offset = data_offset + data_size;
+        offset = (uint32_t)((uint64_t)data_offset + data_size);
 
         if (offset >= size) break;
     }
