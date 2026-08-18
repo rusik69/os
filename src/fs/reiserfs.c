@@ -54,6 +54,41 @@ static inline uint8_t *reiserfs_block(struct reiserfs_priv *rp, uint32_t block_n
     return reiserfs_addr(rp, offset);
 }
 
+/* True if a node's item-header array (blk_nr_items entries) fits entirely
+ * inside the node's block AND inside the mapped image.  Guards against
+ * crafted images that claim far more item headers than a block can hold. */
+static int reiserfs_node_headers_ok(struct reiserfs_priv *rp,
+                                    uint32_t block_num, uint16_t nr_items)
+{
+    uint64_t block_off;
+    uint64_t headers_end;
+
+    if (nr_items == 0)
+        return 0;
+    if (rp->block_size < sizeof(struct reiserfs_block_header) +
+                         sizeof(struct reiserfs_item_header))
+        return 0;
+    if (nr_items > (uint32_t)(rp->block_size -
+                              sizeof(struct reiserfs_block_header)) /
+                       sizeof(struct reiserfs_item_header))
+        return 0;
+    block_off = (uint64_t)block_num * rp->block_size;
+    headers_end = block_off + sizeof(struct reiserfs_block_header) +
+                  (uint64_t)nr_items * sizeof(struct reiserfs_item_header);
+    return headers_end <= rp->total_size;
+}
+
+/* True if an item's data extent (ih_item_loc + ih_item_len inside its block)
+ * lies fully inside the mapped image.  The block start is already validated
+ * by reiserfs_block(); this closes the gap where a crafted item extends past
+ * the end of the last (possibly partial) block or the image itself. */
+static int reiserfs_item_data_ok(struct reiserfs_priv *rp, uint32_t block_num,
+                                 const struct reiserfs_item_header *ih)
+{
+    uint64_t block_off = (uint64_t)block_num * rp->block_size;
+    return block_off + ih->ih_item_loc + ih->ih_item_len <= rp->total_size;
+}
+
 /* ── Superblock loading ───────────────────────────────────────────── */
 
 static int reiserfs_load_super(struct reiserfs_priv *rp)
@@ -104,6 +139,9 @@ static int reiserfs_find_leaf(struct reiserfs_priv *rp,
         if (!block_data) return -1;
 
         struct reiserfs_block_header *bh = (struct reiserfs_block_header *)block_data;
+
+        if (!reiserfs_node_headers_ok(rp, current_block, bh->blk_nr_items))
+            return -1;
         uint16_t nr_items = bh->blk_nr_items;
 
         /* Internal node items each contain a key and a pointer (block number).
@@ -124,15 +162,18 @@ static int reiserfs_find_leaf(struct reiserfs_priv *rp,
                 break;
             }
             /* The item data contains the child block number */
-            uint16_t item_loc = ih[i].ih_item_loc;
-            uint32_t *child_ptr = (uint32_t *)(block_data + item_loc);
-            best_child = *child_ptr;
+            if ((uint64_t)current_block * rp->block_size +
+                    ih[i].ih_item_loc + sizeof(uint32_t) > rp->total_size)
+                return -1;
+            best_child = *(uint32_t *)(block_data + ih[i].ih_item_loc);
         }
 
         if (best_child == 0) {
             /* Fall back to first child */
-            uint16_t item_loc = ih[0].ih_item_loc;
-            best_child = *(uint32_t *)(block_data + item_loc);
+            if ((uint64_t)current_block * rp->block_size +
+                    ih[0].ih_item_loc + sizeof(uint32_t) > rp->total_size)
+                return -1;
+            best_child = *(uint32_t *)(block_data + ih[0].ih_item_loc);
         }
 
         if (best_child == 0 || best_child >= rp->sb.s_block_count)
@@ -147,10 +188,10 @@ static int reiserfs_find_leaf(struct reiserfs_priv *rp,
     if (!leaf_data) return -1;
 
     struct reiserfs_block_header *bh = (struct reiserfs_block_header *)leaf_data;
-    uint16_t nr_items = bh->blk_nr_items;
 
-    if (nr_items == 0)
+    if (!reiserfs_node_headers_ok(rp, current_block, bh->blk_nr_items))
         return -1;
+    uint16_t nr_items = bh->blk_nr_items;
 
     pos->block_num = current_block;
     pos->item_count = nr_items;
@@ -191,6 +232,8 @@ static void *reiserfs_get_item(struct reiserfs_priv *rp,
         (block_data + sizeof(struct reiserfs_block_header));
 
     struct reiserfs_item_header *item_hdr = &ih[item_index];
+    if (!reiserfs_item_data_ok(rp, block_num, item_hdr))
+        return NULL;
     uint16_t item_loc = item_hdr->ih_item_loc;
     uint16_t item_len = item_hdr->ih_item_len;
 
@@ -220,9 +263,10 @@ static int reiserfs_read_stat(struct reiserfs_priv *rp, uint32_t objectid,
         struct reiserfs_key *key = (struct reiserfs_key *)&ih[i].ih_key;
         if (key->k_objectid == objectid) {
             /* Check if this is a stat item (type 0 at end of offset range) */
-            if (ih[i].ih_item_len >= sizeof(struct reiserfs_stat_item)) {
-                void *data = block_data + ih[i].ih_item_loc;
-                memcpy(stat, data, sizeof(struct reiserfs_stat_item));
+            if (ih[i].ih_item_len >= sizeof(struct reiserfs_stat_item) &&
+                reiserfs_item_data_ok(rp, pos.block_num, &ih[i])) {
+                memcpy(stat, block_data + ih[i].ih_item_loc,
+                       sizeof(struct reiserfs_stat_item));
                 return 0;
             }
         }
@@ -252,6 +296,8 @@ static int reiserfs_readdir_dir(struct reiserfs_priv *rp, uint32_t objectid)
         struct reiserfs_key *key = (struct reiserfs_key *)&ih[i].ih_key;
 
         if (key->k_objectid == objectid) {
+            if (!reiserfs_item_data_ok(rp, pos.block_num, &ih[i]))
+                continue;
             uint16_t item_len = ih[i].ih_item_len;
             uint8_t *item_data = block_data + ih[i].ih_item_loc;
 
@@ -331,6 +377,8 @@ static int reiserfs_read_file(struct reiserfs_priv *rp, uint32_t objectid,
         struct reiserfs_key *key = (struct reiserfs_key *)&ih[i].ih_key;
 
         if (key->k_objectid == objectid) {
+            if (!reiserfs_item_data_ok(rp, pos.block_num, &ih[i]))
+                continue;
             uint16_t item_len = ih[i].ih_item_len;
             uint8_t *item_data = block_data + ih[i].ih_item_loc;
             uint32_t item_off = key->k_offset; /* byte offset in file */
@@ -372,6 +420,8 @@ static uint32_t reiserfs_find_entry(struct reiserfs_priv *rp, uint32_t dir_id,
         struct reiserfs_key *key = (struct reiserfs_key *)&ih[i].ih_key;
 
         if (key->k_objectid == dir_id) {
+            if (!reiserfs_item_data_ok(rp, pos.block_num, &ih[i]))
+                continue;
             uint16_t item_len = ih[i].ih_item_len;
             uint8_t *item_data = block_data + ih[i].ih_item_loc;
             uint32_t consumed = 0;
