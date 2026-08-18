@@ -1427,8 +1427,21 @@ int jbd2_replay(struct jbd2_journal *journal)
             break;
         }
 
-        /* Verify sequence number is contiguous */
-        expected_seq = journal->sequence + transactions;
+        /* Verify sequence number is contiguous.
+         *
+         * s_sequence (journal->sequence) records the NEXT sequence
+         * number to assign: commit_transaction stores
+         * handle->h_sequence + 1, while the transaction just committed
+         * (the one whose descriptor sits at s_start) carries sequence
+         * s_sequence - 1.  Using journal->sequence directly is off by
+         * one, so the first descriptor could never match and recovery
+         * would silently replay nothing.  Any older transactions still
+         * in the log (if more than one survives) precede it with
+         * progressively lower sequence numbers, so the expected value
+         * keeps increasing by one per transaction replayed. */
+        expected_seq = (journal->sequence > 0)
+                           ? journal->sequence - 1 + transactions
+                           : 0;
         if (hdr->h_sequence != expected_seq) {
             kprintf("[jbd2] sequence mismatch at block %u: "
                     "expected %u, got %u\n",
