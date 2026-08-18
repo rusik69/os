@@ -316,14 +316,21 @@ static int nfs_rpc_call(uint32_t server_ip, uint32_t prog,
     uint32_t reply_stat = xdr_get_u32(&rp);
     if (reply_stat == RPC_MSG_DENIED) return -EACCES;
 
-    /* Skip verifier */
+    /* Skip verifier — bound it by the received message length so a crafted
+     * auth blob length cannot push rp past the reply buffer (the memmove
+     * below would otherwise underflow its length and copy out of bounds). */
     uint32_t auth_flavor = xdr_get_u32(&rp);
     (void)auth_flavor;
     uint32_t auth_len = xdr_get_u32(&rp);
-    rp += auth_len;
-    while (auth_len & 3) { rp++; auth_len++; }
+    uint64_t auth_adv = (uint64_t)auth_len + ((-(uint64_t)auth_len) & 3);
+    uint32_t consumed = (uint32_t)(rp - reply);
+    if (auth_adv > (uint64_t)(recv_len - consumed))
+        return -EIO;
+    rp += (uint32_t)auth_adv;
 
-    /* accept_stat */
+    /* accept_stat — at least 4 bytes must remain in the message */
+    if (recv_len - (uint32_t)(rp - reply) < 4)
+        return -EIO;
     uint32_t accept_stat = xdr_get_u32(&rp);
     if (accept_stat != 0) return -EIO;
 
@@ -1069,14 +1076,22 @@ static int nfs_readdir(int mount_id, const struct nfs_fhandle *fh,
         char name[256];
         if (name_len > 255)
             name_len = 255;
-        /* Whole XDR string (data + pad) must fit in the received reply */
+        /* The raw wire length must fit in the received reply.  Check it
+         * BEFORE the alignment arithmetic (which can wrap on huge lengths)
+         * so a crafted length can never push rp past reply_end: the
+         * (size_t)(reply_end - rp) guards below would then see a negative
+         * difference as a huge "remaining" and read out of bounds. */
         if (wire_name_len > (size_t)(reply_end - rp))
             break;
         memcpy(name, rp, name_len);
-        rp += wire_name_len; /* advance past actual wire data, not capped */
+        /* Advance past data + XDR padding, clamped to reply_end so a
+         * truncated reply missing its pad bytes cannot move rp past the
+         * end of the buffer. */
+        uint32_t wire_adv = (wire_name_len + 3) & ~3U;
+        if (wire_adv > (size_t)(reply_end - rp))
+            wire_adv = (uint32_t)(reply_end - rp);
+        rp += wire_adv;
         name[name_len] = '\0';
-        /* Pad to 4 bytes based on original wire length */
-        while (wire_name_len & 3) { rp++; wire_name_len++; }
 
         /* cookie (uint64) — pass back for next page */
         if ((size_t)(reply_end - rp) < 8)
