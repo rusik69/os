@@ -1297,6 +1297,9 @@ int jbd2_replay(struct jbd2_journal *journal)
     uint8_t *buf;
     uint32_t current;
     uint32_t block_size;
+    uint32_t scan_limit;
+    uint32_t blocks_scanned;
+    uint32_t revoke_skip;
     int transactions;
     int ret;
 
@@ -1322,6 +1325,22 @@ int jbd2_replay(struct jbd2_journal *journal)
         return JBD2_ERR_BLOCK_SIZE;
     }
 
+    /* The journal area is cyclic — the scan wraps from total_blocks back
+     * to first_data_block.  Validate the geometry up front so the scan
+     * bound below cannot underflow, then cap the walk at one full circle:
+     * every surviving step advances at least one block, so after scanning
+     * the whole area without finding a terminating record the data is
+     * cyclic/corrupt (e.g. every block claiming to be a COMMIT/REVOKE
+     * block with a valid magic).  Without this bound such an image would
+     * make recovery loop forever. */
+    if (journal->total_blocks <= journal->first_data_block) {
+        kprintf("[jbd2] invalid journal geometry: total=%u first=%u\n",
+                journal->total_blocks, journal->first_data_block);
+        return JBD2_ERR_BLOCK_SIZE;
+    }
+    scan_limit = journal->total_blocks - journal->first_data_block;
+    blocks_scanned = 0;
+
     buf = (uint8_t *)kmalloc(block_size);
     if (!buf)
         return -ENOMEM;
@@ -1342,6 +1361,19 @@ int jbd2_replay(struct jbd2_journal *journal)
         /* Handle circular wrap-around */
         if (current >= journal->total_blocks)
             current = journal->first_data_block;
+
+        /* Bound the walk at one full circle of the journal area — see
+         * the geometry comment above.  Every surviving iteration advances
+         * current by at least one block, so reaching the limit means the
+         * journal holds cyclic records with no terminating block. */
+        if (blocks_scanned >= scan_limit) {
+            kprintf("[jbd2] cyclic journal records: scanned %u blocks "
+                    "without progress (recovered %d transactions), "
+                    "aborting recovery\n",
+                    scan_limit, transactions);
+            break;
+        }
+        blocks_scanned++;
 
         /* Read the next journal block */
         ret = jbd2_read_block(journal, current, buf);
@@ -1451,9 +1483,21 @@ int jbd2_replay(struct jbd2_journal *journal)
 
             /* Process any revocation blocks between data blocks
              * and the commit block */
+            revoke_skip = 0;
             for (;;) {
                 if (commit_pos >= journal->total_blocks)
                     commit_pos = journal->first_data_block;
+
+                /* Cap the skip scan at one full circle — a journal area
+                 * consisting entirely of REVOKE records would otherwise
+                 * wrap forever without ever finding the commit block. */
+                if (revoke_skip >= scan_limit) {
+                    kprintf("[jbd2] cyclic revoke records at block %u, "
+                            "aborting recovery\n", commit_pos);
+                    ret = JBD2_ERR_BAD_MAGIC;
+                    goto out_err;
+                }
+                revoke_skip++;
 
                 ret = jbd2_read_block(journal, commit_pos, buf);
                 if (ret != JBD2_OK) {
