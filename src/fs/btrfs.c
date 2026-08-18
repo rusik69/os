@@ -1741,13 +1741,22 @@ static int btrfs_read(void *priv, const char *path,
                     uint64_t lba = read_addr / 512;
                     uint32_t nsect = (uint32_t)((need + 511) / 512);
                     uint8_t *dest = (uint8_t *)buf + done;
+                    uint8_t sector_buf[512];
 
                     for (uint32_t s = 0; s < nsect; s++) {
                         if (blockdev_read_sectors(bp->dev_id, lba + s, 1,
-                                                   dest + s * 512) != 0) {
+                                                  sector_buf) != 0) {
                             /* I/O error — return what we have */
                             goto read_done;
                         }
+                        /* Copy only the bytes that fit in the caller's
+                         * buffer: the final sector may be a partial read
+                         * (need % 512 != 0), and writing the whole 512
+                         * bytes would overflow the destination by up to
+                         * 511 bytes past buf + to_read. */
+                        uint64_t remain = need - (uint64_t)s * 512;
+                        uint32_t cp = (remain > 512) ? 512 : (uint32_t)remain;
+                        memcpy(dest + s * 512, sector_buf, cp);
                     }
 
                     done += (uint32_t)need;
