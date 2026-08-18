@@ -223,6 +223,10 @@ int vfs_check_quota_inodes(uint16_t uid)
 
     uint32_t new_total = eq->cur_inodes + 1;
 
+    /* Check for wraparound */
+    if (new_total < eq->cur_inodes)
+        return -EDQUOT;  /* overflow — deny */
+
     /* Hard limit check */
     if (eq->inode_hard_limit > 0 && new_total > eq->inode_hard_limit)
         return -EDQUOT;
