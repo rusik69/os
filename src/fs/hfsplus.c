@@ -321,8 +321,17 @@ static int hfsplus_catalog_lookup(struct hfsplus_priv *hp,
 
     uint32_t current_node = hp->cat_root_node;
     int result = -1;
+    /* Bound the descent: any valid B-tree path is at most tree_depth
+     * (typically < 16) nodes long. A cyclic index chain on a crafted
+     * image would otherwise loop forever. */
+    uint32_t depth = 0;
 
     for (;;) {
+        if (++depth > 64) {
+            kprintf("[hfsplus] catalog lookup: cyclic index chain detected (node %u)\n",
+                    current_node);
+            break;
+        }
         if (hfsplus_read_btree_node(hp, current_node, node_buf,
                                      node_size, hp->cat_start_offset) < 0)
             break;
@@ -460,7 +469,14 @@ static int hfsplus_readdir(void *priv, const char *path)
 
     uint32_t current_node = hp->cat_root_node;
     int done = 0;
+    /* Bound the descent (same cyclic-chain protection as catalog lookup). */
+    uint32_t depth = 0;
     while (!done) {
+        if (++depth > 64) {
+            kprintf("[hfsplus] readdir: cyclic index chain detected (node %u)\n",
+                    current_node);
+            break;
+        }
         if (hfsplus_read_btree_node(hp, current_node, node_buf,
                                      node_size, hp->cat_start_offset) < 0)
             break;
