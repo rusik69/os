@@ -368,6 +368,7 @@ static uint16_t parse_rrip_entries(struct iso9660_priv *ip,
     uint32_t ce_len = 0;
     int in_continuation = 0;
     int ce_hops = 0;          /* limit CE chain depth to prevent infinite loops */
+    int ce_pending = 0;       /* CE encountered: continuation area must be walked */
 
     /* We'll use a simple iterative approach: if we encounter a CE entry,
      * we switch to reading from the continuation area, then resume. */
@@ -389,8 +390,11 @@ walk_susp:
             walk_data = ce_buf;
             walk_len = ip->block_size;
             walk_off = ce_offset;
-            /* Clamp walk length */
+            /* Clamp walk length to the CE continuation window.
+             * ce_len still holds the window size from the CE entry
+             * (it is only consumed via ce_pending, never zeroed). */
             uint32_t ce_end = ce_offset + ce_len;
+            if (ce_end < ce_offset) ce_end = walk_len;  /* overflow guard */
             if (ce_end > walk_len) ce_end = walk_len;
             walk_len = ce_end;
             in_continuation = 0;
@@ -562,6 +566,7 @@ walk_susp:
                     ce_block = ce->block_loc_le;
                     ce_offset = ce->offset_le;
                     ce_len = ce->cont_len_le;
+                    ce_pending = 1;
                     /* We'll process the continuation after walking the
                      * current chunk's remaining entries, then loop. */
                 }
@@ -572,14 +577,15 @@ walk_susp:
     }
 
     /* If we had a CE entry, process the continuation area */
-    if (ce_len > 0) {
+    if (ce_pending) {
         ce_hops++;
         if (ce_hops > 16) {
             kprintf("iso9660: CE continuation depth exceeded (>16 hops), "
                     "possible crafted ISO\\n");
             return rr_found;
         }
-        ce_len = 0;  /* reset so we don't loop if continuation has no CE */
+        ce_pending = 0;  /* consume the CE — a continuation without another
+                          * CE entry then terminates the chain naturally */
         in_continuation = 1;
         goto walk_susp;
     }
