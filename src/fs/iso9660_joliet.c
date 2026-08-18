@@ -98,14 +98,20 @@ int joliet_ucs2be_to_utf8(const char *ucs2, int ucs2_len_bytes,
 			}
 		}
 
-		/* Encode this UCS-2 codepoint to UTF-8 */
-		int nbytes = joliet_ucs2_cp_to_utf8(cp, out + written);
-		written += nbytes;
-		if (written >= out_max - 1) {
+		/* Encode this UCS-2 codepoint to UTF-8.  Encode into a temp
+		 * buffer first so the bounds check runs BEFORE the destination
+		 * write: a 3-byte codepoint at written == out_max - 2 would
+		 * otherwise write one byte past the buffer before the truncation
+		 * clips it (crafted long Joliet names). */
+		char tmp[3];
+		int nbytes = joliet_ucs2_cp_to_utf8(cp, tmp);
+		if (written + nbytes > out_max - 1) {
 			/* Truncate gracefully at buffer boundary */
 			written = out_max - 1;
 			break;
 		}
+		memcpy(out + written, tmp, (size_t)nbytes);
+		written += nbytes;
 	}
 
 	/*
