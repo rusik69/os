@@ -296,10 +296,24 @@ static __attribute__((unused)) int squashfs_parse_inode(struct squashfs_priv *rp
     return -1;
 }
 
+/* Maximum directory nesting we will recurse into. A valid SquashFS image
+ * is far shallower; the cap only exists to stop a crafted/corrupt image
+ * whose directory inodes form a cyclic chain (an entry pointing back at an
+ * ancestor inode) from recursing forever and smashing the kernel stack.
+ * Note the entry-count cutoff alone cannot stop such a cycle: the recursive
+ * call happens before (*count)++ at each level, so count never advances
+ * while the frames are stuck in the cycle. */
+#define SQUASHFS_DIR_DEPTH_MAX 32
+
 /* Recursively walk directory entries */
 static int squashfs_walk_dir(struct squashfs_priv *rp, uint64_t inode_ref,
-                              const char *prefix, int *count)
+                              const char *prefix, int *count, unsigned int depth)
 {
+    if (depth > SQUASHFS_DIR_DEPTH_MAX) {
+        kprintf("[squashfs] directory tree too deep (cyclic chain?)\n");
+        return *count;
+    }
+
     uint8_t *base = squashfs_addr(rp, inode_ref);
     uint16_t inode_type = squashfs_read16(base);
 
@@ -397,8 +411,10 @@ static int squashfs_walk_dir(struct squashfs_priv *rp, uint64_t inode_ref,
                 } else if (child_type == SQUASHFS_DIR_TYPE) {
                     e->is_dir = 1;
                     e->file_size = squashfs_read16(inode_base + 24);
-                    /* Recursively walk subdirectory */
-                    squashfs_walk_dir(rp, inode_addr_val, full_path, count);
+                    /* Recursively walk subdirectory (depth-capped so a
+                     * cyclic directory chain cannot recurse forever) */
+                    squashfs_walk_dir(rp, inode_addr_val, full_path, count,
+                                      depth + 1);
                 }
             }
 
@@ -450,7 +466,7 @@ static int squashfs_parse(struct squashfs_priv *rp)
     uint16_t root_type = squashfs_read16(root_base);
 
     if (root_type == SQUASHFS_DIR_TYPE) {
-        squashfs_walk_dir(rp, root_ref, "", &count);
+        squashfs_walk_dir(rp, root_ref, "", &count, 0);
     }
 
     rp->num_entries = count;
