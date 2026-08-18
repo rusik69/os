@@ -211,7 +211,10 @@ static int adfs_readdir(void *priv, const char *path)
              * For ADFS new directories, each entry has type/ident/load/exec/len/attr/addr/name.
              * We iterate until we hit a terminator or end of block. */
             offset = 0;
-            while (offset + 4 <= 512) {
+            /* Each entry needs its 26-byte fixed header in-bounds;
+             * the variable-length name is additionally capped below so
+             * the walk can never read past the 512-byte block. */
+            while (offset + 26 <= 512) {
                 uint8_t ent_type = buf[offset];
                 if (ent_type == 0) break; /* terminator */
                 if (ent_type >= 0x80) { /* unused or continuation */
@@ -220,9 +223,13 @@ static int adfs_readdir(void *priv, const char *path)
                 }
 
                 struct adfs_new_dirent *new_ent = (struct adfs_new_dirent *)(buf + offset);
-                /* Find the name length (null-terminated) */
+                /* Find the name length (null-terminated), bounded by the
+                 * bytes left in the block after the 26-byte header. */
                 uint32_t name_len;
-                for (name_len = 0; name_len < ADFS_NEW_NAME_LEN; name_len++) {
+                uint32_t max_name = ADFS_NEW_NAME_LEN;
+                uint32_t remain = 512 - offset - 26;
+                if (remain < max_name) max_name = remain;
+                for (name_len = 0; name_len < max_name; name_len++) {
                     if (new_ent->ent_name[name_len] == '\0') break;
                 }
 
