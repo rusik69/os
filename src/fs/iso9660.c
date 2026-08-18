@@ -671,9 +671,16 @@ static int iso_read_dir_entries(struct iso9660_priv *ip, uint32_t extent, uint32
             }
 
             /* ISO 9660 §9.1.4: minimum directory record length is 33 bytes
-             * (fixed fields + 1-byte name).  Shorter records are invalid. */
-            if (rec->length < 33)
-                break;
+             * (fixed fields + 1-byte name).  Shorter records are invalid.
+             * Skip the rest of this block — a plain break would leave the
+             * offset/pos state unchanged and the outer loop would re-read
+             * the same record forever on a malformed/crafted ISO. */
+            if (rec->length < 33) {
+                uint32_t skip = ip->block_size - pos;
+                pos = ip->block_size;
+                offset += skip;
+                continue;
+            }
 
             /* Check if this record spans across the block boundary.
              * If so, we need to copy both parts into a contiguous buffer. */
@@ -686,8 +693,15 @@ static int iso_read_dir_entries(struct iso9660_priv *ip, uint32_t extent, uint32
                 if (offset + first_part < size) {
                     uint32_t next_lba = extent + (offset + first_part) / ip->block_size;
                     uint8_t next_buf[2048];
-                    if (iso_read_block(ip, next_lba, next_buf) < 0)
+                    if (iso_read_block(ip, next_lba, next_buf) < 0) {
+                        /* Block read failed — skip past this record so
+                         * the outer loop makes progress instead of
+                         * re-spinning on the same unreadable straddle. */
+                        uint32_t skip = ip->block_size - pos;
+                        pos = ip->block_size;
+                        offset += skip;
                         break;
+                    }
 
                     uint32_t second_part = rec->length - first_part;
                     if (second_part > ip->block_size)
@@ -697,7 +711,14 @@ static int iso_read_dir_entries(struct iso9660_priv *ip, uint32_t extent, uint32
                     /* Parse from the combined buffer */
                     parse_one_dirent(ip, straddle_buf, rec->length, &entries[count]);
                 } else {
-                    break;  /* truncated record */
+                    /* Truncated record: the directory data ends before
+                     * this record completes.  Skip the rest — the next
+                     * block start is past the end of the directory, so
+                     * the outer loop terminates. */
+                    uint32_t skip = ip->block_size - pos;
+                    pos = ip->block_size;
+                    offset += skip;
+                    break;
                 }
             } else {
                 /* Record fits entirely within this block — normal case */
@@ -940,7 +961,15 @@ static int check_rrip_in_dir(struct iso9660_priv *ip,
             const struct iso_dir_record *rec =
                 (const struct iso_dir_record *)(buf + pos);
             if (rec->length == 0) { pos++; offset++; continue; }
-            if (rec->length < 33) break;
+            /* Invalid record length — skip the rest of this block so the
+             * scan makes progress.  A plain break here leaves offset/pos
+             * unchanged and loops forever on a malformed ISO. */
+            if (rec->length < 33) {
+                uint32_t skip = ip->block_size - pos;
+                offset += skip;
+                pos = ip->block_size;
+                break;
+            }
 
             /* Calculate system use offset */
             uint8_t name_len = rec->name_len;
