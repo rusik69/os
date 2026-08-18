@@ -342,13 +342,21 @@ static int64_t ext2_extent_get_block(struct ext2_priv *ep, struct ext2_inode *in
 
         /* Validate every extent block header (not just the root).
          * Each node read from disk must be verified for correct magic,
-         * depth bounds, and entry counts to catch on-disk corruption. */
+         * depth bounds, and entry counts to catch on-disk corruption.
+         * eh_max must also be bounded against the real node capacity
+         * (60-byte root vs. block_size node) — an unbounded eh_max lets
+         * a corrupt header drive the index/leaf scans past the buffer. */
         if (eh->eh_magic != EXT4_EXTENT_MAGIC)
             return ext2_corrupt(ep, "bad extent magic in tree walk");
         if (eh->eh_depth > EXT4_EXTENT_MAX_DEPTH)
             return ext2_corrupt(ep, "extent tree depth exceeds max");
-        if (eh->eh_entries > eh->eh_max)
-            return ext2_corrupt(ep, "extent entries exceed max");
+        size_t node_cap = (node_data == root_buf) ? sizeof(root_buf)
+                                                  : (size_t)ep->block_size;
+        if (node_cap <= sizeof(struct ext4_extent_header) ||
+            eh->eh_max > (uint16_t)((node_cap - sizeof(struct ext4_extent_header)) /
+                                    sizeof(struct ext4_extent)) ||
+            eh->eh_entries > eh->eh_max)
+            return ext2_corrupt(ep, "extent entries exceed node capacity");
 
         if (depth > 0) {
             /* Internal node — binary search for child */
@@ -452,6 +460,10 @@ static int ext2_extent_push_block(struct ext2_inode *inode, uint32_t iblock, uin
     /* Read extent entries from packed inode */
     uint16_t max = eh->eh_max;
     uint16_t count = eh->eh_entries;
+    /* Bound counts against the 4-entry in-memory scratch array so a
+     * corrupt inode cannot read/write exts[] out of bounds below. */
+    if (max > sizeof(exts_storage) / sizeof(exts_storage[0]) || count > max)
+        return -EFSCORRUPTED;
     size_t exts_size = (size_t)max * sizeof(struct ext4_extent);
     if (exts_size > sizeof(exts_storage))
         exts_size = sizeof(exts_storage);
