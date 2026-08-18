@@ -1061,18 +1061,15 @@ static int cifs_smb2_query_directory(struct cifs_mount_info *mnt,
     (void)resp_struct;
     uint16_t output_offset = smb2_get16(&rp);
 
-    /* Parse file names from output buffer */
-    const uint8_t *output = resp + output_offset;
-    uint32_t remaining = sizeof(resp) - output_offset;
+    /* Parse file names from the output buffer. Entries form a
+     * NextEntryOffset-linked chain; guard against cyclic or corrupt
+     * chains (a buggy/malicious server could otherwise cause an
+     * infinite loop or out-of-bounds reads). */
+    uint32_t entry_off = output_offset;
 
-    while (remaining >= 12) {
-        uint32_t next_entry_offset = smb2_get32(&output);
-        (void)next_entry_offset;
-        smb2_get32(&output); /* file index */
-        smb2_get32(&output); /* file name length */
-
-        /* Actually we read too much — let's parse each entry structure properly */
-        output -= 12; /* reset */
+    while (entry_off + 12 <= sizeof(resp)) {
+        const uint8_t *output = resp + entry_off;
+        uint32_t remaining = sizeof(resp) - entry_off;
 
         uint32_t entry_next = smb2_get32(&output);
         smb2_get32(&output); /* file_index */
@@ -1082,15 +1079,21 @@ static int cifs_smb2_query_directory(struct cifs_mount_info *mnt,
         if (copy_len > 255) copy_len = 255;
 
         char name[256];
-        if (copy_len > 0 && copy_len <= remaining) {
+        if (copy_len > 0 && copy_len + 12 <= remaining) {
             memcpy(name, output, copy_len);
             name[copy_len] = '\0';
             kprintf("%-16s <FILE>\\n", name);
         }
 
         if (entry_next == 0) break;
-        output = resp + output_offset + entry_next;
-        remaining = sizeof(resp) - ((uint32_t)(uintptr_t)(output - resp));
+
+        /* The next entry must strictly advance past the 12-byte header
+         * and stay within the response buffer; otherwise the chain is
+         * cyclic or corrupt - stop instead of looping forever. */
+        if (entry_next < 12 || entry_next > remaining)
+            break;
+
+        entry_off += entry_next;
     }
 
     return 0;
