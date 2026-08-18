@@ -298,17 +298,27 @@ static int hfs_readdir(void *priv, const char *path)
 
     struct hfs_btree_node *header_node = (struct hfs_btree_node *)header_buf;
     /* The header record starts after the node descriptor and offset table.
-     * For a 512-byte node: descriptor is 14 bytes, then offset table (2 bytes per record). */
+     * For a 512-byte node: descriptor is 14 bytes, then offset table (2 bytes per record).
+     * A crafted numRecs can underflow the offset-table pointer below the
+     * node buffer, so validate it before computing the pointer. */
+    if (header_node->numRecs == 0 ||
+        (uint32_t)header_node->numRecs * 2 > hp->cat_node_size)
+        return -1;
     uint16_t *offsets = (uint16_t *)(header_buf + hp->cat_node_size -
                                      (header_node->numRecs * 2));
     uint16_t hdr_rec_off = offsets[0]; /* offset of header record */
+    if ((uint32_t)hdr_rec_off + sizeof(struct hfs_btree_header) > hp->cat_node_size)
+        return -1;
 
     struct hfs_btree_header *btree_hdr =
         (struct hfs_btree_header *)(header_buf + hdr_rec_off);
 
     uint32_t first_leaf = btree_hdr->firstLeaf;
+    /* node_buf is only hp->cat_node_size bytes; clamp a crafted oversized
+     * nodeSize so every node-relative offset stays within the buffer. */
     uint32_t node_size  = btree_hdr->nodeSize;
-    if (node_size == 0) node_size = hp->cat_node_size;
+    if (node_size == 0 || node_size > hp->cat_node_size)
+        node_size = hp->cat_node_size;
 
     kprintf(".              <DIR>\n");
     kprintf("..             <DIR>\n");
@@ -342,13 +352,23 @@ static int hfs_readdir(void *priv, const char *path)
             continue;
         }
 
-        /* Compute offset table for this node */
+        /* Compute offset table for this node. A crafted numRecs would
+         * underflow the pointer below the node buffer; the table must
+         * fit entirely inside the node. */
+        if (node->numRecs == 0 ||
+            (uint32_t)node->numRecs * 2 > node_size)
+            break;
         uint16_t *node_offsets = (uint16_t *)(node_buf + node_size -
                                               (node->numRecs * 2));
 
         for (int r = 0; r < node->numRecs && entries_found < 64; r++) {
             uint16_t rec_off = node_offsets[r];
-            if (rec_off >= node_size) continue;
+            /* The fixed-size catalog key (37 bytes) plus the record data
+             * fields we dereference must fit inside the node; a crafted
+             * offset near the node end would read past the buffer. */
+            if (rec_off >= node_size ||
+                (uint32_t)rec_off + sizeof(struct hfs_cat_key) + 8 > node_size)
+                continue;
 
             uint8_t *rec_ptr = node_buf + rec_off;
 
