@@ -781,8 +781,11 @@ static int exfat_validate_upcase(struct exfat_priv *ep) {
 
     /* Root directory: cluster 0 = cluster_heap_offset */
     uint32_t cluster = ep->root_dir_cluster;
+    uint32_t hops = 0;  /* cyclic-chain guard */
 
     while (cluster < EXFAT_CLUSTER_END && (cluster >= 2 || cluster == 0)) {
+        if (++hops > ep->cluster_count)
+            break;  /* cyclic cluster chain */
         if (exfat_read_cluster(ep, cluster, cluster_buf) < 0) {
             ret = -EIO;
             goto out;
@@ -1030,6 +1033,7 @@ static int exfat_find_entry_set(struct exfat_priv *ep, uint32_t dir_cluster, con
 
     uint32_t cluster = dir_cluster;
     int result = -ENOENT;
+    uint32_t hops = 0;  /* cyclic-chain guard */
 
     /* Convert name to UTF-16 for comparison */
     uint16_t utf16_name[128];
@@ -1043,6 +1047,8 @@ static int exfat_find_entry_set(struct exfat_priv *ep, uint32_t dir_cluster, con
     uint16_t target_hash = exfat_name_hash(utf16_name, (uint32_t)name_units);
 
     while (cluster >= 2 && cluster < EXFAT_CLUSTER_END) {
+        if (++hops > ep->cluster_count)
+            break;  /* cyclic cluster chain */
         if (exfat_read_cluster(ep, cluster, cluster_buf) < 0) {
             result = -EIO;
             break;
@@ -1285,6 +1291,7 @@ static int exfat_create_entry_set(struct exfat_priv *ep, uint32_t dir_cluster, c
 
     uint32_t cluster = dir_cluster;
     int free_run = 0;
+    uint32_t hops = 0;  /* cyclic-chain guard */
     uint32_t free_start_byte = 0;
     uint32_t free_start_cluster = 0;
     int found_space = 0;
@@ -1292,6 +1299,8 @@ static int exfat_create_entry_set(struct exfat_priv *ep, uint32_t dir_cluster, c
 
     /* Walk clusters */
     while (cluster >= 2 && cluster < EXFAT_CLUSTER_END) {
+        if (++hops > ep->cluster_count)
+            break;  /* cyclic cluster chain */
         if (exfat_read_cluster(ep, cluster, cluster_buf) < 0) {
             if (need_free)
                 kfree(cluster_buf);
@@ -1597,6 +1606,8 @@ static int exfat_parse_entries(struct exfat_priv *ep, uint32_t cluster, uint32_t
     uint32_t entry_count = 0;
 
     while (cluster < EXFAT_CLUSTER_END && (cluster >= 2 || cluster == 0)) {
+        if (++cluster_count > ep->cluster_count)
+            break;  /* cyclic cluster chain */
         if (exfat_read_cluster(ep, cluster, cluster_buf) < 0) {
             if (cluster_buf != buf)
                 kfree(cluster_buf);
@@ -1704,7 +1715,6 @@ static int exfat_parse_entries(struct exfat_priv *ep, uint32_t cluster, uint32_t
         }
 
         cluster = exfat_next_cluster(ep, cluster);
-        cluster_count++;
         if (max_entries > 0 && entry_count >= max_entries)
             break;
     }
@@ -1817,10 +1827,14 @@ static void exfat_free_chain(struct exfat_priv *ep, uint32_t first_cluster, uint
     } else {
         /* FAT present: traverse the FAT chain */
         uint32_t c = first_cluster;
+        uint32_t hops = 0;  /* cyclic-chain guard */
         while (c >= 2 && c < EXFAT_CLUSTER_END) {
             uint32_t next;
             if (exfat_read_fat_entry(ep, c, &next) != 0)
                 break;
+
+            if (++hops > ep->cluster_count)
+                break;  /* cyclic cluster chain */
 
             exfat_free_cluster(ep, c);
 
@@ -1902,7 +1916,10 @@ static int exfat_read(void *priv, const char *path, void *buf, uint32_t max_size
     uint16_t target_hash = exfat_name_hash(utf16_leaf, (uint32_t)name_units);
 
     uint32_t cluster = dir_cluster;
+    uint32_t hops = 0;  /* cyclic-chain guard */
     while (cluster >= 2 && cluster < EXFAT_CLUSTER_END) {
+        if (++hops > ep->cluster_count)
+            break;  /* cyclic cluster chain */
         if (exfat_read_cluster(ep, cluster, cluster_buf) < 0) {
             if (need_free)
                 kfree(cluster_buf);
@@ -2396,7 +2413,10 @@ static int exfat_stat(void *priv, const char *path, struct vfs_stat *st) {
 
     int found = 0;
     uint32_t cluster = dir_cluster;
+    uint32_t hops = 0;  /* cyclic-chain guard */
     while (cluster >= 2 && cluster < EXFAT_CLUSTER_END) {
+        if (++hops > ep->cluster_count)
+            break;  /* cyclic cluster chain */
         if (exfat_read_cluster(ep, cluster, cluster_buf) < 0) {
             if (need_free)
                 kfree(cluster_buf);
