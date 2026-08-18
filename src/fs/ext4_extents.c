@@ -1373,6 +1373,12 @@ int ext4_ext_remove_space(struct ext4_priv *ep,
     /* Walk tree to find the leaf containing the range */
     uint8_t *node_data = root_buf;
 
+    /* Local depth counter for descent.  Using a counter decremented per
+     * level (instead of re-reading eh->eh_depth from each on-disk node)
+     * guarantees at most root_depth iterations, so a cyclic or
+     * depth-mismatched index chain cannot cause an infinite walk. */
+    uint16_t depth = root_eh->eh_depth;
+
     for (;;) {
         struct ext4_extent_header *eh =
             (struct ext4_extent_header *)node_data;
@@ -1382,7 +1388,7 @@ int ext4_ext_remove_space(struct ext4_priv *ep,
         if (ret < 0)
             return -EFSCORRUPTED;
 
-        if (eh->eh_depth > 0) {
+        if (depth > 0) {
             struct ext4_extent_idx *idx_entry = NULL;
 
             ret = ext4_ext_binsearch_idx(eh, start, &idx_entry);
@@ -1406,6 +1412,7 @@ int ext4_ext_remove_space(struct ext4_priv *ep,
 
             node_data = node_buf;
             leaf_eh = (struct ext4_extent_header *)node_data;
+            depth--;
         } else {
             leaf_eh = eh;
             break;
