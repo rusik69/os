@@ -229,7 +229,16 @@ int nfs_rpc_check_reply(const uint8_t *reply, uint32_t reply_len)
         return -EIO;
     p += verf_len;
     remaining -= verf_len;
-    while (verf_len & 3) { p++; remaining--; verf_len++; }
+    /* Skip XDR padding — guard against underflow when the wire data
+     * ends exactly at the unpadded length (missing pad bytes). */
+    verf_len &= 3;
+    if (verf_len) {
+        uint32_t pad = 4 - verf_len;
+        if (remaining < pad)
+            return -EIO;
+        p += pad;
+        remaining -= pad;
+    }
 
     /* Need accept_stat(4) */
     if (remaining < 4)
@@ -294,7 +303,15 @@ int nfs_parse_mnt_reply(const uint8_t *reply, uint32_t reply_len,
         return -EIO;
     nfs_xdr_get_bytes(&p, fh->data, fh->len);
     remaining -= fh->len;
-    while (fh->len & 3) { p++; remaining--; fh->len++; }
+    /* Skip XDR padding — guard against underflow when the wire data
+     * ends exactly at the unpadded handle (missing pad bytes). */
+    if (fh->len & 3) {
+        uint32_t pad = 4 - (fh->len & 3);
+        if (remaining < pad)
+            return -EIO;
+        p += pad;
+        remaining -= pad;
+    }
 
     /* Read auth flavor list */
     if (remaining < 4) {
