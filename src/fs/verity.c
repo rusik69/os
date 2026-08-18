@@ -76,19 +76,34 @@ static __attribute__((unused)) uint32_t verity_calc_levels(uint64_t num_data_blo
 /* Compute the total size of the Merkle tree (all levels). */
 static uint64_t verity_calc_tree_size(uint64_t num_data_blocks, uint32_t *out_levels)
 {
-    uint64_t total = 0;
-    uint64_t blocks_at_level = num_data_blocks;
     uint32_t hashes_per_block = VERITY_BLOCK_SIZE / VERITY_HASH_SIZE;
     uint32_t levels = 0;
+    uint64_t blocks_at_level = num_data_blocks;
 
     while (blocks_at_level > 1) {
         blocks_at_level = (blocks_at_level + hashes_per_block - 1) / hashes_per_block;
-        total += blocks_at_level * VERITY_BLOCK_SIZE;
         levels++;
     }
 
+    /* The tree buffer must cover every byte the builder in fsverity_enable()
+     * writes:
+     *   - level-0 hashes occupy num_data_blocks * VERITY_HASH_SIZE bytes,
+     *     padded up to a block boundary (upper-level hashes start there);
+     *   - upper-level hashes are VERITY_HASH_SIZE bytes each, written
+     *     contiguously from that offset; the first upper level
+     *     (ceil(num_data_blocks / hashes_per_block) entries) is the
+     *     largest, so bounding it bounds every higher level as well.
+     * The previous sum-of-blocks formula under-allocated by one block
+     * for 2..128 data blocks, letting the root-hash write run 32 bytes
+     * past the heap allocation. */
+    uint64_t level0_size = num_data_blocks * VERITY_HASH_SIZE;
+    level0_size = (level0_size + VERITY_BLOCK_SIZE - 1) &
+                  ~(uint64_t)(VERITY_BLOCK_SIZE - 1);
+    uint64_t upper_size = ((num_data_blocks + hashes_per_block - 1) /
+                           hashes_per_block) * VERITY_HASH_SIZE;
+
     if (out_levels) *out_levels = levels;
-    return total;
+    return level0_size + upper_size;
 }
 
 /* Find the verity descriptor for an inode. */
@@ -152,7 +167,8 @@ int fsverity_enable(uint64_t ino, const uint8_t *data, uint64_t size,
      * large files; the descriptor field is uint32_t). */
     uint64_t num_data_blocks64 =
         size / VERITY_BLOCK_SIZE + (size % VERITY_BLOCK_SIZE != 0);
-    if (num_data_blocks64 == 0) return -EINVAL;
+    if (num_data_blocks64 < 2)
+        return -EINVAL; /* tree builder/verifier require at least 2 data blocks */
     if (num_data_blocks64 > 0xFFFFFFFFULL)
         return -EFBIG; /* too large for the uint32_t block-count field */
     uint32_t num_data_blocks = (uint32_t)num_data_blocks64;
