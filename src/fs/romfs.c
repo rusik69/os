@@ -55,6 +55,10 @@ static int romfs_parse(struct romfs_priv *rp) {
     int count = 0;
 
     while (offset < full_size && count < ROMFS_MAX_ENTRIES) {
+        /* Full 32-byte header (incl. 16-byte name) must lie within the
+         * image; a crafted next-chain can land offset near the end. */
+        if ((uint64_t)offset + sizeof(struct romfs_file) > full_size) break;
+
         struct romfs_file *fh = (struct romfs_file *)(base + offset);
         if (fh->next == 0) break;
 
@@ -107,6 +111,14 @@ static int romfs_read(void *priv, const char *path, void *buf,
 
     uint32_t to_read = e->size;
     if (to_read > max_size) to_read = max_size;
+
+    /* Clamp to the image boundary: a crafted header size can point
+     * past the mapped region. */
+    if (e->offset >= rp->total_size) {
+        to_read = 0;
+    } else if (to_read > rp->total_size - e->offset) {
+        to_read = rp->total_size - e->offset;
+    }
 
     uint8_t *base = (uint8_t *)(uint64_t)rp->base_addr;
     memcpy(buf, base + e->offset, to_read);
