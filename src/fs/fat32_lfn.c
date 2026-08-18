@@ -776,10 +776,23 @@ int vfat_reconstruct_name_checked(const void *entries, int count,
 {
     const struct vfat_lfn *lfn = (const struct vfat_lfn *)entries;
 
+    if (!entries || !out || out_max <= 0)
+        return -EINVAL;
+
     if (count <= 0) {
         /* No LFN entries — nothing to verify */
         if (out_max > 0) out[0] = '\0';
         return 0;
+    }
+
+    /* Reject out-of-range count (max 20 entries = 255 chars per VFAT spec).
+     * A corrupted or malicious LFN chain with ordinal > 20 would set a
+     * count beyond the caller's lfn_parts[20] array, causing a buffer
+     * over-read in the checksum loop below.  Mirrors the guard in
+     * vfat_reconstruct_name(). */
+    if (count > LFN_MAX_ENTRIES) {
+        if (out_max > 0) out[0] = '\0';
+        return -EINVAL;
     }
 
     uint8_t computed = vfat_checksum(name83_8, name83_3);
