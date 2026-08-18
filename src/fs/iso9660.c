@@ -609,8 +609,17 @@ static int parse_one_dirent(struct iso9660_priv *ip,
     de->file_unit_size = rec->file_unit_size;
     de->interleave_gap = rec->interleave_gap;
 
-    /* Extract name: use Joliet UCS-2BE decoding if available, else ISO9660 */
-    uint8_t nlen = rec->name_len;
+    /* Extract name: use Joliet UCS-2BE decoding if available, else ISO9660.
+     * The name field starts at offset 33 (sizeof(struct iso_dir_record)
+     * minus the trailing name[1] placeholder).  Validate the declared
+     * name length against the record length first: a crafted ISO can
+     * declare a long name in a short record, and copying it verbatim
+     * would read past the record — and, for a record near the end of a
+     * block, past the on-stack read buffer in iso_read_dir_entries(). */
+    uint32_t name_avail = rec_len >= (uint32_t)(sizeof(struct iso_dir_record) - 1)
+                              ? rec_len - (uint32_t)(sizeof(struct iso_dir_record) - 1)
+                              : 0;
+    uint8_t nlen = (rec->name_len <= name_avail) ? rec->name_len : 0;
 
     if (ip->has_joliet && nlen > 0 && nlen < 255) {
         /* Joliet: name is encoded in UCS-2 Big Endian (2 bytes/char).
