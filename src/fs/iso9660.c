@@ -95,6 +95,12 @@
  * This includes the root directory as level 0. */
 #define ISO9660_DIR_DEPTH_MAX 8
 
+/* Maximum number of relative Rock Ridge symlinks followed while
+ * resolving a single path.  Cyclic chains (a -> b -> a) are
+ * terminated with -ELOOP.  Matches the 40-hop budget used for
+ * absolute symlink components in iso9660_resolve(). */
+#define ISO9660_SYMLINK_HOPS_MAX 40
+
 struct iso9660_priv {
     uint8_t  dev_id;
     uint16_t block_size;       /* usually 2048 */
@@ -714,6 +720,16 @@ static int iso_read_dir_entries(struct iso9660_priv *ip, uint32_t extent, uint32
 static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
                             uint32_t *extent, uint32_t *size)
 {
+    /* Relative symlink targets are rewritten into an alternating buffer
+     * pair and the whole walk is RESTARTED from the new path instead of
+     * recursing.  Recursion was unsafe: every frame carries entries[128]
+     * (~103 KB of stack), so even ONE nested relative symlink — let alone
+     * a cyclic chain a->b->a — overflowed the 128 KB kernel stack.  The
+     * hop budget below guarantees termination on cyclic chains. */
+    char symlink_rewrite[2][512];
+    int symlink_hops = 0;
+
+walk_restart:
     /* Use Joliet root directory when available (it may have a different
      * extent than the PVD root, with UCS-2 encoded filenames). */
     if (ip->has_joliet) {
@@ -772,38 +788,42 @@ static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
                     link_target[sizeof(link_target) - 1] = '\0';
 
                     if (link_target[0] != '/') {
-                        /* Relative symlink: build full path by
-                         * prepending the parent directory. */
-                        char full_path[512];
+                        /* Relative symlink: rewrite the path by
+                         * prepending the parent directory, then restart
+                         * the walk.  The old code recursed here, which
+                         * looped forever on cyclic chains and overflowed
+                         * the kernel stack after a single nested link. */
+                        if (++symlink_hops > ISO9660_SYMLINK_HOPS_MAX) {
+                            kprintf("iso9660: symlink hops (%d) exceeded - "
+                                    "cyclic chain?\n",
+                                    ISO9660_SYMLINK_HOPS_MAX);
+                            return -ELOOP;
+                        }
+                        /* Alternate buffers so the parent-prefix copy
+                         * below never overlaps the write target. */
+                        char *dst =
+                            (path == symlink_rewrite[0]) ? symlink_rewrite[1] : symlink_rewrite[0];
                         size_t parent_len = (size_t)(p - path);
                         size_t fp_len = 0;
                         if (parent_len > 0) {
-                            memcpy(full_path, path, parent_len);
+                            memcpy(dst, path, parent_len);
                             fp_len = parent_len;
-                            while (fp_len > 0 &&
-                                   full_path[fp_len - 1] == '/')
+                            while (fp_len > 0 && dst[fp_len - 1] == '/')
                                 fp_len--;
                         }
                         if (fp_len > 0)
-                            full_path[fp_len++] = '/';
+                            dst[fp_len++] = '/';
                         size_t tlen = strlen(link_target);
-                        if (fp_len + tlen + 1 > sizeof(full_path)) {
+                        if (fp_len + tlen + 1 > sizeof(symlink_rewrite[0])) {
                             kprintf("iso9660: symlink target too long\n");
                             return -ENAMETOOLONG;
                         }
-                        memcpy(full_path + fp_len, link_target, tlen);
+                        memcpy(dst + fp_len, link_target, tlen);
                         fp_len += tlen;
-                        full_path[fp_len] = '\0';
+                        dst[fp_len] = '\0';
 
-                        uint32_t re, rs;
-                        if (iso9660_resolve(ip, full_path,
-                                            &re, &rs) == 0) {
-                            *extent = re;
-                            *size   = rs;
-                            found = 1;
-                            break;
-                        }
-                        return -1;
+                        path = dst;
+                        goto walk_restart;
                     }
 
                     /* Absolute symlink: resolve components */
