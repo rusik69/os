@@ -217,12 +217,20 @@ int joliet_convert_svd_field(const char *field, int field_bytes,
 				break;
 		}
 
-		int nbytes = joliet_ucs2_cp_to_utf8(cp, out + written);
-		written += nbytes;
-		if (written >= out_max - 1) {
+		/* Encode into a temp buffer first so the bounds check runs
+		 * BEFORE the destination write: a 3-byte codepoint at
+		 * written == out_max - 2 would otherwise write one byte past
+		 * the buffer before the truncation clips it (crafted long
+		 * Joliet names).  Mirrors joliet_ucs2be_to_utf8(). */
+		char tmp[3];
+		int nbytes = joliet_ucs2_cp_to_utf8(cp, tmp);
+		if (written + nbytes > out_max - 1) {
+			/* Truncate gracefully at buffer boundary */
 			written = out_max - 1;
 			break;
 		}
+		memcpy(out + written, tmp, (size_t)nbytes);
+		written += nbytes;
 	}
 
 	out[written] = '\0';
