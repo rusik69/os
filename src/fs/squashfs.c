@@ -333,8 +333,10 @@ static int squashfs_walk_dir(struct squashfs_priv *rp, uint64_t inode_ref,
     uint8_t *pos = dir_base + dir_offset;
 
     for (;;) {
-        /* Read directory header */
-        if ((uint64_t)(pos - (uint8_t *)(uint64_t)rp->base_addr) >= rp->total_size)
+        /* Read directory header (12 bytes: count, start block, inode num).
+         * Check the whole header fits in the image before reading it. */
+        uint64_t hdr_off = (uint64_t)(pos - (uint8_t *)(uint64_t)rp->base_addr);
+        if (hdr_off + 12 > rp->total_size)
             break;
 
         uint32_t header_count = squashfs_read32(pos);
@@ -356,17 +358,32 @@ static int squashfs_walk_dir(struct squashfs_priv *rp, uint64_t inode_ref,
         for (uint32_t i = 0; i < header_count; i++) {
             if (*count >= SQUASHFS_MAX_ENTRIES) return *count;
 
+            uint64_t ent_off = (uint64_t)(pos - (uint8_t *)(uint64_t)rp->base_addr);
+            /* Entry header is 8 bytes; check it is inside the image. */
+            if (ent_off + 8 > rp->total_size)
+                break;
+
             uint16_t offset   = squashfs_read16(pos);
             int16_t  ino_off  = (int16_t)squashfs_read16(pos + 2);
             uint16_t dtype    = squashfs_read16(pos + 4);
             uint16_t name_sz  = squashfs_read16(pos + 6);
             (void)offset; (void)dtype;
 
-            /* Build full path from prefix and name */
+            /* Build full path from prefix and name. The name is stored
+             * truncated to 63 chars, so the accumulated prefix can grow
+             * unboundedly across recursion levels (depth cap is 32);
+             * clamp plen so prefix + '/' + name + NUL always fits the
+             * 256-byte full_path buffer (190 + 1 + 63 + 1 <= 256). */
             char name_buf[256];
             int plen = (int)strlen(prefix);
+            if (plen > 190) plen = 190;
             int nlen = name_sz;
             if (nlen > 63) nlen = 63;
+
+            /* Verify the name bytes (pos + 8 .. pos + 8 + nlen) are
+             * inside the image before copying them out. */
+            if (ent_off + 8u + (uint32_t)nlen > rp->total_size)
+                break;
 
             /* Copy the name from pos + 8 */
             memcpy(name_buf, pos + 8, nlen);
