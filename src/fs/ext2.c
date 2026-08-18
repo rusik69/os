@@ -3409,6 +3409,7 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
     int has_journal = (ep->sb.s_feature_compat & EXT2_FEATURE_COMPAT_HAS_JOURNAL) ? 1 : 0;
     int has_extents = (ep->sb.s_feature_incompat & EXT2_FEATURE_INCOMPAT_EXTENTS) ? 1 : 0;
     int has_64bit = (ep->sb.s_feature_incompat & EXT2_FEATURE_INCOMPAT_64BIT) ? 1 : 0;
+    int needs_recovery = (ep->sb.s_feature_incompat & EXT2_FEATURE_INCOMPAT_RECOVER) ? 1 : 0;
 
     /* ── Reject unsupported features that would cause data corruption ── */
     if (has_extents) {
@@ -3458,10 +3459,25 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
 
     /* Process any orphaned inodes left from a previous unclean
      * unmount.  This frees their data blocks and reclaims the
-     * inodes in the bitmap, preventing space leaks. */
-    ext2_orphan_cleanup(ep);
+     * inodes in the bitmap, preventing space leaks.
+     *
+     * When the journal needs recovery (RECOVER incompat feature),
+     * the on-disk metadata is mid-transaction: blocks written to
+     * the journal have NOT been applied up to the commit point.
+     * We have no journal replay support, so we must NOT run the
+     * orphan cleanup (it writes superblock/bitmap/inode data) nor
+     * allow any other write on this filesystem — mount read-only
+     * instead, mirroring the ext4 driver's behavior. */
+    int mount_flags = 0;
+    if (needs_recovery) {
+        kprintf("[ext2] Journal needs recovery (RECOVER set) — no journal "
+                "replay support, mounting READ-ONLY\n");
+        mount_flags = MS_RDONLY;
+    } else {
+        ext2_orphan_cleanup(ep);
+    }
 
-    return vfs_mount_ex(mountpoint, &ext2_ops, ep, 0);
+    return vfs_mount_ex(mountpoint, &ext2_ops, ep, mount_flags);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
