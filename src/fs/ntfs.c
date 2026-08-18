@@ -166,7 +166,11 @@ static uint8_t *ntfs_find_attr(struct ntfs_priv *np, uint8_t *mft_rec,
     uint16_t attr_off = rec->attr_offset;
     uint32_t rec_size = r32(mft_rec + 0x1C); /* bytes_allocated from header */
 
-    if (attr_off < sizeof(struct ntfs_mft_rec))
+    /* Clamp claimed size to the actual record buffer size */
+    if (rec_size > np->mft_record_size)
+        rec_size = np->mft_record_size;
+
+    if (attr_off < sizeof(struct ntfs_mft_rec) || attr_off >= rec_size)
         return NULL;
 
     uint8_t *pos = mft_rec + attr_off;
@@ -180,6 +184,11 @@ static uint8_t *ntfs_find_attr(struct ntfs_priv *np, uint8_t *mft_rec,
             break;
 
         if (attr->type == attr_type) {
+            /* Attribute must fit inside the record before it is used */
+            if (attr->length < sizeof(struct ntfs_attr_hdr))
+                break;
+            if (pos + attr->length > mft_rec + rec_size)
+                break;
             if (out_len) *out_len = attr->length;
             return pos;
         }
@@ -274,6 +283,9 @@ static int ntfs_read_data(struct ntfs_priv *np, uint8_t *mft_rec,
         /* Non-resident: parse runs */
         uint64_t real_size = ah->real_size;
         uint16_t mp_off = ah->mapping_pairs_offset;
+
+        /* Mapping pairs array must be inside the attribute */
+        if (mp_off >= (uint32_t)attr_len) return -1;
         uint32_t mp_len = attr_len - mp_off;
 
         if (offset >= real_size) {
@@ -340,21 +352,40 @@ static int ntfs_get_filename(struct ntfs_priv *np, uint8_t *mft_rec,
     int attr_len;
     uint8_t *attr = ntfs_find_attr(np, mft_rec, AT_FILE_NAME, &attr_len);
     if (!attr) return -1;
+    if (attr_len < (int)sizeof(struct ntfs_attr_hdr)) return -1;
 
     struct ntfs_attr_hdr *ah = (struct ntfs_attr_hdr *)attr;
     if (ah->non_resident != 0) return -1;
 
-    /* Resident: value is struct ntfs_file_name */
-    struct ntfs_file_name *fn = (struct ntfs_file_name *)(attr + ah->value_offset);
+    uint32_t val_off = ah->value_offset;
+    uint32_t val_len = ah->value_length;
+    uint32_t alen = (uint32_t)attr_len;
+
+    /* Value region must fit inside the attribute */
+    if (val_off > alen || val_len > alen - val_off) return -1;
+
+    /* Fixed part of struct ntfs_file_name must be present */
+    if (val_len < __builtin_offsetof(struct ntfs_file_name, name)) return -1;
+
+    struct ntfs_file_name *fn = (struct ntfs_file_name *)(attr + val_off);
     uint16_t name_len = fn->name_length;
     if (name_len > NTFS_NAMELEN) name_len = NTFS_NAMELEN;
 
+    /* UTF-16 name array must fit inside the value */
+    if ((uint32_t)name_len * 2 >
+        val_len - __builtin_offsetof(struct ntfs_file_name, name))
+        return -1;
+
+    if (max_len <= 0) return -1;
+    int out_len = name_len;
+    if (out_len > max_len - 1) out_len = max_len - 1;
+
     /* Convert from UTF-16LE to ASCII (simplified: ignore non-ASCII) */
-    for (uint16_t i = 0; i < name_len && i < (uint16_t)(max_len - 1); i++) {
+    for (int i = 0; i < out_len; i++) {
         uint16_t ch = fn->name[i];
         name[i] = (ch < 128) ? (char)ch : '?';
     }
-    name[name_len] = '\0';
+    name[out_len] = '\0';
     return 0;
 }
 
