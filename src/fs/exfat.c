@@ -192,8 +192,12 @@ static int exfat_bitmap_load_sector(struct exfat_priv *ep, uint32_t sector_index
 static int exfat_bitmap_get(struct exfat_priv *ep, uint32_t cluster, uint8_t *bit_val) {
     uint32_t byte_offset = cluster / 8;
     uint32_t bit_offset = cluster % 8;
-    uint32_t sector_idx = byte_offset / ep->sector_size;
-    uint32_t byte_in_sec = byte_offset % ep->sector_size;
+    /* Index the 512-byte cache in 512-byte units (matching both the cache
+     * buffer size and the blockdev sector granularity).  MUST NOT use
+     * ep->sector_size here: on volumes with non-512-byte sectors that would
+     * index outside the cached_bitmap_data buffer. */
+    uint32_t sector_idx = byte_offset / sizeof(ep->cached_bitmap_data);
+    uint32_t byte_in_sec = byte_offset % sizeof(ep->cached_bitmap_data);
 
     if (cluster < 2 || cluster > ep->cluster_count + 1)
         return -EINVAL;
@@ -210,8 +214,9 @@ static int exfat_bitmap_get(struct exfat_priv *ep, uint32_t cluster, uint8_t *bi
 static int exfat_bitmap_set(struct exfat_priv *ep, uint32_t cluster, int allocated) {
     uint32_t byte_offset = cluster / 8;
     uint32_t bit_offset = cluster % 8;
-    uint32_t sector_idx = byte_offset / ep->sector_size;
-    uint32_t byte_in_sec = byte_offset % ep->sector_size;
+    /* Index the 512-byte cache in 512-byte units (see exfat_bitmap_get). */
+    uint32_t sector_idx = byte_offset / sizeof(ep->cached_bitmap_data);
+    uint32_t byte_in_sec = byte_offset % sizeof(ep->cached_bitmap_data);
 
     if (cluster < 2 || cluster > ep->cluster_count + 1)
         return -EINVAL;
@@ -302,8 +307,13 @@ static int exfat_read_fat_entry(struct exfat_priv *ep, uint32_t cluster, uint32_
         return -EINVAL;
 
     uint32_t byte_offset = cluster * 4;
-    uint32_t sector_idx = byte_offset / ep->sector_size;
-    uint32_t byte_in_sec = byte_offset % ep->sector_size;
+    /* Index the 512-byte cache in 512-byte units (matching both the cache
+     * buffer size and the blockdev sector granularity).  MUST NOT use
+     * ep->sector_size here: on volumes with non-512-byte sectors that would
+     * index outside the cached_fat_data buffer.  byte_offset is 4-aligned,
+     * so the 4-byte access starting at byte_in_sec stays in bounds. */
+    uint32_t sector_idx = byte_offset / sizeof(ep->cached_fat_data);
+    uint32_t byte_in_sec = byte_offset % sizeof(ep->cached_fat_data);
 
     if (exfat_fat_load_sector(ep, sector_idx) != 0)
         return -EIO;
@@ -319,8 +329,9 @@ static int exfat_write_fat_entry(struct exfat_priv *ep, uint32_t cluster, uint32
         return -EINVAL;
 
     uint32_t byte_offset = cluster * 4;
-    uint32_t sector_idx = byte_offset / ep->sector_size;
-    uint32_t byte_in_sec = byte_offset % ep->sector_size;
+    /* Index the 512-byte cache in 512-byte units (see exfat_read_fat_entry). */
+    uint32_t sector_idx = byte_offset / sizeof(ep->cached_fat_data);
+    uint32_t byte_in_sec = byte_offset % sizeof(ep->cached_fat_data);
 
     if (exfat_fat_load_sector(ep, sector_idx) != 0)
         return -EIO;
