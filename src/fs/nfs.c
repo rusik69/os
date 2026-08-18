@@ -1039,24 +1039,39 @@ static int nfs_readdir(int mount_id, const struct nfs_fhandle *fh,
     }
     *cookieverf = new_verf;
 
+    /* nfs_rpc_call updates reply_len to the number of valid payload bytes
+     * remaining after the RPC header.  Bound all entry-list parsing by it:
+     * a truncated or corrupt reply must terminate the chain walk instead of
+     * looping forever over stale stack bytes (cyclic/corrupt chain guard). */
+    const uint8_t *reply_end = reply + reply_len;
+
     /* Parse entry list (linked-list follow-pointer encoding) */
     int entry_count = 0;
     while (1) {
         /* Boolean: 1 = entry follows, 0 = no more entries */
+        if ((size_t)(reply_end - rp) < 4)
+            break;  /* truncated reply — treat as end of entries */
         uint32_t has_entry = xdr_get_u32(&rp);
         if (!has_entry)
             break;
 
         /* fileid (uint64) */
+        if ((size_t)(reply_end - rp) < 8)
+            break;
         uint64_t fileid = ((uint64_t)xdr_get_u32(&rp) << 32)
                         | xdr_get_u32(&rp);
 
         /* name (filename3 = string) */
+        if ((size_t)(reply_end - rp) < 4)
+            break;
         uint32_t name_len = xdr_get_u32(&rp);
         uint32_t wire_name_len = name_len; /* save original for wire pointer advancement */
         char name[256];
         if (name_len > 255)
             name_len = 255;
+        /* Whole XDR string (data + pad) must fit in the received reply */
+        if (wire_name_len > (size_t)(reply_end - rp))
+            break;
         memcpy(name, rp, name_len);
         rp += wire_name_len; /* advance past actual wire data, not capped */
         name[name_len] = '\0';
@@ -1064,6 +1079,8 @@ static int nfs_readdir(int mount_id, const struct nfs_fhandle *fh,
         while (wire_name_len & 3) { rp++; wire_name_len++; }
 
         /* cookie (uint64) — pass back for next page */
+        if ((size_t)(reply_end - rp) < 8)
+            break;
         uint64_t entry_cookie = ((uint64_t)xdr_get_u32(&rp) << 32)
                               | xdr_get_u32(&rp);
 
@@ -1079,7 +1096,9 @@ static int nfs_readdir(int mount_id, const struct nfs_fhandle *fh,
     }
 
     /* EOF (uint32 — 1 = no more entries) */
-    uint32_t eof = xdr_get_u32(&rp);
+    uint32_t eof = 1;
+    if ((size_t)(reply_end - rp) >= 4)
+        eof = xdr_get_u32(&rp);
     if (eof)
         *cookie = 0;  /* Signal end of directory */
 
