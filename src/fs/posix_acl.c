@@ -88,8 +88,11 @@ static int posix_acl_to_xattr(const struct posix_acl *acl,
         return -EINVAL;
 
     uint32_t count = (uint32_t)acl->count;
-    int needed = 4 + count * (int)sizeof(struct posix_acl_xattr_entry);
-    if (xattr_size < needed)
+    if (count == 0 || count > POSIX_ACL_MAX_ENTRIES)
+        return -EINVAL;
+
+    size_t needed = 4 + (size_t)count * sizeof(struct posix_acl_xattr_entry);
+    if ((size_t)xattr_size < needed)
         return -ERANGE;
 
     uint8_t *data = (uint8_t *)xattr_value;
