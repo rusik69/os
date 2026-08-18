@@ -1476,10 +1476,21 @@ int jbd2_replay(struct jbd2_journal *journal)
             }
 
             /* Calculate where the commit block should be:
-             * descriptor block + 1 + num_tags data blocks */
-            commit_pos = desc_block + 1 + num_tags;
-            if (commit_pos >= journal->total_blocks)
-                commit_pos = journal->first_data_block;
+             * descriptor block + 1, then one block per data tag,
+             * wrapping back to first_data_block whenever the
+             * position reaches total_blocks — mirroring the
+             * per-data-block wrap applied by the writer in
+             * jbd2_commit_transaction.  A single post-hoc wrap
+             * (desc + 1 + num_tags, then clamp) is wrong: for a
+             * transaction whose data blocks cross the wrap boundary
+             * it lands before the true commit block and recovery
+             * aborts instead of replaying the committed data. */
+            commit_pos = desc_block + 1;
+            for (i = 0; i < num_tags; i++) {
+                if (commit_pos >= journal->total_blocks)
+                    commit_pos = journal->first_data_block;
+                commit_pos++;
+            }
 
             /* Process any revocation blocks between data blocks
              * and the commit block */
