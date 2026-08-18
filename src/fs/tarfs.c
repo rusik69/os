@@ -69,19 +69,24 @@ static int tarfs_parse(struct tarfs_priv *priv) {
         struct tarfs_entry *e = &priv->entries[count];
         memset(e, 0, sizeof(*e));
 
-        /* Copy name (handle prefix for long names) */
+        /* Copy name (handle prefix for long names).
+         * Use strnlen() so a crafted archive with non-NUL-filled
+         * name/prefix fields cannot make strlen() walk past the
+         * field boundaries (or past the end of the archive).
+         * Max combined length is 155 + 1 + 100 = 256, which does
+         * not fit in e->name[256] with a NUL terminator — cap the
+         * name part so the terminator write stays in bounds. */
         if (hdr->prefix[0]) {
-            int plen = (int)strlen(hdr->prefix);
-            if (plen > 155) plen = 155;
+            int plen = (int)strnlen(hdr->prefix, 155);
+            int nlen = (int)strnlen(hdr->name, 100);
+            int avail = 255 - plen - 1;   /* space left for '/' + nlen + NUL */
+            if (nlen > avail) nlen = avail;
             memcpy(e->name, hdr->prefix, plen);
             e->name[plen] = '/';
-            int nlen = (int)strlen(hdr->name);
-            if (nlen > 100) nlen = 100;
             memcpy(e->name + plen + 1, hdr->name, nlen);
             e->name[plen + 1 + nlen] = '\0';
         } else {
-            int nlen = (int)strlen(hdr->name);
-            if (nlen > 100) nlen = 100;
+            int nlen = (int)strnlen(hdr->name, 100);
             memcpy(e->name, hdr->name, nlen);
             e->name[nlen] = '\0';
         }
@@ -89,7 +94,9 @@ static int tarfs_parse(struct tarfs_priv *priv) {
         e->offset = data_off;
         e->size   = file_size;
 
-        if (hdr->typeflag == TAR_TYPE_DIR || hdr->name[strlen(hdr->name) - 1] == '/')
+        /* name[0] != '\0' is guaranteed above, so namelen >= 1 */
+        int namelen = (int)strnlen(hdr->name, 100);
+        if (hdr->typeflag == TAR_TYPE_DIR || hdr->name[namelen - 1] == '/')
             e->type = 2; /* dir */
         else
             e->type = 1; /* file */
