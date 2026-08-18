@@ -259,6 +259,21 @@ static int btrfs_search_tree(struct btrfs_priv *bp, uint64_t root_bytenr,
             return -1;
 
         uint32_t nritems = hdr->nritems;
+        /* Bound the item count against the node buffer capacity.
+         * Walkers re-search the tree for every item (btrfs nodes have
+         * no sibling pointers); a corrupt header claiming a huge
+         * nritems would make the binary search below index far past
+         * the node buffer (OOB reads) and let a walk loop forever
+         * without ever hitting "past end" (item_idx never reaches
+         * nritems).  The capacity bound keeps every items[]/kptr[]
+         * access inside the node. */
+        if (bp->nodesize <= sizeof(struct btrfs_header))
+            return -1;
+        uint32_t max_items =
+            (bp->nodesize - sizeof(struct btrfs_header)) /
+            (hdr->level == 0 ? sizeof(struct btrfs_item) : sizeof(struct btrfs_key_ptr));
+        if (nritems > max_items)
+            return -1;
         uint32_t hi = nritems;
         uint32_t lo = 0;
         uint32_t mid;
@@ -443,20 +458,20 @@ static int btrfs_build_chunk_tree(struct btrfs_priv *bp)
                      * is the minimum for a single-stripe chunk.  Without this
                      * check, a crafted chunk item with num_stripes==1 but
                      * undersized chk_sz would cause stripe->offset to read
-                     * out-of-bounds item data within the node buffer. */
-                    if (chk_sz < sizeof(struct btrfs_chunk) +
-                                 sizeof(struct btrfs_stripe))
-                        continue;
+                     * out-of-bounds item data within the node buffer.
+                     * Note: this must SKIP the item, not `continue` the walk —
+                     * a continue would jump back to the loop condition with
+                     * the search key unchanged, re-finding the same item and
+                     * looping forever. */
+                    if (chk_sz >= sizeof(struct btrfs_chunk) + sizeof(struct btrfs_stripe)) {
+                        struct btrfs_stripe *stripe =
+                            (struct btrfs_stripe *)((uint8_t *)chunk + sizeof(struct btrfs_chunk));
 
-                    struct btrfs_stripe *stripe =
-                        (struct btrfs_stripe *)
-                            ((uint8_t *)chunk +
-                             sizeof(struct btrfs_chunk));
-
-                    bp->chunks[bp->num_chunks].logical  = cur_off;
-                    bp->chunks[bp->num_chunks].length   = chunk->length;
-                    bp->chunks[bp->num_chunks].physical = stripe->offset;
-                    bp->num_chunks++;
+                        bp->chunks[bp->num_chunks].logical = cur_off;
+                        bp->chunks[bp->num_chunks].length = chunk->length;
+                        bp->chunks[bp->num_chunks].physical = stripe->offset;
+                        bp->num_chunks++;
+                    }
                 }
             }
         }
@@ -759,6 +774,9 @@ static int btrfs_parse_extent_tree(struct btrfs_priv *bp)
         uint64_t search_obj = 0;
         uint8_t  search_type = 0;
         uint64_t search_off = 0;
+        uint64_t prev_obj = 0;
+        uint8_t prev_type = 0;
+        uint64_t prev_off = 0;
 
         while (extent_count + metadata_count < 1000) {
             ret = btrfs_search_tree(bp, bp->extent_root_bytenr,
@@ -846,6 +864,21 @@ static int btrfs_parse_extent_tree(struct btrfs_priv *bp)
                 if (search_type == 0)
                     search_obj++;
             }
+
+            /* Guard against a corrupt/cyclic extent tree: the search
+             * key must strictly advance past the previous iteration's
+             * key every time.  btrfs_search_tree assumes the keys in a
+             * node are sorted; a node with unsorted keys (or a cycle)
+             * makes its lower-bound search return arbitrary items,
+             * which would let the search key oscillate and loop
+             * forever.  Bail out instead of hanging the kernel. */
+            if (search_obj < prev_obj ||
+                (search_obj == prev_obj &&
+                 (search_type < prev_type || (search_type == prev_type && search_off <= prev_off))))
+                break;
+            prev_obj = search_obj;
+            prev_type = search_type;
+            prev_off = search_off;
         }
     }
 
@@ -899,6 +932,9 @@ static int btrfs_parse_csum_tree(struct btrfs_priv *bp)
         uint64_t search_obj = 0;
         uint8_t  search_type = 0;
         uint64_t search_off = 0;
+        uint64_t prev_obj = 0;
+        uint8_t prev_type = 0;
+        uint64_t prev_off = 0;
 
         while (csum_item_count < 200) {
             ret = btrfs_search_tree(bp, bp->csum_root_bytenr,
@@ -979,6 +1015,19 @@ static int btrfs_parse_csum_tree(struct btrfs_priv *bp)
                 if (search_type == 0)
                     search_obj++;
             }
+
+            /* Guard against a corrupt/cyclic checksum tree: the search
+             * key must strictly advance past the previous iteration's
+             * key every time (same rationale as the extent tree walk —
+             * unsorted node keys or a tree cycle would otherwise make
+             * the search key oscillate and loop forever). */
+            if (search_obj < prev_obj ||
+                (search_obj == prev_obj &&
+                 (search_type < prev_type || (search_type == prev_type && search_off <= prev_off))))
+                break;
+            prev_obj = search_obj;
+            prev_type = search_type;
+            prev_off = search_off;
         }
     }
 
@@ -1644,7 +1693,7 @@ static int btrfs_read(void *priv, const char *path,
         uint8_t  search_type = BTRFS_EXTENT_DATA_KEY;
         uint64_t search_off = 0;
         uint64_t prev_obj = search_obj;
-        uint8_t  prev_type = search_type;
+        uint8_t prev_type = search_type;
         uint64_t prev_off = search_off;
 
         while (done < to_read) {
@@ -1786,8 +1835,7 @@ wrap_search:
              * forever.  Bail out instead of hanging the kernel. */
             if (search_obj < prev_obj ||
                 (search_obj == prev_obj &&
-                 (search_type < prev_type ||
-                  (search_type == prev_type && search_off <= prev_off))))
+                 (search_type < prev_type || (search_type == prev_type && search_off <= prev_off))))
                 break;
             prev_obj = search_obj;
             prev_type = search_type;
