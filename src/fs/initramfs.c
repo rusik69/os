@@ -106,9 +106,25 @@ int initramfs_extract(void) {
         /* Compute header+name field size (aligned to 4) */
         uint32_t hdr_name_size = CPIO_HEADER_SIZE + namesize;
         hdr_name_size = align4(hdr_name_size);
+        uint32_t data_size = align4(filesize);
         uint32_t data_offset = offset + hdr_name_size;
 
         const char *filename = (const char *)(start + offset + CPIO_HEADER_SIZE);
+
+        /* Metadata sanity: namesize/filesize come from the archive and are
+         * otherwise trusted.  A header claiming an oversized name or data
+         * region wraps the uint32 offset arithmetic below — the advance can
+         * land back on the same offset, pinning the loop forever (infinite
+         * loop on a corrupt/crafted chain), and the data pointer reads far
+         * out of bounds.  Require the whole entry to fit the remaining
+         * archive. */
+        if (offset > size || hdr_name_size > size - offset ||
+            data_size > size - offset - hdr_name_size) {
+            kprintf("[initramfs] entry at offset %u: namesize=%u filesize=%u "
+                    "exceeds archive bounds, stopping\n",
+                    offset, namesize, filesize);
+            break;
+        }
 
         /* Check for trailer */
         if (namesize >= 10 && strncmp(filename, CPIO_TRAILER, 10) == 0) {
@@ -183,7 +199,6 @@ int initramfs_extract(void) {
         }
 
         /* Advance past the data (aligned to 4) */
-        uint32_t data_size = align4(filesize);
         offset = data_offset + data_size;
 
         if (offset >= size) break;
