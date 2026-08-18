@@ -313,12 +313,24 @@ static int hfs_readdir(void *priv, const char *path)
     kprintf(".              <DIR>\n");
     kprintf("..             <DIR>\n");
 
-    /* Walk leaf nodes */
+    /* Walk leaf nodes.
+     * totalNodes bounds the chain length of any valid tree: if we visit
+     * that many nodes without hitting node 0, the chain must be cyclic
+     * (a crafted image could otherwise hang the kernel in a loop). */
     uint32_t current_node = first_leaf;
     uint8_t node_buf[512];
     int entries_found = 0;
+    uint32_t nodes_visited = 0;
+    uint32_t max_nodes = btree_hdr->totalNodes;
+    if (max_nodes == 0) max_nodes = 64; /* fallback bound */
 
     while (current_node != 0 && entries_found < 64) {
+        if (nodes_visited >= max_nodes) {
+            kprintf("[hfs] catalog B-tree: cyclic leaf chain detected (node %u)\n",
+                    current_node);
+            break;
+        }
+        nodes_visited++;
         uint32_t node_lba = hp->cat_start_block + current_node * cat_blocks_per_node;
         if (hfs_read_blocks(hp, node_lba, cat_blocks_per_node, node_buf) != 0)
             break;
