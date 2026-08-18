@@ -585,8 +585,14 @@ static int cifs_smb2_create(struct cifs_mount_info *mnt, const char *path,
     /* Create options (4 bytes) */
     smb2_put32(&p, is_dir ? SMB2_FILE_DIRECTORY_FILE : SMB2_FILE_NON_DIRECTORY_FILE);
 
-    /* Name offset and length */
-    uint16_t name_len = (uint16_t)strlen(path);
+    /* Name offset and length — bound against the 4096-byte request
+     * buffer first: SMB2_HEADER_SIZE (64) + 56 fixed body bytes precede
+     * the name and up to 7 pad bytes follow it. A crafted over-long path
+     * would otherwise overflow buf[] (and the NetBIOS wrapper below). */
+    size_t path_len = strlen(path);
+    if (path_len > sizeof(buf) - SMB2_HEADER_SIZE - 56 - 8)
+        return -ENAMETOOLONG;
+    uint16_t name_len = (uint16_t)path_len;
 
     /* We use ASCII name; SMB2 expects UTF-16 but we send ASCII with len*2 */
     /* Reserve NameOffset field — back-patch after computing actual position */
