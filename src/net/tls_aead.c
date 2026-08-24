@@ -45,10 +45,18 @@ int tls_aead_init(struct tls_aead_ctx *ctx,
 {
 	struct tls_aead_internal *intl;
 
-	if (!ctx || !key)
+		if (!ctx || !key)
 		return -EINVAL;
 
-	memset(ctx, 0, sizeof(*ctx));
+		/* Validate key length before it is used as a copy length below.
+		 * key_len is an int; a negative value would make `key_len < 32`
+		 * true and `(size_t)key_len` wrap to a huge length, over-reading
+		 * the key buffer in the memcpy below.  All supported suites use
+		 * 16- or 32-byte keys. */
+		if (key_len < 0 || key_len > 32)
+		return -EINVAL;
+
+		memset(ctx, 0, sizeof(*ctx));
 	ctx->cipher_suite = cipher_suite;
 	ctx->enc_key_len  = key_len;
 	memcpy(ctx->enc_key, key, (size_t)(key_len < 32 ? key_len : 32));
