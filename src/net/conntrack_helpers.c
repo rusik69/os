@@ -211,7 +211,7 @@ void nf_helper_unregister(nf_helper_hook_t fn)
  * buffer doesn't have one, so we detect and handle both cases.
  */
 
-static int helper_dispatch_hook(void *skb, int hook)
+static int helper_dispatch_hook(void *skb, int hook, uint16_t len)
 {
     (void)hook;
 
@@ -220,7 +220,7 @@ static int helper_dispatch_hook(void *skb, int hook)
 
     uint8_t *buf = (uint8_t *)skb;
 
-    /* ── Determine buffer layout ─────────────────────────────────
+    /* ── Determine buffer layout ─────────────────────────────
      * For LOCAL_OUT, the buffer starts at the IP header.
      * For PRE_ROUTING, it starts at the Ethernet header.
      * Heuristic: if the first byte looks like an Ethernet header
@@ -229,8 +229,20 @@ static int helper_dispatch_hook(void *skb, int hook)
     int eth_present = (buf[0] != 0x45);
     int ip_off = eth_present ? (int)sizeof(struct eth_header) : 0;
 
-    /* Parse IP header */
-    if (ip_off + (int)sizeof(struct ip_header) < 0) return NF_ACCEPT;
+    /*
+     * len is the REAL length of the IP packet as received (from the
+     * IP header to the end of the buffer), threaded down from the
+     * netfilter hook traversal via nf_hookfn.  avail = total bytes
+     * available from buf.  Every header/payload read below must be
+     * bounds-checked against avail: a truncated or malformed packet
+     * (e.g. an IP total_len field larger than the received frame)
+     * must never cause a read past the end of the buffer.
+     */
+    size_t avail = (size_t)ip_off + (size_t)len;
+
+    /* Need at least a full IPv4 header present in the buffer. */
+    if (avail < (size_t)ip_off + sizeof(struct ip_header))
+        return NF_ACCEPT;
     struct ip_header *ip = (struct ip_header *)(buf + ip_off);
 
     /* Must be IPv4 */
@@ -240,8 +252,13 @@ static int helper_dispatch_hook(void *skb, int hook)
     uint8_t protocol = ip->protocol;
     uint16_t total_len = ntohs(ip->total_len);
 
-    /* Sanity check: total_len must not exceed available buffer */
-    if (total_len < sizeof(struct ip_header))
+    /*
+     * The claimed IP total length must be consistent with the real
+     * received length.  If it claims more data than is actually
+     * present, the packet is truncated — skip it rather than read
+     * past the end of the buffer.
+     */
+    if (total_len < sizeof(struct ip_header) || total_len > len)
         return NF_ACCEPT;
 
     /* Locate L4 header */
@@ -250,19 +267,14 @@ static int helper_dispatch_hook(void *skb, int hook)
         return NF_ACCEPT;
 
     int l4_off = ip_off + ip_hdr_len;
-    /* Protect against integer overflow in l4_off */
-    if (l4_off < 0 || l4_off > 65535)
-        return NF_ACCEPT;
-
-    uint16_t l4_payload_avail = (uint16_t)((total_len > (uint16_t)ip_hdr_len)
-                                ? (total_len - ip_hdr_len) : 0);
-    (void)l4_payload_avail;  /* used implicitly below */
 
     int from_originator = 1;  /* direction relative to helper */
 
-    /* ── TCP processing ─────────────────────────────────────────── */
+    /* ── TCP processing ───────────────────────────────────────── */
     if (protocol == IPPROTO_TCP) {
-        if (l4_off + (int)sizeof(struct tcp_header) < 0) return NF_ACCEPT;
+        /* The full TCP header must be present in the real buffer. */
+        if ((size_t)l4_off + sizeof(struct tcp_header) > avail)
+            return NF_ACCEPT;
         struct tcp_header *tcp = (struct tcp_header *)(buf + l4_off);
 
         uint16_t src_port = ntohs(tcp->src_port);
@@ -274,10 +286,14 @@ static int helper_dispatch_hook(void *skb, int hook)
             return NF_ACCEPT;
 
         int payload_off = l4_off + tcp_hdr_len;
-        uint16_t tcp_payload_len = (uint16_t)((total_len > (uint16_t)(ip_hdr_len + tcp_hdr_len))
-                                   ? (total_len - ip_hdr_len - tcp_hdr_len) : 0);
+        /* The payload must start within the real buffer. */
+        if ((size_t)payload_off > avail)
+            return NF_ACCEPT;
 
-        /* Only inspect packets with data (non-empty payload) and PSH or ACK */
+        /* Actual payload length = remaining bytes in the real buffer. */
+        uint16_t tcp_payload_len = (uint16_t)(avail - (size_t)payload_off);
+
+        /* Only inspect packets with data (non-empty payload) */
         if (tcp_payload_len == 0)
             return NF_ACCEPT;
 

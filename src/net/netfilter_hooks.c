@@ -60,9 +60,9 @@ void nf_hook_unregister(int hook, nf_hookfn fn)
 }
 EXPORT_SYMBOL(nf_hook_unregister);
 
-int nf_hook_iterate(int hook, void *skb)
+int nf_hook_iterate(int hook, void *skb, uint16_t len)
 {
-    return nf_iterate_hooks(hook, skb);
+    return nf_iterate_hooks(hook, skb, len);
 }
 EXPORT_SYMBOL(nf_hook_iterate);
 

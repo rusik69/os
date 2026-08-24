@@ -200,7 +200,7 @@ void nf_unregister_hook(int hook, nf_hookfn fn) {
     spinlock_irqsave_release(&nf_hook_lock, flags);
 }
 
-int nf_iterate_hooks(int hook, void *skb) {
+int nf_iterate_hooks(int hook, void *skb, uint16_t len) {
     if (hook < 0 || hook >= NF_MAX_HOOKS) return NF_ACCEPT;
 
     uint64_t flags;
@@ -208,7 +208,7 @@ int nf_iterate_hooks(int hook, void *skb) {
 
     struct nf_hook_entry *entry = nf_hooks[hook];
     while (entry) {
-        int verdict = entry->fn(skb, hook);
+        int verdict = entry->fn(skb, hook, len);
         if (verdict != NF_ACCEPT) {
             spinlock_irqsave_release(&nf_hook_lock, flags);
             return verdict;
@@ -386,7 +386,7 @@ static int nf_process_verdict(int verdict, void *iph, uint16_t iph_len)
  */
 int nf_hook_traverse(int hook, void *skb, void *iph, uint16_t iph_len)
 {
-    int verdict = nf_iterate_hooks(hook, skb);
+    int verdict = nf_iterate_hooks(hook, skb, iph_len);
     return nf_process_verdict(verdict, iph, iph_len);
 }
 

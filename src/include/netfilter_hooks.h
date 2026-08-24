@@ -32,7 +32,7 @@ void nf_hook_unregister(int hook, nf_hookfn fn);
 /* Iterate all registered hooks at the given hook point.
  * Returns NF_ACCEPT (0) if all hooks accept, NF_DROP (1) or
  * NF_REJECT (2) if any hook rejects the packet. */
-int  nf_hook_iterate(int hook, void *skb);
+int  nf_hook_iterate(int hook, void *skb, uint16_t len);
 
 /* ── Per-hook-point convenience wrappers ─────────────────────────── */
 

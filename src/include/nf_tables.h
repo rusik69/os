@@ -406,7 +406,7 @@ int  nft_verdict_apply(struct nft_rule *rule,
                        uint8_t protocol, int hook);
 
 /* Hook function for netfilter integration */
-int  nft_hook_handler(void *skb, int hook);
+int  nft_hook_handler(void *skb, int hook, uint16_t len);
 
 /* Initialization / teardown */
 int  nft_init(void);

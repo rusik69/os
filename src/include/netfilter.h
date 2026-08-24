@@ -19,8 +19,11 @@
 #define NF_QUEUE    4   /* Packet queued for userspace */
 #define NF_REPEAT   5   /* Re-run this hook for the packet */
 
-/* Hook function type: return NF_ACCEPT, NF_DROP, or NF_REJECT */
-typedef int (*nf_hookfn)(void *skb, int hook);
+/* Hook function type: return NF_ACCEPT, NF_DROP, or NF_REJECT.
+ * len is the real length of the IP packet as received (from the IP
+ * header to the end of the buffer) — hook callbacks must bounds-check
+ * all header/payload reads against it to avoid OOB on truncated pkts. */
+typedef int (*nf_hookfn)(void *skb, int hook, uint16_t len);
 
 /* Registered hook entry */
 struct nf_hook_entry {
@@ -149,7 +152,7 @@ struct nf_conntrack_stats {
 /* Hook management */
 int  nf_register_hook(int hook, nf_hookfn fn, int priority);
 void nf_unregister_hook(int hook, nf_hookfn fn);
-int  nf_iterate_hooks(int hook, void *skb);
+int  nf_iterate_hooks(int hook, void *skb, uint16_t len);
 
 /* Traverse hooks and process verdict (handles NF_DROP/NF_REJECT/ICMP).
  * Returns 0 if packet accepted, -1 if dropped/rejected. */

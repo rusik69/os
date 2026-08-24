@@ -1714,7 +1714,8 @@ int nft_verdict_apply(struct nft_rule *rule,
 
 /* ── Hook handler ─────────────────────────────────────────────────── */
 
-int nft_hook_handler(void *skb, int hook) {
+int nft_hook_handler(void *skb, int hook, uint16_t len) {
+    (void)len;
     /* Evaluate all active tables against this packet */
     /* In a real system, we'd extract IP/port from skb here.
      * For this implementation, the caller provides the tuple via
