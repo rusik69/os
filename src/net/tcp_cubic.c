@@ -144,6 +144,20 @@ uint32_t cubic_update(struct cubic_data *c, uint32_t cwnd,
     /* Compute t - K (may be negative, handled via signed arithmetic) */
     int64_t delta_fp = (int64_t)t_fp - (int64_t)k_fp;
 
+    /*
+     * Clamp |delta_fp| before cubing to prevent signed overflow (UB) in
+     * delta_fp^3 below.  cbrt(INT64_MAX) is ~2,096,895 in fixed-point
+     * (seconds * 1024), so 2^20 (~1024 s) is a safe ceiling that is far
+     * above any realistic elapsed time.  When |delta_fp| exceeds this,
+     * W_cubic is astronomically large and the later max_limit clamp
+     * governs anyway, so saturation is mathematically equivalent.
+     */
+    const int64_t DELTA_FP_LIMIT = (int64_t)(1U << 20);
+    if (delta_fp > DELTA_FP_LIMIT)
+        delta_fp = DELTA_FP_LIMIT;
+    else if (delta_fp < -DELTA_FP_LIMIT)
+        delta_fp = -DELTA_FP_LIMIT;
+
     /* W_cubic = C * (t - K)^3 + W_max
      *
      * Compute in fixed point:
