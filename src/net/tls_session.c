@@ -407,8 +407,12 @@ int tls_ticket_create(const struct tls_ticket_ctx *ctx,
 		}
 	}
 
-	/* Build AAD from timestamp (big-endian) */
-	write64_be(aad, data->timestamp);
+	/* Use a fixed (zero) AAD, matching tls_ticket_parse().  The plaintext
+	 * timestamp cannot serve as the AAD: it becomes available only after
+	 * the AEAD tag has been verified, so an AAD that depends on it cannot
+	 * be reconstructed on the parse side (chicken-and-egg).  A constant
+	 * AAD still cryptographically binds the ciphertext to this key/nonce. */
+	memset(aad, 0, sizeof(aad));
 
 	/* Initialise AES-GCM with ticket key */
 	ret = tls_aead_init(&aead, tk->key, TLS_TICKET_KEY_LEN,
