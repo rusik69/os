@@ -24,6 +24,29 @@ static int  mptcp_sched_min_rtt(struct mptcp_conn *mc);
 static int  mptcp_sched_redundant(struct mptcp_conn *mc);
 static int  mptcp_sched_rr_next(struct mptcp_conn *mc);
 static int  mptcp_sched_count_active(const struct mptcp_conn *mc);
+static int mptcp_sched_subflow_sendable(const struct mptcp_conn *mc, int idx);
+
+/* ── mptcp_sched_subflow_sendable: Is this subflow usable for data? ─
+ * A subflow is usable for scheduling only if it is marked used AND its
+ * underlying TCP connection has reached the ESTABLISHED state.  Subflows
+ * are marked used=1 during the MP_JOIN handshake while their TCP conn is
+ * still SYN_RECEIVED (mptcp.c), and are not auto-retired when the conn
+ * later closes — so filtering on sf->used alone can select a subflow whose
+ * TCP connection is in the wrong state (sending data/FIN on a non- or
+ * semi-established subflow).  The ESTABLISHED guard prevents that. */
+static int mptcp_sched_subflow_sendable(const struct mptcp_conn *mc, int idx) {
+    if (!mc || idx < 0 || idx >= (int)mc->num_subflows) {
+        return 0;
+    }
+    const struct mptcp_subflow *sf = &mc->subflows[idx];
+    if (!sf->used) {
+        return 0;
+    }
+    if (sf->conn_id < 0 || sf->conn_id >= MAX_TCP_CONNS) {
+        return 0;
+    }
+    return tcp_conns[sf->conn_id].state == TCP_ESTABLISHED;
+}
 
 /* ── mptcp_sched_select: Select best subflow for next data segment ──
  *
@@ -107,10 +130,10 @@ static int mptcp_sched_min_rtt(struct mptcp_conn *mc)
 
 	/* Phase 1: scan non-backup subflows for lowest RTT */
 	for (int i = 0; i < (int)mc->num_subflows; i++) {
-		if (!mc->subflows[i].used) {
-			continue;
-		}
-		active_count++;
+        if (!mptcp_sched_subflow_sendable(mc, i)) {
+            continue;
+        }
+        active_count++;
 
 		if (mc->subflows[i].backup) {
 			continue;  /* prefer non-backup */
@@ -134,10 +157,10 @@ static int mptcp_sched_min_rtt(struct mptcp_conn *mc)
 	if (best_idx < 0) {
 		best_rtt = INT32_MAX;
 		for (int i = 0; i < (int)mc->num_subflows; i++) {
-			if (!mc->subflows[i].used) {
-				continue;
-			}
-			int32_t rtt = mptcp_sched_get_rtt(mc, i);
+            if (!mptcp_sched_subflow_sendable(mc, i)) {
+                continue;
+            }
+            int32_t rtt = mptcp_sched_get_rtt(mc, i);
 			if (rtt < best_rtt) {
 				best_rtt = rtt;
 				best_idx = i;
@@ -175,11 +198,11 @@ static int mptcp_sched_min_rtt(struct mptcp_conn *mc)
 		int next = mc->last_selected + 1;
 		for (int i = 0; i < num_candidates; i++) {
 			int candidate = candidates[(next + i) % num_candidates];
-			if (mc->subflows[candidate].used) {
-				mc->last_selected = (uint8_t)candidate;
+            if (mptcp_sched_subflow_sendable(mc, candidate)) {
+                mc->last_selected = (uint8_t)candidate;
 				return candidate;
-			}
-		}
+            }
+        }
 	}
 
 	/* Single candidate — update last_selected and return */
@@ -221,10 +244,10 @@ static int mptcp_sched_redundant(struct mptcp_conn *mc)
 	/* Phase 1: scan for next non-backup subflow from start position */
 	for (int i = 0; i < (int)mc->num_subflows; i++) {
 		int idx = (start + i) % (int)mc->num_subflows;
-		if (!mc->subflows[idx].used) {
-			continue;
-		}
-		if (first_active < 0) {
+        if (!mptcp_sched_subflow_sendable(mc, idx)) {
+            continue;
+        }
+        if (first_active < 0) {
 			first_active = idx;  /* remember first active for fallback */
 		}
 		if (!mc->subflows[idx].backup && idx != (int)mc->last_selected && !found) {
@@ -263,17 +286,17 @@ static int mptcp_sched_rr_next(struct mptcp_conn *mc)
 	int start = (int)mc->last_selected + 1;
 	for (int i = 0; i < (int)mc->num_subflows; i++) {
 		int idx = (start + i) % (int)mc->num_subflows;
-		if (mc->subflows[idx].used) {
-			return idx;
-		}
-	}
+        if (mptcp_sched_subflow_sendable(mc, idx)) {
+            return idx;
+        }
+    }
 
 	/* Wrapped around — try from the beginning */
 	for (int i = 0; i < (int)mc->num_subflows; i++) {
-		if (mc->subflows[i].used) {
-			return i;
-		}
-	}
+        if (mptcp_sched_subflow_sendable(mc, i)) {
+            return i;
+        }
+    }
 
 	return -ENETDOWN;
 }
@@ -289,10 +312,10 @@ static int mptcp_sched_count_active(const struct mptcp_conn *mc)
 		return 0;
 	}
 	for (int i = 0; i < (int)mc->num_subflows; i++) {
-		if (mc->subflows[i].used) {
-			count++;
-		}
-	}
+        if (mptcp_sched_subflow_sendable(mc, i)) {
+            count++;
+        }
+    }
 	return count;
 }
 
