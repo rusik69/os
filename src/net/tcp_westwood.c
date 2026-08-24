@@ -56,7 +56,10 @@ void westwood_on_ack(struct westwood_data *w, uint32_t acked,
         uint32_t delta = (uint32_t)(now_tick - w->last_ack_tick);
         if (delta > 0) {
             /* Bandwidth = acked_bytes / time_delta (in ticks) */
-            uint32_t sample = (w->acked_bytes * TIMER_FREQ) / delta;
+            /* Promote to uint64_t: acked_bytes * TIMER_FREQ can exceed
+             * 32-bit range (>~43MB ACKed in one sample interval); matches
+             * the bbr/bbr3 bandwidth sampling. */
+            uint32_t sample = (uint32_t)(((uint64_t)w->acked_bytes * TIMER_FREQ) / delta);
 
             /* Exponentially weighted moving average */
             if (w->sample_count == 0) {
