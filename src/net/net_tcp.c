@@ -1426,9 +1426,32 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
     }
 
     if (c->state == TCP_FIN_WAIT) {
-        if (flags & TCP_ACK) {
+        /* A peer ACK acknowledges our FIN only when ack covers the FIN's
+         * sequence number (our_seq points one past the FIN byte we sent). */
+        int fin_acked = (flags & TCP_ACK) && (int32_t)(ack - c->our_seq) >= 0;
+
+        if (fin_acked)
             c->state = TCP_FIN_WAIT_2;
+
+        if (flags & TCP_FIN) {
+            c->their_seq = seq + data_len + 1;
+            send_tcp(c, TCP_ACK, NULL, 0);
+            if (fin_acked) {
+                /* Peer ACKed our FIN and closed in the same segment. */
+                c->state = TCP_TIME_WAIT;
+                c->time_wait_deadline = timer_get_ticks() + TCP_TIME_WAIT_MSL_TICKS;
+            } else {
+                /* Simultaneous close: our FIN is still unacknowledged.  Enter
+                 * CLOSING and await the peer's ACK before TIME_WAIT
+                 * (RFC 793 §3.4), so a lost FIN is still retransmittable. */
+                c->state = TCP_CLOSING;
+            }
         }
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+        return;
+    }
+
+    if (c->state == TCP_FIN_WAIT_2) {
         if (flags & TCP_FIN) {
             c->their_seq = seq + 1;
             send_tcp(c, TCP_ACK, NULL, 0);
@@ -1439,10 +1462,11 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
         return;
     }
 
-    if (c->state == TCP_FIN_WAIT_2) {
-        if (flags & TCP_FIN) {
-            c->their_seq = seq + 1;
-            send_tcp(c, TCP_ACK, NULL, 0);
+    if (c->state == TCP_CLOSING) {
+        /* Simultaneous close (RFC 793 §3.4): we have ACKed the peer's FIN;
+         * once they ACK ours, the exchange is complete and both sides move
+         * to TIME_WAIT. Any segment besides the covering ACK is ignored. */
+        if ((flags & TCP_ACK) && (int32_t)(ack - c->our_seq) >= 0) {
             c->state = TCP_TIME_WAIT;
             c->time_wait_deadline = timer_get_ticks() + TCP_TIME_WAIT_MSL_TICKS;
         }
