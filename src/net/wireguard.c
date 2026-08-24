@@ -1095,6 +1095,17 @@ static int wg_send_to_peer(struct wg_peer *peer, const uint8_t *data, int len)
         return -EINVAL;
     }
 
+    /* ── Length validation ──────────────────────────────────────────
+     * Reject non-positive inner payloads.  If `len` went negative it
+     * would pass the MTU upper-bound check below, then be widened to a
+     * huge `(uint64_t)len` in chacha20poly1305_encrypt(), reading far
+     * past the end of `data`.  Nothing in-tree passes a negative length,
+     * but this is a public exported API. */
+    if (len < 0) {
+        preempt_enable();
+        return -EINVAL;
+    }
+
     /* ── MTU enforcement ─────────────────────────────────────────────
      * The WireGuard tunnel MTU (default 1420) is the maximum size of an
      * inner IP packet.  If the caller hands us a larger payload, reject
