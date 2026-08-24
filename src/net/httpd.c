@@ -142,7 +142,8 @@ static char *http_date(char *buf) {
     *buf++ = ','; *buf++ = ' ';
     *buf++ = (char)('0' + (t.day / 10)); *buf++ = (char)('0' + (t.day % 10));
     *buf++ = ' ';
-    const char *m = months[t.month - 1 < 11 ? t.month - 1 : 0];
+    int mi = (t.month >= 1 && t.month <= 12) ? (int)t.month - 1 : 0;
+    const char *m = months[mi];
     *buf++ = m[0]; *buf++ = m[1]; *buf++ = m[2];
     *buf++ = ' ';
 
