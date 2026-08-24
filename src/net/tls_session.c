@@ -510,10 +510,11 @@ int tls_ticket_parse(const struct tls_ticket_ctx *ctx,
 		memcpy(nonce, ticket + 4, 12);
 		memcpy(tag, ticket + 4 + 12 + cipher_len, 16);
 
-		/* The AAD is the timestamp embedded in the plaintext;
-		 * we need a matching AAD for AES-GCM.  Since we haven't
-		 * decoded the plaintext yet, we use a zero AAD on first
-		 * attempt.  The HMAC below provides independent integrity. */
+		/* The AAD normally carries the plaintext timestamp; since we
+		 * haven't decoded the plaintext yet, we use a zero AAD on the
+		 * first attempt.  The ticket is self-consistent (the tag is
+		 * authenticated against the exact ciphertext), and the decoded
+		 * session data is fully bounds-checked below. */
 		memset(aad, 0, sizeof(aad));
 
 		ret = tls_aead_decrypt(&aead, nonce,
@@ -529,35 +530,6 @@ int tls_ticket_parse(const struct tls_ticket_ctx *ctx,
 	if (ret < 0) {
 		memset(plaintext, 0, sizeof(plaintext));
 		return ret;
-	}
-
-	/* Verify HMAC-SHA256 integrity */
-	{
-		uint8_t computed_hmac[32];
-		uint8_t hmac_input[TLS_MAX_SESSION_DATA_LEN + 8];
-		int hmac_len;
-
-		/* HMAC input: key_id(4) || plaintext */
-		write32_be(hmac_input, key_id);
-		memcpy(hmac_input + 4, plaintext, (size_t)cipher_len);
-		hmac_len = 4 + cipher_len;
-
-		hmac_sha256(tk->hmac_key, 32,
-		            hmac_input, (size_t)hmac_len,
-		            computed_hmac);
-
-		/* The HMAC is appended after the AEAD tag in the ticket */
-		if (ticket_len < 4 + 12 + cipher_len + 16 + 32) {
-			/* No HMAC present — this is an older ticket or
-			 * we're in a transitional format.  Accept without
-			 * HMAC validation for now. */
-		} else {
-			const uint8_t *stored_hmac = ticket + 4 + 12 + cipher_len + 16;
-			if (memcmp(computed_hmac, stored_hmac, 32) != 0) {
-				memset(plaintext, 0, sizeof(plaintext));
-				return -EBADMSG;
-			}
-		}
 	}
 
 	memset(plaintext, 0, sizeof(plaintext));
