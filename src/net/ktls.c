@@ -556,6 +556,14 @@ int ktls_sw_decrypt(struct ktls_ctx *ctx,
 	if (enc_len > data_cap)
 		return -ENOSPC;
 
+	/* Guard against truncated packets: the caller-provided cipher
+	 * buffer must hold at least the record's declared payload
+	 * (encrypted body + AEAD tag).  Without this check, reading
+	 * enc_body[0..enc_len-1] and tag=cipher+enc_len would walk
+	 * past the end of a short buffer. */
+	if (cipher_len < payload_len)
+		return -EBADMSG;
+
 	{
 		const uint8_t *enc_body = cipher;
 		const uint8_t *tag = cipher + enc_len;
