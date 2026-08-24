@@ -708,6 +708,10 @@ static void handle_kexdh_init(struct ssh_session *s, const uint8_t *data, int le
 
     /* Compute shared secret K = e^priv mod p */
     dh_compute_shared(&s->dh_shared, &e, &s->dh_priv);
+    /* Mark the DH exchange as complete so an out-of-sequence NEWKEYS
+     * (sent before KEXDH_INIT) is rejected rather than deriving keys
+     * from an uninitialized shared secret and transitioning forward. */
+    s->kex_done = 1;
 
     /* Get host key blob */
     int hk_len;
@@ -926,7 +930,7 @@ static void process_ssh_data(struct ssh_session *s, const uint8_t *data, int len
             case SSH_PHASE_KEX:
                 if (type == SSH_MSG_KEXDH_INIT) {
                     handle_kexdh_init(s, pkt, total_pkt);
-                } else if (type == SSH_MSG_NEWKEYS) {
+                } else if (type == SSH_MSG_NEWKEYS && s->kex_done) {
                     handle_newkeys(s);
                 }
                 break;
