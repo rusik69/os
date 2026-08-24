@@ -596,7 +596,9 @@ int dhcp_renew(void) {
                                 uint16_t udp_len_val = ntohs(udp->length);
                                 int data_off = sizeof(struct eth_header) + ip_hdr_len +
                                                sizeof(struct udp_header);
-                                int data_len = (int)(udp_len_val - sizeof(struct udp_header));
+                                int data_len = (udp_len_val >= sizeof(struct udp_header))
+                                                   ? (int)(udp_len_val - sizeof(struct udp_header))
+                                                   : 0;
                                 if (data_off + data_len <= n) {
                                     handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
                                 }
@@ -626,7 +628,9 @@ int dhcp_renew(void) {
                                 uint16_t udp_len_val = ntohs(udp->length);
                                 int data_off = sizeof(struct eth_header) + ip_hdr_len +
                                                sizeof(struct udp_header);
-                                int data_len = (int)(udp_len_val - sizeof(struct udp_header));
+                                int data_len = (udp_len_val >= sizeof(struct udp_header))
+                                                   ? (int)(udp_len_val - sizeof(struct udp_header))
+                                                   : 0;
                                 if (data_off + data_len <= n) {
                                     handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
                                 }
@@ -805,7 +809,9 @@ static int dhcp_rebind(void) {
                                 uint16_t udp_len_val = ntohs(udp->length);
                                 int data_off = (int)(sizeof(struct eth_header) + ip_hdr_len +
                                                      sizeof(struct udp_header));
-                                int data_len = (int)(udp_len_val - sizeof(struct udp_header));
+                                int data_len = (udp_len_val >= sizeof(struct udp_header))
+                                                   ? (int)(udp_len_val - sizeof(struct udp_header))
+                                                   : 0;
                                 if (data_off + data_len <= n)
                                     handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
                             }
@@ -834,7 +840,9 @@ static int dhcp_rebind(void) {
                                 uint16_t udp_len_val = ntohs(udp->length);
                                 int data_off = (int)(sizeof(struct eth_header) + ip_hdr_len +
                                                      sizeof(struct udp_header));
-                                int data_len = (int)(udp_len_val - sizeof(struct udp_header));
+                                int data_len = (udp_len_val >= sizeof(struct udp_header))
+                                                   ? (int)(udp_len_val - sizeof(struct udp_header))
+                                                   : 0;
                                 if (data_off + data_len <= n)
                                     handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
                             }
@@ -979,7 +987,9 @@ int dhcp_discover(void) {
                                 uint16_t udp_len_val = ntohs(udp->length);
                                 int data_off = sizeof(struct eth_header) + ip_hdr_len +
                                                sizeof(struct udp_header);
-                                int data_len = (int)(udp_len_val - sizeof(struct udp_header));
+                                int data_len = (udp_len_val >= sizeof(struct udp_header))
+                                                   ? (int)(udp_len_val - sizeof(struct udp_header))
+                                                   : 0;
                                 if (data_off + data_len <= n) {
                                     handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
                                 }
@@ -1009,7 +1019,9 @@ int dhcp_discover(void) {
                                 uint16_t udp_len_val = ntohs(udp->length);
                                 int data_off = sizeof(struct eth_header) + ip_hdr_len +
                                                sizeof(struct udp_header);
-                                int data_len = (int)(udp_len_val - sizeof(struct udp_header));
+                                int data_len = (udp_len_val >= sizeof(struct udp_header))
+                                                   ? (int)(udp_len_val - sizeof(struct udp_header))
+                                                   : 0;
                                 if (data_off + data_len <= n) {
                                     handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
                                 }
