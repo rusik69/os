@@ -142,6 +142,10 @@ int x509_match_oid(const uint8_t *der, int offset, int size,
 
 	if (!der || !oid || offset < 0 || size < offset + 2)
 		return -EINVAL;
+	/* @oid is passed including tag+length, so a length < 2 would make
+	 * (oid_len - 2) negative and underflow the memcmp length below. */
+	if (oid_len < 2)
+		return -EINVAL;
 
 	if (der[offset] != DER_TAG_OID)
 		return 0;
