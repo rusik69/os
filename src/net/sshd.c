@@ -283,9 +283,16 @@ static int ses_send_packet(struct ssh_session *s, uint8_t type,
 /* Read a string from packet data, returns pointer, length in *len */
 static const uint8_t *ssh_read_string(const uint8_t *data, int data_len, int *off, int *len) {
     if (*off + 4 > data_len) { *len = 0; return NULL; }
-    *len = g32(data + *off);
+    uint32_t ulen = g32(data + *off);
     *off += 4;
-    if (*off + *len > data_len) { *len = data_len - *off; if (*len < 0) *len = 0; }
+    /* Treat the length as unsigned and clamp it to the remaining bytes.
+     * A huge/high-bit-set length would otherwise become a negative int
+     * and underflow *off below the start of the buffer (OOB). */
+    int remaining = data_len - *off;
+    if (remaining < 0 || ulen > (uint32_t)remaining)
+        ulen = (uint32_t)(remaining < 0 ? 0 : remaining);
+    *len = (int)ulen;
+    if (*len < 0) { *len = 0; return NULL; }
     const uint8_t *result = data + *off;
     *off += *len;
     return result;
@@ -452,10 +459,15 @@ static void handle_channel_open(struct ssh_session *s, const uint8_t *data, int 
     const uint8_t *type_str = ssh_read_string(data, len, &off, &type_len);
     if (!type_str) return;
 
+    /* Need the sender channel (4 bytes) for both branches below. */
+    if (off + 4 > len) return;
+    int sender_ch = g32(data + off);
+
     /* We only support "session" channels */
     if (type_len == 7 && memcmp(type_str, "session", 7) == 0) {
-        /* Read sender channel and initial window */
-        int sender_ch = g32(data + off); off += 4;
+        /* Read sender channel and initial window (12 bytes total) */
+        if (off + 12 > len) return;
+        off += 4;
         uint32_t window = g32(data + off); off += 4;
         uint32_t max_pkt = g32(data + off); off += 4;
         (void)max_pkt;
@@ -477,7 +489,6 @@ static void handle_channel_open(struct ssh_session *s, const uint8_t *data, int 
         /* Reject unknown channel types */
         uint8_t resp[12];
         int roff = 0;
-        int sender_ch = g32(data + off - 8); /* re-read */
         p32(resp + roff, sender_ch); roff += 4;
         p32(resp + roff, SSH_OPEN_UNKNOWN_CHANNEL_TYPE); roff += 4;
         p32(resp + roff, 0); roff += 4; /* language tag length */
@@ -487,10 +498,12 @@ static void handle_channel_open(struct ssh_session *s, const uint8_t *data, int 
 
 static void handle_channel_request(struct ssh_session *s, const uint8_t *data, int len) {
     int off = 0;
+    if (off + 4 > len) return;
     uint32_t recip = g32(data + off); off += 4;
     int req_type_len;
     const uint8_t *req_type = ssh_read_string(data, len, &off, &req_type_len);
     if (!req_type) return;
+    if (off >= len) return;   /* need the want_reply byte */
     int want_reply = data[off++];
 
     if (req_type_len == 4 && memcmp(req_type, "shell", 4) == 0) {
@@ -559,6 +572,7 @@ static void process_command(struct ssh_session *s) {
 /* ── Handle channel data ────────────────────────────────────── */
 static void handle_channel_data(struct ssh_session *s, const uint8_t *data, int len) {
     int off = 0;
+    if (off + 4 > len) return;
     uint32_t recip = g32(data + off); off += 4;
     (void)recip;
     int data_len;
@@ -773,6 +787,7 @@ static void handle_userauth_request(struct ssh_session *s, const uint8_t *data, 
 
     if (method_len == 8 && memcmp(method, "password", 8) == 0) {
         /* Read password */
+        if (off >= len) return;  /* need the has_changed byte */
         int has_changed = data[off++]; (void)has_changed;
         int pass_len;
         const uint8_t *pass = ssh_read_string(data, len, &off, &pass_len);
