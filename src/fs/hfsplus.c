@@ -451,6 +451,12 @@ static int hfsplus_readdir(void *priv, const char *path)
             const char *slash = strchr(p, '/');
             int clen = slash ? (int)(slash - p) : (int)strlen(p);
             if (clen == 0) break;
+            /* A component larger than the fixed comp[] buffer (and than the
+             * HFS+ 255-name limit) would overflow the stack buffer and the
+             * catalog-lookup key_buf. Reject it instead of truncating so a
+             * lookup never silently resolves to a wrong, shorter name. */
+            if (clen > HFSPLUS_MAX_NAME)
+                return -ENAMETOOLONG;
             char comp[256];
             memcpy(comp, p, clen);
             comp[clen] = '\0';
