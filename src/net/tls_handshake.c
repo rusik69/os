@@ -631,9 +631,13 @@ int tls_handshake_step(struct tls_conn *conn, enum tls_hs_state *new_state, cons
             /* Try to parse a Certificate message */
             ret = tls_hs_parse_header(in, in_len, &hs_msg_type, &hs_body_len);
             if (ret < 0) {
-                /* Not a valid handshake message — skip */
-                *new_state = TLS_HS_TICKET_SENT;
-                return 0;
+                /* Invalid handshake message present with data — fail
+                 * rather than silently advancing the state machine.
+                 * Sibling states (e.g. TLS_HS_TICKET_SENT) reject
+                 * unparseable input with `goto error`; advancing to
+                 * TLS_HS_TICKET_SENT here would let a peer drive the
+                 * handshake forward with malformed input. */
+                goto error;
             }
 
             if (hs_msg_type == TLS_HT_CERTIFICATE) {
