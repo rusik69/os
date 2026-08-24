@@ -52,6 +52,7 @@ static int dns_decode_name(const uint8_t *data, int data_len, int offset,
     int pos = 0;
     int jumped = 0;
     int start_offset = offset;
+    int jumps = 0;   /* compression-pointer hops; bounds the walk and prevents loops */
 
     while (offset < data_len) {
         uint8_t len = data[offset];
@@ -63,12 +64,16 @@ static int dns_decode_name(const uint8_t *data, int data_len, int offset,
             /* Pointer: upper 2 bits 11 indicate compression */
             if (offset + 1 >= data_len) return -1;
             int ptr = ((len & 0x3F) << 8) | data[offset + 1];
+            if (ptr > data_len - 1) return -1;
             offset += 2;
             if (!jumped) {
                 start_offset = offset;
                 jumped = 1;
             }
             offset = ptr;
+            /* A malformed chain of pointers (self-referential or cyclic) would
+             * otherwise loop forever; cap the number of skipped hops. */
+            if (++jumps > 10) return -1;
             continue;
         }
         offset++;
