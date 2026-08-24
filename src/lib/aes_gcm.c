@@ -57,32 +57,62 @@ static void gcm_mul(uint8_t x[16], const uint8_t h[16])
 	memcpy(x, z, 16);
 }
 
-/* Compute GHASH over input blocks.
- * 'in' contains the byte data, 'in_len' is its length in bytes.
- * 'h' is the hash key (AES_K(0^128)).
- * 'out' receives the 16-byte GHASH result. */
-static void ghash(const uint8_t *in, int in_len,
-                  const uint8_t h[16], uint8_t out[16])
+/* Streaming GHASH accumulator.
+ *
+ * GHASH folds the concatenation AAD || pad(AAD) || C || pad(C) || len(AAD) || len(C)
+ * through a rolling 16-byte value Y = (Y ^ block) * H.  The concatenation can
+ * reach ~16.5 KB for a full-size TLS record, so folding it incrementally (rather
+ * than materialising it in a fixed-size stack buffer) avoids a buffer overflow on
+ * large payloads while producing byte-identical output. */
+struct ghash_stream {
+	uint8_t y[16];    /* running accumulator */
+	uint8_t buf[16];  /* pending partial block (zero-padded) */
+	int     count;    /* bytes pending in buf */
+};
+
+static void ghash_stream_init(struct ghash_stream *gs)
 {
-	int i;
+	memset(gs->y, 0, 16);
+	gs->count = 0;
+}
 
-	memset(out, 0, 16);
+static void ghash_stream_feed(struct ghash_stream *gs,
+                              const uint8_t *in, int len,
+                              const uint8_t h[16])
+{
+	int k = 0;
 
-	for (i = 0; i + 16 <= in_len; i += 16) {
+	while (k < len) {
+		int n    = len - k;
+		int free = 16 - gs->count;
 		int j;
-		for (j = 0; j < 16; j++)
-			out[j] ^= in[i + j];
-		gcm_mul(out, h);
-	}
 
-	/* Handle partial last block (zero-padded) */
-	if (in_len % 16 != 0) {
-		int rem = in_len % 16;
-		int j;
-		for (j = 0; j < rem; j++)
-			out[j] ^= in[in_len - rem + j];
-		gcm_mul(out, h);
+		if (n > free)
+			n = free;
+		memcpy(gs->buf + gs->count, in + k, (size_t)n);
+		gs->count += n;
+		k         += n;
+
+		if (gs->count == 16) {
+			for (j = 0; j < 16; j++)
+				gs->y[j] ^= gs->buf[j];
+			gcm_mul(gs->y, h);
+			gs->count = 0;
+		}
 	}
+}
+
+static void ghash_stream_final(struct ghash_stream *gs,
+                               const uint8_t h[16], uint8_t out[16])
+{
+	int j;
+
+	if (gs->count > 0) {
+		for (j = 0; j < gs->count; j++)
+			gs->y[j] ^= gs->buf[j];
+		gcm_mul(gs->y, h);
+	}
+	memcpy(out, gs->y, 16);
 }
 
 /* ── AES-CTR Mode (GCM variant — uses J0) ──────────────────────────── */
@@ -160,10 +190,9 @@ int aes_gcm_encrypt(struct aes_gcm_ctx *ctx,
                     uint8_t *cipher, uint8_t *tag)
 {
 	uint8_t J0[16];
-	uint8_t mac_input[4096];
-	int mac_len = 0;
+	uint8_t zero[16] = {0};
+	struct ghash_stream gs;
 	int aad_pad, ct_pad;
-	int i;
 
 	if (!ctx || !iv || !cipher || !tag)
 		return -EINVAL;
@@ -190,41 +219,38 @@ int aes_gcm_encrypt(struct aes_gcm_ctx *ctx,
 	aad_pad = (16 - (aad_len % 16)) % 16;
 	ct_pad  = (16 - (plain_len % 16)) % 16;
 
-	/* Build GHASH input: AAD || pad(AAD) || C || pad(C) || len(AAD) || len(C) */
-	if (aad_len > 0) {
-		memcpy(mac_input + mac_len, aad, (size_t)aad_len);
-		mac_len += aad_len;
-	}
-	/* AAD padding */
-	for (i = 0; i < aad_pad; i++)
-		mac_input[mac_len++] = 0;
-
-	if (plain_len > 0) {
-		memcpy(mac_input + mac_len, cipher, (size_t)plain_len);
-		mac_len += plain_len;
-	}
-	/* Ciphertext padding */
-	for (i = 0; i < ct_pad; i++)
-		mac_input[mac_len++] = 0;
-
-	/* Length block (64-bit big-endian each) */
+	/* Fold AAD || pad(AAD) || C || pad(C) || len(AAD) || len(C) through GHASH
+	 * incrementally.  Feeding each segment into the streaming accumulator is
+	 * byte-identical to hashing the concatenated buffer, but never requires
+	 * materialising the whole (potentially ~16 KB) input on the stack. */
+	ghash_stream_init(&gs);
+	if (aad_len > 0)
+		ghash_stream_feed(&gs, aad, aad_len, ctx->H);
+	if (aad_pad > 0)
+		ghash_stream_feed(&gs, zero, aad_pad, ctx->H);
+	if (plain_len > 0)
+		ghash_stream_feed(&gs, cipher, plain_len, ctx->H);
+	if (ct_pad > 0)
+		ghash_stream_feed(&gs, zero, ct_pad, ctx->H);
 	{
+		uint8_t lenblk[16];
 		uint64_t aad_bits = (uint64_t)aad_len * 8;
 		uint64_t ct_bits  = (uint64_t)plain_len * 8;
 		int j;
 		for (j = 7; j >= 0; j--) {
-			mac_input[mac_len + j]     = (uint8_t)(aad_bits & 0xFF);
-			mac_input[mac_len + 8 + j] = (uint8_t)(ct_bits & 0xFF);
+			lenblk[j]     = (uint8_t)(aad_bits & 0xFF);
+			lenblk[8 + j] = (uint8_t)(ct_bits  & 0xFF);
 			aad_bits >>= 8;
 			ct_bits  >>= 8;
 		}
-		mac_len += 16;
+		ghash_stream_feed(&gs, lenblk, 16, ctx->H);
 	}
 
 	/* Compute GHASH */
 	{
 		uint8_t S[16];
-		ghash(mac_input, mac_len, ctx->H, S);
+
+		ghash_stream_final(&gs, ctx->H, S);
 
 		/* Reset J0 to original for tag computation */
 		memset(J0, 0, 16);
@@ -245,10 +271,10 @@ int aes_gcm_decrypt(struct aes_gcm_ctx *ctx,
                     const uint8_t *tag, uint8_t *plain)
 {
 	uint8_t J0[16];
-	uint8_t mac_input[4096];
-	int mac_len = 0;
-	int aad_pad, ct_pad;
+	uint8_t zero[16] = {0};
 	uint8_t computed_tag[16];
+	struct ghash_stream gs;
+	int aad_pad, ct_pad;
 	int i;
 
 	if (!ctx || !iv || !cipher || !tag || !plain)
@@ -271,33 +297,30 @@ int aes_gcm_decrypt(struct aes_gcm_ctx *ctx,
 	aad_pad = (16 - (aad_len % 16)) % 16;
 	ct_pad  = (16 - (cipher_len % 16)) % 16;
 
-	/* Build GHASH input */
-	if (aad_len > 0) {
-		memcpy(mac_input + mac_len, aad, (size_t)aad_len);
-		mac_len += aad_len;
-	}
-	for (i = 0; i < aad_pad; i++)
-		mac_input[mac_len++] = 0;
-
-	if (cipher_len > 0) {
-		memcpy(mac_input + mac_len, cipher, (size_t)cipher_len);
-		mac_len += cipher_len;
-	}
-	for (i = 0; i < ct_pad; i++)
-		mac_input[mac_len++] = 0;
-
-	/* Length block */
+	/* Fold AAD || pad(AAD) || C || pad(C) || len(AAD) || len(C) through GHASH
+	 * incrementally (byte-identical to hashing the concatenated buffer, but
+	 * without materialising a potentially ~16 KB stack buffer). */
+	ghash_stream_init(&gs);
+	if (aad_len > 0)
+		ghash_stream_feed(&gs, aad, aad_len, ctx->H);
+	if (aad_pad > 0)
+		ghash_stream_feed(&gs, zero, aad_pad, ctx->H);
+	if (cipher_len > 0)
+		ghash_stream_feed(&gs, cipher, cipher_len, ctx->H);
+	if (ct_pad > 0)
+		ghash_stream_feed(&gs, zero, ct_pad, ctx->H);
 	{
+		uint8_t lenblk[16];
 		uint64_t aad_bits = (uint64_t)aad_len * 8;
 		uint64_t ct_bits  = (uint64_t)cipher_len * 8;
 		int j;
 		for (j = 7; j >= 0; j--) {
-			mac_input[mac_len + j]     = (uint8_t)(aad_bits & 0xFF);
-			mac_input[mac_len + 8 + j] = (uint8_t)(ct_bits & 0xFF);
+			lenblk[j]     = (uint8_t)(aad_bits & 0xFF);
+			lenblk[8 + j] = (uint8_t)(ct_bits  & 0xFF);
 			aad_bits >>= 8;
 			ct_bits  >>= 8;
 		}
-		mac_len += 16;
+		ghash_stream_feed(&gs, lenblk, 16, ctx->H);
 	}
 
 	/* Verify GHASH first (before decryption — constant-time compare) */
@@ -305,7 +328,7 @@ int aes_gcm_decrypt(struct aes_gcm_ctx *ctx,
 		uint8_t S[16];
 		uint8_t diff = 0;
 
-		ghash(mac_input, mac_len, ctx->H, S);
+		ghash_stream_final(&gs, ctx->H, S);
 
 		memset(J0, 0, 16);
 		memcpy(J0, iv, iv_len);
