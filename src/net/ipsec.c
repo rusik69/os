@@ -321,6 +321,9 @@ static int ipsec_output_esp(struct ip_header *outer_ip, uint8_t *buf, int *len, 
 
 static int ipsec_input_ah(struct ip_header *ip_hdr, const uint8_t *payload, int len) {
     int ret;
+    /* Truncated guard: valid AH packet is 12-byte header + 12-byte ICV = 24 bytes min */
+    if (len < (int)(sizeof(struct ah_header) + 12))
+        return -EINVAL;
     const struct ah_header *ah = (const struct ah_header *)payload;
     spinlock_acquire(&sadb_lock);
     int idx = sadb_find_by_spi(ah->spi, ip_hdr->src_ip);
@@ -368,6 +371,9 @@ static int ipsec_input_ah(struct ip_header *ip_hdr, const uint8_t *payload, int 
 
 static int ipsec_input_esp(struct ip_header *ip_hdr, const uint8_t *payload, int len) {
     int ret;
+    /* Truncated guard: don't read spi/seq_no from a packet too short for the ESP header */
+    if (len < (int)sizeof(struct esp_header))
+        return -EINVAL;
     const struct esp_header *esp = (const struct esp_header *)payload;
 
     uint8_t enc_key[32];
