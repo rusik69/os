@@ -148,6 +148,13 @@ static int pfkey_send_msg(int fd, const struct sadb_msg *msg, uint16_t len)
     (void)fd;
     if (!pfkey_initialised) return -ENOSYS;
 
+    /* Reject truncated / NULL messages before touching header fields. */
+    if (!msg || len < sizeof(struct sadb_msg)) {
+        kprintf("pfkey: dropped truncated SADB message (len=%u need=%zu)\n",
+                len, sizeof(struct sadb_msg));
+        return -EINVAL;
+    }
+
     /* Find the socket */
     int sidx = -1;
     for (int i = 0; i < PFKEY_MAX_SOCKS; i++) {
