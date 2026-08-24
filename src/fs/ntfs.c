@@ -175,12 +175,13 @@ static uint8_t *ntfs_find_attr(struct ntfs_priv *np, uint8_t *mft_rec,
 
     uint8_t *pos = mft_rec + attr_off;
     for (;;) {
+        /* Attribute header must fit inside the record before reading fields */
+        if (pos + sizeof(struct ntfs_attr_hdr) > mft_rec + rec_size)
+            break;
+
         struct ntfs_attr_hdr *attr = (struct ntfs_attr_hdr *)pos;
 
         if (attr->type == 0xFFFFFFFF) /* end marker */
-            break;
-
-        if (pos + sizeof(struct ntfs_attr_hdr) > mft_rec + rec_size)
             break;
 
         if (attr->type == attr_type) {
@@ -273,6 +274,10 @@ static int ntfs_read_data(struct ntfs_priv *np, uint8_t *mft_rec,
         uint32_t val_len = ah->value_length;
         uint16_t val_off = ah->value_offset;
         if (val_off + val_len > (uint32_t)attr_len) return -1;
+        if (offset >= val_len) {
+            *out_size = 0;
+            return 0;
+        }
         uint32_t to_copy = val_len - offset;
         if (to_copy > size) to_copy = size;
         if ((int32_t)to_copy < 0) to_copy = 0;
