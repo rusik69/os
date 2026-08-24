@@ -236,6 +236,12 @@ int sctp_tsn_rcv_data(struct sctp_assoc *a, uint32_t src_ip,
 	if (!a || !dh)
 		return -EINVAL;
 
+	/* Guard against a short/malformed DATA chunk: chunk_len must cover
+	 * the TSN/stream/PPID header before any payload is read. Without this,
+	 * (chunk_len - sizeof(hdr)) underflows and memcpy over-reads. */
+	if (chunk_len < sizeof(struct sctp_data_hdr))
+		return -EINVAL;
+
 	uint32_t tsn = ntohl(dh->tsn);
 	uint16_t stream_id = ntohs(dh->stream_id);
 	uint16_t stream_seq = ntohs(dh->stream_seq);
