@@ -1320,7 +1320,48 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
         }
 
         if (flags & TCP_FIN) {
-            c->their_seq = seq + data_len + 1;
+            /* A peer commonly appends a FIN to its final data segment.  The
+             * FIN occupies one sequence byte *after* any carried data, so
+             * deliver that data before transitioning to CLOSE_WAIT — dropping
+             * it would silently truncate the final response. */
+            uint32_t fin_seq = seq + data_len;  /* seq number of FIN octet */
+            int fin_data_to_cb = 0;
+
+            if (data_len > 0) {
+                uint32_t expected = c->their_seq;
+                if ((int32_t)(fin_seq - expected) > 0 &&
+                    (int32_t)(seq - expected) <= 0) {
+                    /* In-order data — deliver it through the normal channel. */
+                    uint32_t win = c->their_window ? c->their_window : 8192;
+                    if (fin_seq <= expected + win) {
+                        if (l && l->on_data) {
+                            tcp_data_handler _cb = l->on_data;
+                            const uint8_t *_d = data;
+                            uint16_t _n = data_len;
+                            spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+                            _cb(conn_id, _d, _n);
+                            fin_data_to_cb = 1;
+                        } else {
+                            int space = (int)sizeof(c->rxbuf) - c->rxlen;
+                            int copy = (int)data_len < space ? (int)data_len : space;
+                            if (copy > 0) {
+                                memcpy(c->rxbuf + c->rxlen, data, copy);
+                                c->rxlen += copy;
+                                sock_wake_by_conn_id(conn_id);
+                            }
+                        }
+                        c->their_seq = fin_seq;
+                    }
+                }
+                /* Out-of-order/duplicate data with FIN: ACK the FIN below;
+                 * a gap is recovered by the sender's retransmission. */
+            }
+
+            c->their_seq = fin_seq + 1;  /* FIN consumes one sequence byte */
+
+            if (fin_data_to_cb)
+                spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
+
             send_tcp(c, TCP_ACK, NULL, 0);
             c->state = TCP_CLOSE_WAIT;
             c->rx_fin = 1;
