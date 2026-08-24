@@ -29,12 +29,12 @@
  * Long form (2..127):    1xxxxxxx  — lower 7 bits = number of subsequent
  *                                     bytes encoding the length (big-endian)
  */
-int x509_parse_der_length(const uint8_t *der, uint32_t *len)
+int x509_parse_der_length(const uint8_t *der, int size, uint32_t *len)
 {
 	uint8_t first;
 	int num_bytes;
 
-	if (!der || !len)
+	if (!der || !len || size < 1)
 		return -EINVAL;
 
 	first = der[0];
@@ -50,6 +50,11 @@ int x509_parse_der_length(const uint8_t *der, uint32_t *len)
 		/* Indefinite length or too long for our parser */
 		return -EINVAL;
 	}
+
+	/* Ensure the whole length field fits inside the available buffer */
+	/* (avoids an OOB read on a truncated packet). */
+	if (size < 1 + num_bytes)
+		return -EINVAL;
 
 	*len = 0;
 	for (int i = 0; i < num_bytes; i++) {
@@ -73,9 +78,14 @@ int x509_skip_der_tlv(const uint8_t *der, int size)
 	if (!der || size < 2)
 		return -EINVAL;
 
-	len_bytes = x509_parse_der_length(der + 1, &vlen);
+	len_bytes = x509_parse_der_length(der + 1, size - 1, &vlen);
 	if (len_bytes < 0)
 		return len_bytes;
+
+	/* tag(1) + length(len_bytes) + value(vlen) must fit in @size */
+	if ((uint64_t)1 + (uint64_t)len_bytes + (uint64_t)vlen >
+	    (uint64_t)size)
+		return -EINVAL;
 
 	/* tag(1) + length(len_bytes) + value(vlen) */
 	return 1 + len_bytes + (int)vlen;
@@ -100,13 +110,18 @@ int x509_read_der_tlv(const uint8_t *der, int size,
 		return -EINVAL;
 
 	*tag = der[0];
-	len_bytes = x509_parse_der_length(der + 1, &len_val);
+	len_bytes = x509_parse_der_length(der + 1, size - 1, &len_val);
 	if (len_bytes < 0)
 		return len_bytes;
 
-	total = 1 + len_bytes + (int)len_val;
-	if (total > size)
+	/* tag(1) + length(len_bytes) + value(len_val) must fit in @size.
+	 * Compare in 64-bit so a long-form length >= 0x80000000 cannot wrap
+	 * (int)len_val negative and defeat the bounds check. */
+	if ((uint64_t)1 + (uint64_t)len_bytes + (uint64_t)len_val >
+	    (uint64_t)size)
 		return -EINVAL;
+
+	total = 1 + len_bytes + (int)len_val;
 
 	*value = der + 1 + len_bytes;
 	*vlen  = len_val;
@@ -131,7 +146,8 @@ int x509_match_oid(const uint8_t *der, int offset, int size,
 	if (der[offset] != DER_TAG_OID)
 		return 0;
 
-	len_bytes = x509_parse_der_length(der + offset + 1, &len_val);
+	len_bytes = x509_parse_der_length(der + offset + 1,
+	                                  size - offset - 1, &len_val);
 	if (len_bytes < 0)
 		return len_bytes;
 
@@ -232,7 +248,8 @@ static int x509_read_algo_id(const uint8_t *der, int size,
 
 	algo->oid[0] = DER_TAG_OID;
 	{
-		int lret = x509_parse_der_length(seq_val + 1, &oid_vlen);
+		int lret = x509_parse_der_length(seq_val + 1,
+		                                 (int)seq_len - 1, &oid_vlen);
 		if (lret < 0)
 			return lret;
 		/* Use the inner TLV bytes for the OID */

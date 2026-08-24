@@ -126,12 +126,13 @@ struct tls_x509_cert {
 /**
  * x509_parse_der_length — Parse a DER length field.
  * @der:   Pointer to the length field (must not be NULL).
+ * @size:  Remaining bytes available at @der.
  * @len:   On success, set to the parsed length value.
  *
  * Returns the number of bytes consumed by the length field (1 or more),
  * or a negative errno on failure.
  */
-int x509_parse_der_length(const uint8_t *der, uint32_t *len);
+int x509_parse_der_length(const uint8_t *der, int size, uint32_t *len);
 
 /**
  * x509_skip_der_tlv — Get the total size of a DER TLV.
