@@ -1154,11 +1154,11 @@ static void dccp_ccid_ack_rcvd(struct dccp_sock *ds,
     } else if (ds->ccid == DCCP_CCID_3) {
         /* ── CCID3: TFRC rate control (RFC 4342, RFC 5348) ── */
         uint32_t prev_ack = ds->last_ack_seq;
-        int newly_acked = 0;
+        uint32_t newly_acked = 0;
         if (ack_seq > prev_ack) {
-            newly_acked = (int)(ack_seq - prev_ack);
+            newly_acked = ack_seq - prev_ack;
         } else if (ack_seq < prev_ack) {
-            newly_acked = (int)(ack_seq + (0xFFFFFFFFU - prev_ack));
+            newly_acked = ack_seq + (0xFFFFFFFFU - prev_ack);
         }
 
         if (newly_acked == 0) {
@@ -1172,16 +1172,16 @@ static void dccp_ccid_ack_rcvd(struct dccp_sock *ds,
         }
 
         /* New ACK received: update in_flight and reset dupACK counter */
-        if (newly_acked > (int)ds->in_flight)
+        if (newly_acked > ds->in_flight)
             ds->in_flight = 0;
         else
-            ds->in_flight -= (uint32_t)newly_acked;
+            ds->in_flight -= newly_acked;
 
         ds->last_ack_seq = ack_seq;
         ds->dup_acks = 0;
 
         /* Track bytes since last loss for loss interval calculation */
-        ds->tfrc_bytes_since_loss += (uint32_t)newly_acked *
+        ds->tfrc_bytes_since_loss += newly_acked *
             (ds->tfrc_s ? ds->tfrc_s : DCCP_CCID3_DEFAULT_S);
 
         /* Update RTT estimate from ACK timing */ {
