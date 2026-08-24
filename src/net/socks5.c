@@ -196,7 +196,15 @@ int socks5_connect(const struct socks5_server *srv,
             }
             resp_len = 5;
         }
-        remaining = conn_resp[4] + 2; /* domain + port */
+        /* remaining covers len byte + domain + port. The len byte is
+         * server-controlled; reject any reply that cannot fit in the
+         * 256-byte buffer, otherwise a large declared length would force
+         * reading past the stack array. */
+        remaining = 1 + conn_resp[4] + 2; /* len + domain + port */
+        if (4 + remaining > (int)sizeof(conn_resp)) {
+            net_tcp_close(conn_id);
+            return -EPROTO;
+        }
         break;
     }
     default:
@@ -292,7 +300,8 @@ int socks5_bind(const struct socks5_server *srv,
             if (net_tcp_recv(conn_id, &bind_resp[4], 1, 100) != 1) { net_tcp_close(conn_id); return -EIO; }
             resp_len = 5;
         }
-        remaining = bind_resp[4] + 2;
+        remaining = 1 + bind_resp[4] + 2; /* len + domain + port */
+        if (4 + remaining > (int)sizeof(bind_resp)) { net_tcp_close(conn_id); return -EPROTO; }
         break;
     default: net_tcp_close(conn_id); return -EPROTO;
     }
@@ -407,7 +416,8 @@ int socks5_udp_associate(const struct socks5_server *srv,
             if (net_tcp_recv(conn_id, &udp_resp[4], 1, 100) != 1) { net_tcp_close(conn_id); return -EIO; }
             resp_len = 5;
         }
-        remaining = udp_resp[4] + 2;
+        remaining = 1 + udp_resp[4] + 2; /* len + domain + port */
+        if (4 + remaining > (int)sizeof(udp_resp)) { net_tcp_close(conn_id); return -EPROTO; }
         break;
     default: net_tcp_close(conn_id); return -EPROTO;
     }
