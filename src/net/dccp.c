@@ -439,7 +439,12 @@ void handle_dccp(uint32_t src_ip, uint32_t dst_ip,
         break;
     }
     case DCCP_PKT_REQUEST:
-        /* DCCP-Request: respond with DCCP-Response (RFC 4340 §5.1 step 2) */
+        /* DCCP-Request: respond with DCCP-Response (RFC 4340 §5.1 step 2).
+         * Only valid on a non-established passive socket — a spurious
+         * Request on an already-connected socket must not clobber the
+         * live connection's peer/state. */
+        if (ds->connected || ds->state == DCCP_ESTABLISHED)
+            break;
         ds->peer_ip = src_ip;
         ds->peer_port = ntohs(dh->src_port);
         ds->ack_seq = ntohl(dh->seq_low);  /* Remember client's initial seq */
@@ -452,7 +457,11 @@ void handle_dccp(uint32_t src_ip, uint32_t dst_ip,
         break;
     case DCCP_PKT_RESPONSE: {
         /* Client receives Response — send ACK to complete 3-way handshake
-         * (RFC 4340 §5.1 step 3) */
+         * (RFC 4340 §5.1 step 3). Only valid after we sent a DCCP-Request;
+         * a stray/duplicate Response on any other state must not force the
+         * connection to Established. */
+        if (ds->state != DCCP_REQUEST || ds->connected)
+            break;
         uint32_t resp_seq = ntohl(dh->seq_low);
         ds->peer_ip = src_ip;
         ds->peer_port = ntohs(dh->src_port);
@@ -477,7 +486,12 @@ void handle_dccp(uint32_t src_ip, uint32_t dst_ip,
         dccp_ccid_ack_rcvd(ds, payload, len);
         break;
     case DCCP_PKT_CLOSEREQ: {
-        /* DCCP-CloseReq: peer wants to close — send DCCP-Close */
+        /* DCCP-CloseReq: peer wants to close — send DCCP-Close.
+         * Only meaningful on an established connection; a CloseReq on a
+         * socket that is not connected must not start a Close exchange or
+         * move it into the CLOSING state. */
+        if (!ds->connected || ds->state == DCCP_CLOSED)
+            break;
         uint8_t close_pkt[sizeof(struct dccp_header)];
         struct dccp_header *ch = (struct dccp_header *)close_pkt;
         memset(ch, 0, sizeof(*ch));
