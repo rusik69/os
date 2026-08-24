@@ -314,6 +314,16 @@ static int squashfs_walk_dir(struct squashfs_priv *rp, uint64_t inode_ref,
         return *count;
     }
 
+    /* A directory inode header is read as far as base+30 (dir_offset),
+     * so require the full 32-byte inode to be inside the image before
+     * dereferencing. Guards a truncated/crafted inode_ref (root or child)
+     * pointing near the end of the image. */
+    if (inode_ref + 32 > rp->total_size) {
+        kprintf("[squashfs] inode at %llu truncated (image size %u)\n",
+                (unsigned long long)inode_ref, rp->total_size);
+        return *count;
+    }
+
     uint8_t *base = squashfs_addr(rp, inode_ref);
     uint16_t inode_type = squashfs_read16(base);
 
@@ -417,7 +427,11 @@ static int squashfs_walk_dir(struct squashfs_priv *rp, uint64_t inode_ref,
             uint64_t inode_addr_val = rp->sb.inode_table_start + inode_offset;
             e->inode_offset = (uint32_t)inode_offset;
 
-            if (inode_addr_val < rp->total_size) {
+            /* The child inode header is read as far as inode_base+28
+             * (file_size), so require the full 32-byte inode to be inside
+             * the image before dereferencing (a truncated entry whose
+             * header_inode_num + ino_off points near the image end). */
+            if (inode_addr_val + 32 <= rp->total_size) {
                 uint8_t *inode_base = squashfs_addr(rp, inode_addr_val);
                 uint16_t child_type = squashfs_read16(inode_base);
 
@@ -479,6 +493,12 @@ static int squashfs_parse(struct squashfs_priv *rp)
     /* Walk the root directory */
     int count = 0;
     uint64_t root_ref = sb->root_inode_ref;
+    /* Guard the 2-byte root inode type read against a truncated image. */
+    if (root_ref + 2 > rp->total_size) {
+        kprintf("[squashfs] root inode at %llu truncated (image size %u)\n",
+                (unsigned long long)root_ref, rp->total_size);
+        return -1;
+    }
     uint8_t *root_base = squashfs_addr(rp, root_ref);
     uint16_t root_type = squashfs_read16(root_base);
 
