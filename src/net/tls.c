@@ -246,6 +246,14 @@ int tls_record_decrypt(struct tls_cipher_state *cs,
 	if (enc_len > data_cap)
 		return -ENOSPC;
 
+	/* The header-derived length must not overstate the actual cipher
+	 * buffer: the AEAD decrypt below reads enc_len bytes of body plus
+	 * tag_len bytes of tag out of 'cipher'.  Trusting hdr->length alone
+	 * (without cross-checking cipher_len) would read past the buffer if a
+	 * caller passed a shorter message than the header claims. */
+	if (cipher_len < payload_len)
+		return -EINVAL;
+
 	/* Build per-record nonce */
 	tls_aead_build_nonce(cs, ntohs(hdr->version), nonce);
 
