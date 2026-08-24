@@ -386,10 +386,19 @@ int socks5_udp_associate(const struct socks5_server *srv,
     udp_req[pos++] = 0x00;
     /* Use domain name if provided, otherwise use zeros (all addresses) */
     if (dest_host && dest_host[0]) {
+        /* RFC 1928 domain length field is 1 octet, max 255; validate
+         * before the buffer copy. Without this, a hostname >= 256 chars
+         * truncates via the (uint8_t) cast (wire-protocol desync) while
+         * the full length is still copied past the 512-byte buffer. */
+        size_t hlen = strlen(dest_host);
+        if (hlen > 255) {
+            net_tcp_close(conn_id);
+            return -EINVAL;
+        }
         udp_req[pos++] = SOCKS5_ATYP_DOMAIN;
-        udp_req[pos++] = (uint8_t)strlen(dest_host);
-        memcpy(&udp_req[pos], dest_host, strlen(dest_host));
-        pos += (int)strlen(dest_host);
+        udp_req[pos++] = (uint8_t)hlen;
+        memcpy(&udp_req[pos], dest_host, hlen);
+        pos += (int)hlen;
     } else {
         udp_req[pos++] = SOCKS5_ATYP_IPV4;
         udp_req[pos++] = 0; udp_req[pos++] = 0; udp_req[pos++] = 0; udp_req[pos++] = 0;
