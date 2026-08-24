@@ -344,6 +344,11 @@ int vxlan_decapsulate(const uint8_t *outer_pkt, int outer_len,
     if (actual_ip_hdr_len < outer_ip_hdr_min || actual_ip_hdr_len > outer_len)
         return -1;
 
+    /* Ensure the entire UDP header is present before dereferencing it
+     * (truncated-packet OOB guard: IHL >5 shrinks the room left for UDP). */
+    if ((size_t)actual_ip_hdr_len + (size_t)udp_hdr_len > (size_t)outer_len)
+        return -1;
+
     /* ── Parse outer UDP header ───────────────────────────────────── */
     const struct udp_header *udp = (const struct udp_header *)
         (outer_pkt + actual_ip_hdr_len);
@@ -356,6 +361,12 @@ int vxlan_decapsulate(const uint8_t *outer_pkt, int outer_len,
     uint16_t udp_len = ntohs(udp->length);
     if (udp_len < (uint16_t)(udp_hdr_len + vxlan_hdr_len))
         return -1;  /* UDP payload too small for VXLAN header */
+
+    /* Ensure the full UDP datagram (UDP header + VXLAN header + inner
+     * payload) is present before parsing the VXLAN header or extracting
+     * the inner Ethernet frame (truncated-packet OOB guard). */
+    if ((size_t)actual_ip_hdr_len + (size_t)udp_len > (size_t)outer_len)
+        return -1;
 
     /* ── Parse VXLAN header ───────────────────────────────────────── */
     const struct vxlan_header *vxlan = (const struct vxlan_header *)
