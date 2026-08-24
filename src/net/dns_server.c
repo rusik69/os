@@ -305,6 +305,16 @@ static int build_dns_response(const uint8_t *query, int query_len,
         }
     }
     int question_len = qpos - 12;
+    /* Validate the walked length against both the source query and the
+     * destination response before copying: a malformed name (no terminator)
+     * can push qpos past query_len (over-read) and make question_len exceed
+     * resp_size (stack overflow of resp). */
+    if (qpos > query_len)
+        return -1;  /* name walk overran the (possibly undersized) query */
+    if (question_len < 4)
+        return -1;  /* no room for a QTYPE + QCLASS tail */
+    if (pos + question_len > resp_size)
+        return -1;  /* response buffer overflow */
     memcpy(resp + pos, query + 12, question_len);
     pos += question_len;
 
