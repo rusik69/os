@@ -704,14 +704,17 @@ int tls_handshake_step(struct tls_conn *conn, enum tls_hs_state *new_state, cons
                                                    &ticket_lifetime, &ticket_age_add, &ticket_ptr,
                                                    &ticket_len, &nonce_ptr, &nonce_len);
                 if (ret < 0) {
-                    kprintf("[tls] client: invalid "
-                            "NewSessionTicket, ignoring\n");
-                } else {
-                    kprintf("[tls] client: received "
-                            "NewSessionTicket (%d bytes, "
-                            "lifetime %u)\n",
-                            ticket_len, ticket_lifetime);
+                    /* Malformed NewSessionTicket is invalid peer input.
+                     * Reject it rather than silently advancing the
+                     * handshake to TLS_HS_CONNECTED, a peer with malformed
+                     * input would otherwise drive the handshake forward
+                     * (consistent with TLS_HS_SERVER_PARAMS_SENT). */
+                    kprintf("[tls] client: invalid NewSessionTicket, aborting handshake\n");
+                    goto error;
                 }
+
+                kprintf("[tls] client: received NewSessionTicket (%d bytes, lifetime %u)\n",
+                        ticket_len, ticket_lifetime);
 
                 *new_state = TLS_HS_CONNECTED;
                 return 0;
