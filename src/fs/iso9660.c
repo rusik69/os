@@ -986,6 +986,20 @@ static int check_rrip_in_dir(struct iso9660_priv *ip,
                 break;
             }
 
+            /* A record whose declared length reaches into the next block
+             * is a straddling record (ISO 9660 §9.1.4).  Unlike
+             * iso_read_dir_entries(), this RRIP-detection scan does NOT
+             * assemble straddling records, so reading name_len / the SUSP
+             * area from the current buffer would over-read past the end of
+             * @buf (rec->length up to 255, pos near block end).  Skip the
+             * rest of this block to avoid the stack OOB and keep progress. */
+            if (pos + (uint32_t)rec->length > ip->block_size) {
+                uint32_t skip = ip->block_size - pos;
+                offset += skip;
+                pos = ip->block_size;
+                break;
+            }
+
             /* Calculate system use offset */
             uint8_t name_len = rec->name_len;
             uint32_t sus_off = sizeof(struct iso_dir_record) - 1 + name_len;
