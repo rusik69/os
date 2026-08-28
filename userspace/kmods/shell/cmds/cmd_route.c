@@ -66,6 +66,12 @@ void cmd_route(const char *args) {
         (void)ip;
         kprintf("Routing table:\n");
         kprintf("Destination     Gateway         Mask            Iface\n");
+        /* Default route via gateway */
+        kprintf("%-15s %u.%u.%u.%u  %u.%u.%u.%u   eth0\n", "default",
+                (unsigned int)((gw >> 24) & 0xFF), (unsigned int)((gw >> 16) & 0xFF),
+                (unsigned int)((gw >> 8) & 0xFF), (unsigned int)(gw & 0xFF),
+                (unsigned int)((mask >> 24) & 0xFF), (unsigned int)((mask >> 16) & 0xFF),
+                (unsigned int)((mask >> 8) & 0xFF), (unsigned int)(mask & 0xFF));
         kprintf("%-15s %-15s %u.%u.%u.%u   eth0\n",
                 "0.0.0.0", "0.0.0.0",
                 (unsigned int)((mask >> 24) & 0xFF), (unsigned int)((mask >> 16) & 0xFF),

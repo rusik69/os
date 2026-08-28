@@ -1,8 +1,10 @@
 /* cmd_env.c — env command: list shell environment variables */
-#include "shell_cmds.h"
-#include "printf.h"
 #include "libc.h"
+#include "printf.h"
+#include "shell_cmds.h"
 #include "string.h"
+#include "sysctl.h"
+#include "unistd.h"
 
 /* shell_var API — declared in shell.h, implemented in shell_vars.c */
 extern int      shell_var_count(void);
@@ -82,10 +84,24 @@ int shell_var_unset(const char *name) {
 
 /* ── env command: list all exported environment variables ──────── */
 void cmd_env(void) {
+    /* Always-present process/environment context the shell is aware of.
+     * libc_getpid() and sysctl_get_hostname() are module-safe accessors. */
+    uint64_t pid = libc_getpid();
+    const char *host = sysctl_get_hostname();
+    if (!host || !*host)
+        host = "os";
+
+    uint8_t ip[4] = {0, 0, 0, 0};
+    libc_net_get_ip(ip);
+
+    kprintf("PID=%llu\n", (unsigned long long)pid);
+    kprintf("HOSTNAME=%s\n", host);
+    kprintf("IP=%u.%u.%u.%u\n", ip[0], ip[1], ip[2], ip[3]);
+
     int count = shell_var_count();
 
     if (count == 0) {
-        kprintf("(no environment variables set)\n");
+        kprintf("(no shell variables set)\n");
         return;
     }
 

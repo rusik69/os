@@ -8,7 +8,7 @@
 
 void cmd_find(const char *args) {
     if (!args || !args[0]) {
-        kprintf("Usage: find <pattern> [-exec <command> {} \\;]\n");
+        kprintf("Usage: find <pattern> [-exec <command> {} ;]\n");
         kprintf("  pattern   Glob pattern to match file names\n");
         kprintf("  -exec     Execute a command for each matched file,\n");
         kprintf("            replacing {} with the file path\n");
@@ -18,12 +18,6 @@ void cmd_find(const char *args) {
     char arg_copy[512];
     strncpy(arg_copy, args, 511);
     arg_copy[511] = '\0';
-
-    /* Parse: pattern [ -exec command {} \; ] */
-    char pattern[64];
-    char exec_cmd[64] = {0};
-    char exec_args[256] = {0};
-    int has_exec = 0;
 
     /* Use strtok to parse tokens */
     char *tokens[16];
@@ -36,31 +30,27 @@ void cmd_find(const char *args) {
 
     if (ntokens == 0) return;
 
-    /* First token is the pattern */
-    strncpy(pattern, tokens[0], 63);
-    pattern[63] = '\0';
+    /* Parse -exec <command> [args...] {} ... ; (if present) */
+    char exec_cmd[64] = {0};
+    char exec_args[256] = {0};
+    int has_exec = 0;
 
-    /* Look for -exec in remaining tokens */
     int exec_pos = -1;
-    for (int i = 1; i < ntokens; i++) {
+    for (int i = 0; i < ntokens; i++) {
         if (strcmp(tokens[i], "-exec") == 0) {
             exec_pos = i;
             break;
         }
     }
 
-    if (exec_pos > 0) {
+    if (exec_pos >= 0) {
         has_exec = 1;
-        /* Collect command and args up to \; */
-        int ci = 0;
-        int ai = 0;
-        int found_semicolon = 0;
-        /* First token after -exec is the command name */
         if (exec_pos + 1 < ntokens) {
             strncpy(exec_cmd, tokens[exec_pos + 1], 63);
             exec_cmd[63] = '\0';
-            ci = exec_pos + 2;
-            /* Collect remaining args until \; */
+            int ci = exec_pos + 2;
+            int ai = 0;
+            int found_semicolon = 0;
             while (ci < ntokens) {
                 if (strcmp(tokens[ci], ";") == 0 ||
                     (tokens[ci][0] == '\\' && tokens[ci][1] == ';')) {
@@ -68,9 +58,8 @@ void cmd_find(const char *args) {
                     ci++;
                     break;
                 }
-                /* Add separator */
-                if (ai > 0 && ai < 255) exec_args[ai++] = ' ';
-                /* Copy token */
+                if (ai > 0 && ai < 255)
+                    exec_args[ai++] = ' ';
                 for (int k = 0; tokens[ci][k] && ai < 255; k++)
                     exec_args[ai++] = tokens[ci][k];
                 ci++;
@@ -85,51 +74,56 @@ void cmd_find(const char *args) {
         }
     }
 
-    /* List all files and match using fnmatch */
+    /* List all files once and match against every pattern token.
+     * The shell glob-expands the command line (e.g. `find find*` becomes
+     * `find findme1 findme2`), so treat every non -exec token as a pattern
+     * (stop at -exec). */
     char names[128][FS_MAX_NAME];
     int n = fs_list_names("/", 0, names, 128);
 
     int found = 0;
     for (int i = 0; i < n; i++) {
-        if (fnmatch(pattern, names[i], 0) == 0) {
-            kprintf("  /%s\n", names[i]);
-            found++;
-
-            if (has_exec) {
-                /* Build command args with {} substitution */
-                char cmdline[256];
-                strncpy(cmdline, exec_cmd, sizeof(cmdline) - 1);
-                cmdline[sizeof(cmdline) - 1] = '\0';
-
-                /* If exec_args contains {}, substitute with path.
-                 * We need to do the substitution in the args string since
-                 * libc_shell_exec_cmd takes (cmd, args). */
-                char subst_args[256];
-                int sai = 0;
-                int in_subst = 0;
-
-                /* Build the args with {} replaced by the file path */
-                for (int k = 0; exec_args[k] && sai < 254; k++) {
-                    if (exec_args[k] == '{' && exec_args[k+1] == '}') {
-                        /* Substitute file path */
-                        char path_buf[64];
-                        path_buf[0] = '/';
-                        strncpy(path_buf + 1, names[i], 62);
-                        path_buf[63] = '\0';
-                        int plen = strlen(path_buf);
-                        int pc = 0;
-                        while (pc < plen && sai < 254)
-                            subst_args[sai++] = path_buf[pc++];
-                        k++; /* skip the '}' */
-                    } else {
-                        subst_args[sai++] = exec_args[k];
-                    }
-                }
-                subst_args[sai] = '\0';
-
-                libc_shell_exec_cmd(cmdline, subst_args);
+        int matched = 0;
+        for (int pi = 0; pi < ntokens && pi != exec_pos; pi++) {
+            if (fnmatch(tokens[pi], names[i], 0) == 0) {
+                matched = 1;
+                break;
             }
         }
+        if (!matched)
+            continue;
+
+        kprintf("  /%s\n", names[i]);
+        found++;
+
+        if (has_exec) {
+            /* Build command args with {} substitution */
+            char cmdline[256];
+            strncpy(cmdline, exec_cmd, sizeof(cmdline) - 1);
+            cmdline[sizeof(cmdline) - 1] = '\0';
+
+            char subst_args[256];
+            int sai = 0;
+            for (int k = 0; exec_args[k] && sai < 254; k++) {
+                if (exec_args[k] == '{' && exec_args[k + 1] == '}') {
+                    char path_buf[64];
+                    path_buf[0] = '/';
+                    strncpy(path_buf + 1, names[i], 62);
+                    path_buf[63] = '\0';
+                    int plen = strlen(path_buf);
+                    int pc = 0;
+                    while (pc < plen && sai < 254)
+                        subst_args[sai++] = path_buf[pc++];
+                    k++; /* skip the '}' */
+                } else {
+                    subst_args[sai++] = exec_args[k];
+                }
+            }
+            subst_args[sai] = '\0';
+
+            libc_shell_exec_cmd(cmdline, subst_args);
+        }
     }
-    if (!found) kprintf("No files matching '%s'\n", pattern);
+    if (!found)
+        kprintf("No files matching pattern\n");
 }

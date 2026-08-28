@@ -659,7 +659,7 @@ def test_env(t: Telnet):
     r = t.send_cmd("env")
     check("env — PID", r, "PID=")
     check("env — IP", r, "IP=")
-    check("env — HOSTNAME", r, "HOSTNAME=os-kernel")
+    check("env — HOSTNAME", r, "HOSTNAME=os")
 
 
 def test_xxd(t: Telnet):
