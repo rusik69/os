@@ -4,6 +4,9 @@
 /* Run a command so its output goes directly to the terminal (no capture). */
 void shell_exec_cmd(const char *cmd, const char *args);
 
+/* Print the user table (formatted in kernel space). */
+void users_list_print(void);
+
 /* Original commands (shell_cmds.c) */
 void cmd_help(void);
 void cmd_echo(const char *args);

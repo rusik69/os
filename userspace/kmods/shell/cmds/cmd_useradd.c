@@ -55,16 +55,7 @@ void cmd_useradd(const char *args) {
         kprintf("useradd: failed (%d)\n", -rc);
 }
 
-/* users - list all users */
+/* users - list all users (formatted in kernel space; see users_list_print) */
 void cmd_users(void) {
-    kprintf("UID   GID   USERNAME         HOME\n");
-    struct user_entry *tbl = users_get_table();
-    for (int i = 0; i < USER_MAX_ENTRIES; i++) {
-        if (!tbl[i].active) continue;
-        kprintf("%-5llu %-5llu %-16s %s\n",
-                (unsigned long long)tbl[i].uid,
-                (unsigned long long)tbl[i].gid,
-                tbl[i].username,
-                tbl[i].home);
-    }
+    users_list_print();
 }

@@ -1025,3 +1025,21 @@ static const char *user_getlogin(void)
         return name;
     return "root";
 }
+
+/* ── users_list_print ─────────────────────────────────── */
+/* Print the active user table from kernel space (correct struct layout).
+ * The shell module runs in ring-0 and must not interpret struct user_entry
+ * itself (the module's struct layout can differ from the kernel's), so the
+ * formatting is done here. */
+void users_list_print(void)
+{
+    struct user_entry *tbl = users_get_table();
+    kprintf("UID   GID   USERNAME         HOME\n");
+    for (int i = 0; i < USER_MAX_ENTRIES; i++) {
+        if (tbl[i].active) {
+            kprintf("%-5u %-5u %-15s %-15s\n",
+                    (unsigned)tbl[i].uid, (unsigned)tbl[i].gid,
+                    tbl[i].username, tbl[i].home);
+        }
+    }
+}
