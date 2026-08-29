@@ -75,10 +75,15 @@
  */
 
 #include "stdarg.h"
-#include "stdio.h"
-#include "stdlib.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
 #include "string.h"
 #include "unistd.h"
+
+#ifndef CLOCK_MONOTONIC
+#define CLOCK_MONOTONIC 1
+#endif
 
 /* Exit status decoding macros (Linux-compatible encoding) */
 #define WIFEXITED(s) (((s) & 0x7f) == 0)
@@ -155,6 +160,121 @@ static int sh_setenv(const char *var, const char *val) {
     sh_env[sh_env_count++] = new_entry;
     sh_env[sh_env_count] = 0;
     return 0;
+}
+
+/* ── Shell arrays ───────────────────────────────────────────── */
+#define MAX_ARRAYS 16
+#define MAX_ARRAY_ELEMS 64
+#define MAX_ARRAY_ELEM_LEN 128
+struct shell_array {
+    char name[32];
+    char elems[MAX_ARRAY_ELEMS][MAX_ARRAY_ELEM_LEN];
+    int count;
+};
+static struct shell_array shell_arrays[MAX_ARRAYS];
+
+static struct shell_array *array_find(const char *name) {
+    for (int i = 0; i < MAX_ARRAYS; i++)
+        if (shell_arrays[i].name[0] && strcmp(shell_arrays[i].name, name) == 0)
+            return &shell_arrays[i];
+    return 0;
+}
+static struct shell_array *array_get_or_create(const char *name) {
+    struct shell_array *a = array_find(name);
+    if (a) return a;
+    for (int i = 0; i < MAX_ARRAYS; i++) {
+        if (!shell_arrays[i].name[0]) {
+            strncpy(shell_arrays[i].name, name, 31);
+            shell_arrays[i].name[31] = '\0';
+            shell_arrays[i].count = 0;
+            return &shell_arrays[i];
+        }
+    }
+    return 0;
+}
+
+/* Parse "NAME=(e1 e2 e3)" assignment. Returns 1 if handled. */
+static int sh_try_array_assign(char *line) {
+    /* Find '=(' */
+    char *eq = line;
+    while (*eq && *eq != '=') eq++;
+    if (*eq != '=') return 0;
+    if (eq[1] != '(') return 0;
+    /* name is before '=' */
+    char *name = line;
+    if (name == eq) return 0;
+    *eq = '\0';
+    char *n = name;
+    while (n < eq && (*n == ' ' || *n == '\t')) n++;
+    if (!*n) { *eq = '='; return 0; }
+    struct shell_array *a = array_get_or_create(n);
+    if (!a) { *eq = '='; return 0; }
+    a->count = 0;
+    char *p = eq + 2; /* after '=(' */
+    /* find closing ')' */
+    char *close = p;
+    while (*close && *close != ')') close++;
+    if (*close == ')') *close = '\0';
+    /* tokenize p by whitespace */
+    while (*p) {
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+        char *elem = p;
+        while (*p && *p != ' ' && *p != '\t') p++;
+        if (*p) *p++ = '\0';
+        if (a->count < MAX_ARRAY_ELEMS) {
+            strncpy(a->elems[a->count], elem, MAX_ARRAY_ELEM_LEN - 1);
+            a->elems[a->count][MAX_ARRAY_ELEM_LEN - 1] = '\0';
+            a->count++;
+        }
+    }
+    return 1;
+}
+
+/* Expand ${#NAME[@]} -> element count and ${NAME[i]} -> element i
+ * Returns a malloc'd string (caller frees) or 0. */
+static char *expand_array(const char *expr) {
+    /* expr is the part inside ${...} e.g. "#fruits[@]" or "fruits[1]" */
+    if (expr[0] == '#') {
+        const char *n = expr + 1;
+        /* strip "[@]" or "[*]" */
+        char name[32];
+        int i = 0;
+        while (*n && *n != '[' && i < 31) name[i++] = *n++;
+        name[i] = '\0';
+        struct shell_array *a = array_find(name);
+        if (!a) return 0;
+        printf("[DBG # name=%s count=%d]\n", name, a->count);
+        char *out = malloc(16);
+        if (!out) return 0;
+        int k = 0;
+        if (a->count == 0) out[k++] = '0';
+        else {
+            int c = a->count;
+            char rev[16]; int r = 0;
+            while (c > 0) { rev[r++] = (char)('0' + (c % 10)); c /= 10; }
+            while (r > 0) out[k++] = rev[--r];
+        }
+        out[k] = '\0';
+        return out;
+    } else {
+        /* NAME[i] */
+        char name[32]; int i = 0;
+        const char *n = expr;
+        while (*n && *n != '[' && i < 31) name[i++] = *n++;
+        name[i] = '\0';
+        if (*n != '[') return 0;
+        n++;
+        int idx = 0;
+        while (*n >= '0' && *n <= '9') idx = idx * 10 + (*n - '0');
+        struct shell_array *a = array_find(name);
+        if (!a || idx < 0 || idx >= a->count) return 0;
+        char *out = malloc(MAX_ARRAY_ELEM_LEN);
+        if (!out) return 0;
+        strncpy(out, a->elems[idx], MAX_ARRAY_ELEM_LEN - 1);
+        out[MAX_ARRAY_ELEM_LEN - 1] = '\0';
+        return out;
+    }
 }
 
 /* ── Pipe segment descriptors ─────────────────────────────────── */
@@ -393,15 +513,33 @@ int sh_getline(char *buf, int max) {
     return i;
 }
 
+/* Output redirect target (set by sh_parse when it sees '> file'). */
+static char g_redirect[PATH_MAX];
+
 /* ── Command parser ───────────────────────────────────────────── */
 int sh_parse(char *line, char **argv, int max) {
     int argc = 0;
     char *p = line;
+    g_redirect[0] = '\0';
     while (*p && argc < max - 1) {
-        while (*p == ' ' || *p == '\t')
+        while (*p == ' ' || *p == '\t') {
             *p++ = '\0';
+            if (!*p) break;
+        }
         if (*p == '\0')
             break;
+        /* Output redirection: '> file' */
+        if (*p == '>' && argc > 0) {
+            *p++ = '\0';
+            while (*p == ' ' || *p == '\t') p++;
+            if (*p) {
+                strncpy(g_redirect, p, PATH_MAX - 1);
+                g_redirect[PATH_MAX - 1] = '\0';
+                /* consume rest of line as the filename */
+                break;
+            }
+            continue;
+        }
         argv[argc++] = p;
         while (*p && *p != ' ' && *p != '\t')
             p++;
@@ -410,7 +548,7 @@ int sh_parse(char *line, char **argv, int max) {
     return argc;
 }
 
-/* ── Variable expansion (currently just $?) ──────────────────── */
+/* ── Variable expansion (currently $? and ${array[@]} / ${array[i]}) ── */
 static void sh_expand_line(char *line, int max) {
     char tmp[MAX_LINE];
     int i = 0, j = 0;
@@ -437,6 +575,28 @@ static void sh_expand_line(char *line, int max) {
             while (buf[n] && j < max - 1)
                 tmp[j++] = buf[n++];
             i += 2;
+        } else if (line[i] == '$' && line[i + 1] == '{') {
+            /* ${...} expression */
+            int end = i + 2;
+            while (line[end] && line[end] != '}')
+                end++;
+            if (line[end] == '}') {
+                char expr[64];
+                int el = 0;
+                for (int e = i + 2; e < end && el < 63; e++)
+                    expr[el++] = line[e];
+                expr[el] = '\0';
+                char *val = expand_array(expr);
+                if (val) {
+                    int v = 0;
+                    while (val[v] && j < max - 1)
+                        tmp[j++] = val[v++];
+                    free(val);
+                }
+                i = end + 1;
+            } else {
+                tmp[j++] = line[i++];
+            }
         } else {
             tmp[j++] = line[i++];
         }
@@ -522,7 +682,7 @@ static int cmd_which(char **argv) {
 
     /* Check built-ins */
     static const char *builtins[] = {"cd",     "pwd",   "exit", "help", "echo",   "clear", "exec",
-                                     "export", "which", "ps",   "free", "uptime", "uname", 0};
+                                     "export", "which", "ps",   "free", "uptime", "uname", "time", 0};
     for (int i = 0; builtins[i]; i++) {
         if (strcmp(name, builtins[i]) == 0) {
             printf("%s: shell built-in\n", name);
@@ -583,7 +743,7 @@ static int cmd_ps(void) {
         printf("ps: no entries\n");
         return 1;
     }
-    printf("  PID NAME\n");
+    printf("  PID  PRI NAME\n");
     int pos = 0;
     while (pos < n) {
         struct dirent *d = (struct dirent *)(buf + pos);
@@ -597,6 +757,30 @@ static int cmd_ps(void) {
             p++;
         }
         if (is_num) {
+            /* Read priority (nice) from /proc/<pid>/stat (last field) */
+            int prio = 0;
+            char statpath[64];
+            snprintf(statpath, 64, "/proc/%s/stat", d->d_name);
+            int sfd = open(statpath, O_RDONLY, 0);
+            if (sfd >= 0) {
+                char sbuf[128];
+                int sr = read(sfd, sbuf, sizeof(sbuf) - 1);
+                close(sfd);
+                if (sr > 0) {
+                    sbuf[sr] = '\0';
+                    /* stat format: "PID (comm) STATE NICE" — take last token */
+                    char *sp = sbuf;
+                    char *last = sbuf;
+                    while (*sp) {
+                        if (*sp != ' ' && *sp != '\n') last = sp;
+                        sp++;
+                    }
+                    /* back up to start of last token */
+                    while (last > sbuf && last[-1] != ' ') last--;
+                    prio = atoi(last);
+                }
+            }
+
             char procpath[64];
             snprintf(procpath, 64, "/proc/%s/cmdline", d->d_name);
             int pfd = open(procpath, O_RDONLY, 0);
@@ -609,12 +793,12 @@ static int cmd_ps(void) {
                     for (int i = 0; i < r; i++)
                         if (cmdline[i] == '\0')
                             cmdline[i] = ' ';
-                    printf("%5s %s\n", d->d_name, cmdline);
+                    printf("%5s %4d %s\n", d->d_name, prio, cmdline);
                 } else {
-                    printf("%5s\n", d->d_name);
+                    printf("%5s %4d %s\n", d->d_name, prio, d->d_name);
                 }
             } else {
-                printf("%5s\n", d->d_name);
+                printf("%5s %4d %s\n", d->d_name, prio, d->d_name);
             }
         }
         pos += d->d_reclen;
@@ -700,7 +884,38 @@ static int cmd_uname(int argc, char **argv) {
     return 0;
 }
 
-/* ── Built-in: help ───────────────────────────────────────────── */
+/* ── Built-in: time ──────────────────────────────────────────── */
+static int cmd_time(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: time <command> [args...]\n");
+        return 1;
+    }
+    struct timespec ts_start, ts_end;
+    clock_gettime(CLOCK_MONOTONIC, &ts_start);
+    /* Run the command as an external process so its output reaches the
+     * terminal (libc_shell_exec_cmd would otherwise capture it). */
+    int pid = sh_exec_ext(argv + 1);
+    if (pid > 0) {
+        int status = 0;
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status))
+            last_exit_code = WEXITSTATUS(status);
+        else if (WIFSIGNALED(status))
+            last_exit_code = 128 + WTERMSIG(status);
+        else
+            last_exit_code = 0;
+    } else {
+        printf("time: command not found: %s\n", argv[1]);
+        last_exit_code = 127;
+        return 127;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &ts_end);
+    long long sec = ts_end.tv_sec - ts_start.tv_sec;
+    long long ms = (ts_end.tv_nsec - ts_start.tv_nsec) / 1000000;
+    if (ms < 0) { sec--; ms += 1000; }
+    printf("\nreal\t%lld.%03llds\n", sec, ms);
+    return last_exit_code;
+}
 static int cmd_help(void) {
     printf("Shell built-in commands:\n");
     printf("  cd <path>        — Change directory\n");
@@ -716,6 +931,7 @@ static int cmd_help(void) {
     printf("  free             — Show memory usage\n");
     printf("  uptime           — Show system uptime\n");
     printf("  uname [-snrvma]  — Show system information\n");
+    printf("  time <cmd>       — Time the execution of a command\n");
     printf("  For unknown commands, fork+execve in PATH (/bin)\n");
     return 0;
 }
@@ -816,6 +1032,10 @@ static int run_builtin(int argc, char **argv) {
         return cmd_uname(argc, argv);
     }
 
+    if (strcmp(cmd, "time") == 0) {
+        return cmd_time(argc, argv);
+    }
+
     /* Not a built-in */
     return -1;
 }
@@ -869,7 +1089,11 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        /* Expand $? before parsing */
+        /* Array assignment: NAME=(e1 e2 ...) */
+        if (sh_try_array_assign(line))
+            continue;
+
+        /* Expand $? and ${array...} before parsing */
         sh_expand_line(line, MAX_LINE);
 
         /* Try pipe-segmented parsing first */
@@ -883,27 +1107,51 @@ int main(int argc, char *argv[]) {
             if (ac == 0)
                 continue;
 
+            /* Handle output redirection for built-ins */
+            int saved_stdout = -1;
+            if (g_redirect[0]) {
+                saved_stdout = dup(1);
+                int rfd = open(g_redirect, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (rfd >= 0) {
+                    dup2(rfd, 1);
+                    close(rfd);
+                } else {
+                    /* Redirect failed — restore and warn */
+                    if (saved_stdout >= 0) {
+                        dup2(saved_stdout, 1);
+                        close(saved_stdout);
+                        saved_stdout = -1;
+                    }
+                    printf("sh: %s: cannot create\n", g_redirect);
+                }
+            }
+
             /* Check built-ins */
             int r = run_builtin(ac, argv_buf);
             if (r >= 0) {
                 last_exit_code = r;
-                continue;
+            } else {
+                /* External command */
+                int pid = sh_exec_ext(argv_buf);
+                if (pid > 0) {
+                    int status = 0;
+                    waitpid(pid, &status, 0);
+                    if (WIFEXITED(status))
+                        last_exit_code = WEXITSTATUS(status);
+                    else if (WIFSIGNALED(status))
+                        last_exit_code = 128 + WTERMSIG(status);
+                    else
+                        last_exit_code = 0;
+                } else {
+                    printf("sh: %s: not found\n", argv_buf[0]);
+                    last_exit_code = 127;
+                }
             }
 
-            /* External command */
-            int pid = sh_exec_ext(argv_buf);
-            if (pid > 0) {
-                int status = 0;
-                waitpid(pid, &status, 0);
-                if (WIFEXITED(status))
-                    last_exit_code = WEXITSTATUS(status);
-                else if (WIFSIGNALED(status))
-                    last_exit_code = 128 + WTERMSIG(status);
-                else
-                    last_exit_code = 0;
-            } else {
-                printf("sh: %s: not found\n", argv_buf[0]);
-                last_exit_code = 127;
+            /* Restore stdout after redirection */
+            if (saved_stdout >= 0) {
+                dup2(saved_stdout, 1);
+                close(saved_stdout);
             }
         } else {
             /* Pipe chain — use pipeline execution */

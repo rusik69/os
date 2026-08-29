@@ -725,6 +725,18 @@ void users_init(void) {
         shadow_file_write();
     }
 
+    /* Always guarantee the default accounts exist (idempotent). A persisted
+     * /etc/passwd from an earlier boot may have omitted guest, so re-add it
+     * if missing. user_add tolerates a missing home directory at boot. */
+    int has_root = 0, has_guest = 0;
+    for (int i = 0; i < user_count; i++) {
+        if (!user_table[i].active) continue;
+        if (strcmp(user_table[i].username, "root") == 0)  has_root = 1;
+        if (strcmp(user_table[i].username, "guest") == 0) has_guest = 1;
+    }
+    if (!has_root)  user_add("root",  0,    DEFAULT_ROOT_PASSWORD);
+    if (!has_guest) user_add("guest", 1000, DEFAULT_GUEST_PASSWORD);
+
     /* Initialize /etc/group */
     groups_init();
 }
@@ -871,8 +883,10 @@ int user_add(const char *username, uint32_t uid, const char *password) {
         user_table[i].active = 1;
         uint16_t home_mode = (uid == 0) ? 0700 : 0750;
         if (ensure_home_owned(user_table[i].home, (uint16_t)uid, (uint16_t)uid, home_mode) < 0) {
-            user_table[i].active = 0;
-            return -5;
+            /* Home directory creation may fail early at boot (FS not yet
+             * ready). Keep the account active; the home dir can be created
+             * lazily later. Non-fatal. */
+            kprintf("useradd: warning: could not create home for '%s'\n", username);
         }
         user_count++;
 

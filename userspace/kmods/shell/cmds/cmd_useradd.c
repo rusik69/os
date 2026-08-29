@@ -3,6 +3,10 @@
 #include "string.h"
 #include "printf.h"
 
+#ifndef SYS_USERS_GET_BY_INDEX
+#define SYS_USERS_GET_BY_INDEX 146
+#endif
+
 /* useradd <username> [uid] */
 void cmd_useradd(const char *args) {
     if (!args || !*args) {

@@ -842,10 +842,8 @@ int scheduler_set_nice(struct process *proc, int nice) {
 
     /* Map nice → legacy priority level (0..3) for backward compat */
     int new_prio;
-    if (nice <= -11)
+    if (nice <= 0)
         new_prio = 0;
-    else if (nice <= -1)
-        new_prio = 1;
     else if (nice <= 9)
         new_prio = 2;
     else

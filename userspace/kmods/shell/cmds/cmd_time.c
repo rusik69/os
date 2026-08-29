@@ -27,7 +27,7 @@ void cmd_time(const char *args) {
     }
 
     uint64_t start = libc_uptime_ticks();
-    libc_shell_exec_cmd(cmdname, cmdargs);
+    shell_exec_cmd(cmdname, cmdargs);
     uint64_t end = libc_uptime_ticks();
 
     uint64_t elapsed_ms = (end - start) * 1000 / TIMER_FREQ;

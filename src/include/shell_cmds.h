@@ -1,6 +1,9 @@
 #ifndef SHELL_CMDS_H
 #define SHELL_CMDS_H
 
+/* Run a command so its output goes directly to the terminal (no capture). */
+void shell_exec_cmd(const char *cmd, const char *args);
+
 /* Original commands (shell_cmds.c) */
 void cmd_help(void);
 void cmd_echo(const char *args);

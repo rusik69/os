@@ -615,6 +615,13 @@ static void var_expand(const char *src, char *dst, int dst_max) {
                     while (*src && *src != ':' && *src != '}' && ani < SHELL_ARRAY_NAME_MAX - 1)
                         aname[ani++] = *src++;
                     aname[ani] = '\0';
+                    /* Strip a trailing array index suffix like [@] or [*] */
+                    for (int si = 0; si < ani; si++) {
+                        if (aname[si] == '[') {
+                            aname[si] = '\0';
+                            break;
+                        }
+                    }
                     while (*src && *src != '}')
                         src++;
                     if (*src == '}')

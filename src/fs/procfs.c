@@ -781,6 +781,34 @@ static int procfs_gen_pid_cmdline(uint32_t pid, char *buf, int max) {
     return pos;
 }
 
+/* /proc/<pid>/stat — minimal process stat (PID (comm) STATE NICE) */
+static int procfs_gen_pid_stat(uint32_t pid, char *buf, int max) {
+    struct process *p = process_get_by_pid(pid);
+    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
+
+    const char *state_str = "R";
+    switch (p->state) {
+        case PROCESS_BLOCKED: state_str = "S"; break;
+        case PROCESS_ZOMBIE:  state_str = "Z"; break;
+        case PROCESS_READY:
+        case PROCESS_RUNNING: state_str = "R"; break;
+        default: break;
+    }
+
+    int pos = 0;
+    proc_u64_to_str(p->pid, buf, &pos, max);
+    proc_str(" (", buf, &pos, max);
+    if (p->proc_comm[0]) proc_str(p->proc_comm, buf, &pos, max);
+    else if (p->name) proc_str(p->name, buf, &pos, max);
+    proc_str(") ", buf, &pos, max);
+    proc_str(state_str, buf, &pos, max);
+    proc_str(" ", buf, &pos, max);
+    /* NICE value (priority for scheduling) */
+    proc_u64_to_str((uint64_t)(int64_t)p->nice, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    return pos;
+}
+
 /* /proc/<pid>/environ — environment variables */
 static int procfs_gen_pid_environ(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
@@ -1365,6 +1393,9 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
             if (len < 0) return -EINVAL;
         } else if (got && strcmp(p, "/cmdline") == 0) {
             len = procfs_gen_pid_cmdline(pid, buf, (int)max_size);
+            if (len < 0) return -EINVAL;
+        } else if (got && strcmp(p, "/stat") == 0) {
+            len = procfs_gen_pid_stat(pid, buf, (int)max_size);
             if (len < 0) return -EINVAL;
         } else if (got && strcmp(p, "/environ") == 0) {
             len = procfs_gen_pid_environ(pid, buf, (int)max_size);

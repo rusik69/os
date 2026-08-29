@@ -1,81 +1,59 @@
-/* users.c — print login names of users from /etc/passwd */
+/* users.c — list user accounts from the kernel user table.
+ *
+ * Uses the value-returning SYS_USERS_GET_BY_INDEX syscall so it works from
+ * ring-3 (the kernel user table pointer is not directly accessible).
+ */
 #include "unistd.h"
 #include "stdio.h"
 #include "string.h"
+#include "stdlib.h"
+#include <stdint.h>
 
-int main(void){
-    int fd=open("/etc/passwd",O_RDONLY,0);
-    if(fd<0){
-        /* Fallback: check /proc for running processes */
-        fd=open("/proc",O_RDONLY,0);
-        if(fd>=0){
-            char buf[4096];
-            int n=getdents64(fd,buf,sizeof(buf));
-            close(fd);
-            if(n>0){
-                int printed=0;
-                unsigned long off=0;
-                while(off<(unsigned long)n){
-                    struct dirent *de=(struct dirent*)(buf+off);
-                    if(de->d_name[0]>='0'&&de->d_name[0]<='9'){
-                        char path[64];
-                        snprintf(path,sizeof(path),"/proc/%s/status",de->d_name);
-                        int sfd=open(path,O_RDONLY,0);
-                        if(sfd>=0){
-                            char sbuf[512];
-                            int sn=read(sfd,sbuf,sizeof(sbuf)-1);
-                            close(sfd);
-                            if(sn>0){
-                                sbuf[sn]=0;
-                                char*line=strstr(sbuf,"Uid:");
-                                if(line){
-                                    /* Skip "Uid:" and print uid */
-                                    line+=4;
-                                    while(*line==' ') line++;
-                                    char*end=line;
-                                    while(*end&&*end!='\t'&&*end!='\n'&&*end!=' ') end++;
-                                    char saved=*end;*end=0;
-                                    if(strcmp(line,"0")==0){
-                                        if(!printed){
-                                            printf("root\n");
-                                            printed=1;
-                                        }
-                                    }
-                                    *end=saved;
-                                }
-                            }
-                        }
-                    }
-                    off+=de->d_reclen;
-                }
-                if(!printed) printf("root\n");
-                return 0;
-            }
-        }
-        printf("root\n");
-        return 0;
+#ifndef SYS_USERS_GET_BY_INDEX
+#define SYS_USERS_GET_BY_INDEX 146
+#endif
+#ifndef USER_MAX_NAME
+#define USER_MAX_NAME 32
+#endif
+
+struct users_user_entry {
+    uint32_t uid;
+    uint32_t gid;
+    char username[USER_MAX_NAME];
+    char home[128];
+    uint8_t active;
+    uint8_t reserved[3];
+};
+
+/* Raw syscall (SYS_USERS_GET_BY_INDEX, idx, &entry) -> 0 ok, -1 end */
+static long sys_users_get_by_index(int idx, struct users_user_entry *e) {
+    long ret;
+    (void)e; /* referenced in asm below */
+    __asm__ volatile(
+        "syscall"
+        : "=a"(ret)
+        : "a"((long)SYS_USERS_GET_BY_INDEX),
+          "D"((long)idx),
+          "S"((long)(unsigned long)e)
+        : "rcx", "r11", "memory");
+    return ret;
+}
+
+int main(void) {
+    printf("UID   GID   USERNAME         HOME\n");
+
+    int found = 0;
+    for (int i = 0; i < 64; i++) {
+        struct users_user_entry e;
+        memset(&e, 0, sizeof(e));
+        long rc = sys_users_get_by_index(i, &e);
+        if (rc < 0)
+            continue; /* no such index */
+        if (!e.active || e.username[0] == '\0')
+            continue;
+        printf("%-5u %-5u %-16s %s\n", e.uid, e.gid, e.username, e.home);
+        found++;
     }
-
-    char buf[4096];
-    int n=read(fd,buf,sizeof(buf)-1);
-    close(fd);
-    if(n<=0){printf("root\n");return 0;}
-    buf[n]=0;
-
-    /* Parse /etc/passwd, extract usernames */
-    char *line=buf;
-    while(line&&*line){
-        char*next=strchr(line,'\n');
-        if(next) *next=0;
-        /* Format: username:password:uid:gid:... */
-        char*colon=strchr(line,':');
-        if(colon){
-            *colon=0;
-            write(1,line,strlen(line));
-            write(1,"\n",1);
-        }
-        if(next){*next='\n';line=next+1;}
-        else break;
-    }
+    (void)found;
     return 0;
 }

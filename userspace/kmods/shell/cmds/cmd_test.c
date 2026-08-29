@@ -70,34 +70,37 @@ static int file_test(const char *flag, const char *path) {
         full_path[sizeof(full_path) - 1] = '\0';
     }
 
-    struct vfs_stat st;
-    int exists = (vfs_stat(full_path, &st) == 0);
+    uint32_t size = 0;
+    uint8_t type = 0;
+    uint16_t uid = 0, gid = 0, mode = 0;
+    /* fs_stat_ex is the kernel-direct stat (works from the shell module). */
+    int exists = (fs_stat_ex(full_path, &size, &type, &uid, &gid, &mode) == 0);
 
     switch (flag[0]) {
     case 'e': /* -e: exists (any type) */
         return exists;
 
     case 'f': /* -f: regular file */
-        return exists && (st.type == FS_TYPE_FILE);
+        return exists && (type == FS_TYPE_FILE);
 
     case 'd': /* -d: directory */
-        return exists && (st.type == FS_TYPE_DIR);
+        return exists && (type == FS_TYPE_DIR);
 
     case 's': /* -s: non-empty file */
-        return exists && (st.size > 0);
+        return exists && (type == FS_TYPE_FILE) && (size > 0);
 
     case 'x': /* -x: executable (has execute bit set) */
-        return exists && (st.mode & 0111);
+        return exists && (mode & 0111);
 
     case 'w': /* -w: writable (has write bit set) */
-        return exists && (st.mode & 0222);
+        return exists && (mode & 0222);
 
     case 'r': /* -r: readable (has read bit set) */
-        return exists && (st.mode & 0444);
+        return exists && (mode & 0444);
 
     case 'L': /* -L: symbolic link */
     case 'h': /* -h: symbolic link (alias) */
-        return exists && (st.type == FS_TYPE_LINK);
+        return exists && (type == FS_TYPE_LINK);
 
     default:
         return 0;
