@@ -294,6 +294,22 @@ void cmd_diff(const char *args)
         return;
     }
 
+    /* Detect byte-identical content and report it directly (matches the
+     * e2e expectation of the literal word "identical"). */
+    if (n1 == n2) {
+        int identical = 1;
+        for (int li = 0; li < n1; li++) {
+            if (strcmp(file1[li], file2[li]) != 0) {
+                identical = 0;
+                break;
+            }
+        }
+        if (identical) {
+            kprintf("identical\n");
+            return;
+        }
+    }
+
     /* Dispatch to chosen output format */
     switch (mode) {
     case 's':

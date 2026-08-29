@@ -311,5 +311,9 @@ void cmd_test(const char *args) {
 
     if (invert) result = !result;
 
+    /* Print the boolean result (the e2e/diagnostic contract expects the
+     * command to echo true/false; exit status still reflects POSIX result). */
+    kprintf("%s\n", result ? "true" : "false");
+
     shell_set_exit_status(result ? 0 : 1);
 }

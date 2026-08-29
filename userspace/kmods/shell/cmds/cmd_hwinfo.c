@@ -1,31 +1,38 @@
 #include "shell.h"
 #include "shell_cmds.h"
+#include "libc.h"
 #include "printf.h"
+#include "string.h"
 
-/* libc_pmm_get_stats and libc_pci_list are provided by the kernel's libc
- * syscall interface (declared in libc.h, but we avoid including that here
- * because libc.h has conflicting static-inline definitions for shell
- * functions already declared in shell.h). */
-struct libc_pmm_stats {
-    uint32_t total_pages;
-    uint32_t used_pages;
-    uint32_t free_pages;
-};
-extern int libc_pmm_get_stats(struct libc_pmm_stats *out);
-extern void libc_pci_list(void);
+/* Read the CPU vendor string via CPUID leaf 0 (ebx:edx:ecx). */
+static void cpu_vendor(char *out, int n) {
+    uint32_t ebx = 0, ecx = 0, edx = 0;
+    out[0] = '\0';
+    __asm__ volatile("cpuid"
+                     : "=b"(ebx), "=c"(ecx), "=d"(edx)
+                     : "a"(0));
+    int i = 0;
+    unsigned char *p = (unsigned char *)&ebx;
+    for (int k = 0; k < 4 && i < n - 1; k++) out[i++] = (char)p[k];
+    p = (unsigned char *)&edx;
+    for (int k = 0; k < 4 && i < n - 1; k++) out[i++] = (char)p[k];
+    p = (unsigned char *)&ecx;
+    for (int k = 0; k < 4 && i < n - 1; k++) out[i++] = (char)p[k];
+    out[i] = '\0';
+}
 
 void cmd_hwinfo(void) {
     struct libc_pmm_stats mem;
+    char vendor[16];
+    cpu_vendor(vendor, sizeof(vendor));
+
+    kprintf("=== Hardware Info ===\n");
+    kprintf("CPU vendor: %s\n", vendor[0] ? vendor : "unknown");
     if (libc_pmm_get_stats(&mem) == 0) {
-        kprintf("=== Hardware Info ===\n");
-        kprintf("CPU: x86_64\n");
         kprintf("Memory: %u MB total, %u MB used, %u MB free\n",
                 mem.total_pages * 4 / 1024,
                 mem.used_pages * 4 / 1024,
                 mem.free_pages * 4 / 1024);
-    } else {
-        kprintf("=== Hardware Info ===\n");
-        kprintf("CPU: x86_64\n");
     }
     kprintf("PCI devices:\n");
     libc_pci_list();

@@ -42,6 +42,12 @@ int main(int argc, char *argv[]) {
     for (char *p = f2; *p; p++) if (*p == '\n') { *p = '\0'; if (*(p+1)) l2[nl2++] = p+1; }
     int diff = 0;
     int max = nl1 > nl2 ? nl1 : nl2;
+    if (nl1 == nl2 && s1 == s2 && strcmp(f1, f2) == 0) {
+        printf("identical\n");
+        free(f1);
+        free(f2);
+        return 0;
+    }
     for (int i = 0; i < max; i++) {
         if (i >= nl1) {
             printf("%da%d\n> %s\n", i, i+1, l2[i]);

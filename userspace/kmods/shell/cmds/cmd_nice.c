@@ -47,5 +47,8 @@ void cmd_nice(const char *args) {
         libc_shell_exec_cmd(p, NULL);
         if (old_nice >= NICE_MIN && old_nice <= NICE_MAX)
             libc_setpriority(PRIO_PROCESS, 0, old_nice);
+    } else {
+        /* No command: report the resulting priority (e2e/diagnostic contract). */
+        kprintf("priority set to %d\n", nice);
     }
 }

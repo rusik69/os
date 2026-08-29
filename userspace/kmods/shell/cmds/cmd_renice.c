@@ -52,5 +52,5 @@ void cmd_renice(const char *args) {
         kprintf("renice: no such process: %lu\n", (unsigned long)pid);
         return;
     }
-    kprintf("%lu (nice %d)\n", (unsigned long)pid, nice_val);
+    kprintf("priority set to %d\n", nice_val);
 }

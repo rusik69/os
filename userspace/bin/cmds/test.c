@@ -15,10 +15,11 @@ int main(int argc,char*argv[]){
     if(argc==4&&strcmp(argv[2],"-gt")==0)return atoi(argv[1])<=atoi(argv[3]);
     if(argc==4&&strcmp(argv[2],"-ge")==0)return atoi(argv[1])<atoi(argv[3]);
     if(argc==3&&strcmp(argv[1],"-f")==0){
-        struct stat st;return stat(argv[2],&st)<0;
+        struct stat st;int r=stat(argv[2],&st)<0;printf("%s\n",r?"false":"true");return r;
     }
     if(argc==3&&strcmp(argv[1],"-d")==0){
-        struct stat st;return stat(argv[2],&st)<0||!(st.st_mode&040000);
+        struct stat st;int r=stat(argv[2],&st)<0||!(st.st_mode&040000);printf("%s\n",r?"false":"true");return r;
     }
+    printf("true\n");
     return 0;
 }

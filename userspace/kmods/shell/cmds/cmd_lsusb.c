@@ -11,7 +11,7 @@ void cmd_lsusb(void) {
     int devs = usb_get_device_count();
 
     if (!present || devs <= 0) {
-        kprintf("USB: no controllers or devices detected\n");
+        kprintf("No USB host controllers\n");
         return;
     }
 

@@ -72,5 +72,5 @@ void cmd_bg(const char *args)
         return;
     }
 
-    kprintf("[%u] resumed in background\n", pid);
+    kprintf("Continued\n");
 }
