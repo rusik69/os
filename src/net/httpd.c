@@ -123,8 +123,6 @@ static const char *content_type(const char *path) {
 /* --- HTTP date string --- */
 
 static char *http_date(char *buf) {
-    static volatile int initialized = 0;
-    if (!initialized) { rtc_init(); initialized = 1; }
     struct rtc_time t;
     rtc_get_time(&t);
 

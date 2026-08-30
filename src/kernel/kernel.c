@@ -1395,6 +1395,19 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         }
     }
 
+    /* Spawn the HTTP accept-loop thread.  httpd_start() registers port 80
+     * with no callbacks (accept-queue mode), so httpd_task() must run as
+     * its own kthread to pull connections off the queue via net_tcp_accept(). */
+    {
+        extern void httpd_task(void);
+        struct process *httpd = kthread_create((void (*)(void *))httpd_task, NULL, "httpd");
+        if (httpd) {
+            kprintf("[OK] httpd: accept-loop thread (PID %d)\n", (int)httpd->pid);
+        } else {
+            kprintf("[!!] httpd: failed to create accept-loop thread\n");
+        }
+    }
+
     /* Spawn userspace init via kernel-mode spawner */
     {
         extern int process_spawn_kernel(const char *path);
