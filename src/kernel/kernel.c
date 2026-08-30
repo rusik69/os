@@ -1402,6 +1402,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         extern void httpd_task(void);
         struct process *httpd = kthread_create((void (*)(void *))httpd_task, NULL, "httpd");
         if (httpd) {
+            /* Same wake-boost as netd: wins the runqueue against the
+             * userspace fork flood so it can accept/respond on time. */
+            httpd->sched_boost_on_wake = 1;
             kprintf("[OK] httpd: accept-loop thread (PID %d)\n", (int)httpd->pid);
         } else {
             kprintf("[!!] httpd: failed to create accept-loop thread\n");

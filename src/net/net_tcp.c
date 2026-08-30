@@ -544,11 +544,23 @@ static int alloc_conn(void) {
     /* NOTE: caller (handle_tcp) already holds tcp_lock — do NOT acquire
      * it here or we deadlock (non-recursive spinlock). */
     int ret = -1;
-    for (int i = 0; i < MAX_TCP_CONNS; i++)
+    int tw = -1;
+    for (int i = 0; i < MAX_TCP_CONNS; i++) {
         if (tcp_conns[i].state == TCP_CLOSED) {
             ret = i;
             break;
         }
+        /* Track a TIME_WAIT slot as a reuse candidate. */
+        if (tcp_conns[i].state == TCP_TIME_WAIT && tw < 0)
+            tw = i;
+    }
+    /* No free slot: reuse a TIME_WAIT one so a burst of short-lived
+     * connection-per-request connections (e.g. HTTP) doesn't exhaust the
+     * table for 2*MSL (60s).  The SYN path reinitialises every field it
+     * uses, so the stale state is harmless.  Distinct 4-tuples are safe
+     * to reuse; matching ones were already excluded by find_conn(). */
+    if (ret < 0)
+        ret = tw;
     return ret;
 }
 
