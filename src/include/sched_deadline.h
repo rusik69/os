@@ -57,6 +57,10 @@ uint64_t dl_bw(uint64_t runtime, uint64_t period);
  * (non-zero, runtime <= deadline <= period), -1 otherwise. */
 int sched_deadline_params_valid(const struct process *proc);
 
+/* Pure GRUB reclaim-bandwidth computation (unused ns -> fixed-point bw,
+ * clamped to 1.0 = DL_BW_UNIT).  Used by task_blocked/replenish. */
+uint64_t sched_dl_grub_reclaim_bw(uint64_t unused_ns, uint64_t dl_period);
+
 /* Initialise the per-CPU deadline runqueue for a CPU */
 void sched_deadline_init_cpu(int cpu);
 

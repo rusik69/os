@@ -95,6 +95,22 @@ int sched_deadline_params_valid(const struct process *proc) {
     return dl_params_valid(proc);
 }
 
+/* Pure GRUB reclaim-bandwidth computation: convert unused runtime (ns)
+ * in a period into fixed-point reclaimable bandwidth, clamped to 1.0
+ * (DL_BW_UNIT).  This is exactly the conversion used by both
+ * sched_deadline_task_blocked() and sched_deadline_replenish() when they
+ * harvest unused budget into the per-CPU reclaim pool.  Exposed for the
+ * kunit suite; does NOT touch the live deadline runqueue. */
+uint64_t sched_dl_grub_reclaim_bw(uint64_t unused_ns, uint64_t dl_period) {
+    if (dl_period == 0)
+        return 0;
+
+    uint64_t unused_bw = (unused_ns << DL_BW_SHIFT) / dl_period;
+    if (unused_bw > DL_BW_UNIT)
+        unused_bw = DL_BW_UNIT;
+    return unused_bw;
+}
+
 /* ── Admission control ───────────────────────────────────────────────── */
 
 /*
@@ -334,9 +350,7 @@ void sched_deadline_task_blocked(struct process *proc)
 
         /* Convert unused runtime (ns) to fixed-point bandwidth and add to
          * the per-CPU reclaim pool.  Clamp to prevent arithmetic overflow. */
-        uint64_t unused_bw = (unused_ns << DL_BW_SHIFT) / proc->dl_period;
-        if (unused_bw > DL_BW_UNIT)
-            unused_bw = DL_BW_UNIT;
+        uint64_t unused_bw = sched_dl_grub_reclaim_bw(unused_ns, proc->dl_period);
 
         uint32_t cpu_id = get_cpu_id();
         struct cpu_dl_rq *dl_rq = &cpu_dl_rq[cpu_id];
@@ -371,9 +385,7 @@ void sched_deadline_replenish(void)
          * just-completed period and add it to the GRUB reclaim pool. */
         if (proc->dl_consumed < proc->dl_runtime) {
             uint64_t unused_ns = proc->dl_runtime - proc->dl_consumed;
-            uint64_t unused_bw = (unused_ns << DL_BW_SHIFT) / proc->dl_period;
-            if (unused_bw > DL_BW_UNIT)
-                unused_bw = DL_BW_UNIT;
+            uint64_t unused_bw = sched_dl_grub_reclaim_bw(unused_ns, proc->dl_period);
 
             uint64_t max_reclaim = dl_rq->total_bw * 2;
             if (dl_rq->reclaimed_bw + unused_bw > max_reclaim)

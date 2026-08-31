@@ -855,6 +855,44 @@ static void sched_deadline_budget_test(struct kunit *test) {
 }
 
 /* ====================================================================
+ *  SCHED_DEADLINE GRUB reclaim (unused budget harvesting)
+ * ==================================================================== */
+
+/*
+ * GRUB reclaim: when a DL task blocks (or completes a period) before
+ * exhausting its runtime, the unused budget is converted to fixed-point
+ * bandwidth (clamped to 1.0 = DL_BW_UNIT) and added to the per-CPU
+ * reclaim pool, capped at 2*total_bw.  We verify the pure conversion
+ * sched_dl_grub_reclaim_bw() — used by both sched_deadline_task_blocked()
+ * and sched_deadline_replenish() — without touching the live pool.
+ */
+static void sched_deadline_grub_reclaim_test(struct kunit *test) {
+    /* Zero period -> no reclaimable bandwidth. */
+    KUNIT_EXPECT_EQ(test, sched_dl_grub_reclaim_bw(100, 0), (uint64_t)0);
+
+    /* Zero unused runtime -> nothing reclaimed. */
+    KUNIT_EXPECT_EQ(test, sched_dl_grub_reclaim_bw(0, 100), (uint64_t)0);
+
+    /* Unused == period -> a full period of bandwidth (1.0). */
+    KUNIT_EXPECT_EQ(test, sched_dl_grub_reclaim_bw(100, 100), DL_BW_UNIT);
+
+    /* Half a period unused -> half unit of reclaimable bandwidth. */
+    KUNIT_EXPECT_EQ(test, sched_dl_grub_reclaim_bw(50, 100), (uint64_t)(DL_BW_UNIT / 2));
+
+    /* Quarter period -> quarter unit. */
+    KUNIT_EXPECT_EQ(test, sched_dl_grub_reclaim_bw(25, 100), (uint64_t)(DL_BW_UNIT / 4));
+
+    /* More than a full period unused -> clamped to 1.0. */
+    KUNIT_EXPECT_EQ(test, sched_dl_grub_reclaim_bw(250, 100), DL_BW_UNIT);
+
+    /* Monotonic: more unused budget yields >= reclaimable bandwidth. */
+    KUNIT_EXPECT_TRUE(test, sched_dl_grub_reclaim_bw(80, 100) >= sched_dl_grub_reclaim_bw(40, 100));
+
+    /* Consistent with the CBS bandwidth formula (unused is a "runtime"). */
+    KUNIT_EXPECT_EQ(test, sched_dl_grub_reclaim_bw(30, 100), dl_bw(30, 100));
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -883,6 +921,7 @@ static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_fifo_priority_selection_test),
     KUNIT_CASE(sched_rr_timeslice_test),
     KUNIT_CASE(sched_deadline_budget_test),
+    KUNIT_CASE(sched_deadline_grub_reclaim_test),
     {0}};
 
 static struct kunit_suite sched_test_suite;
