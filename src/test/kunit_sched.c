@@ -1236,6 +1236,84 @@ static void sched_core_sibling_safety_test(struct kunit *test) {
 }
 
 /* ====================================================================
+ *  Stress: 1000-process wakeup storm (through the pure pick path)
+ * ==================================================================== */
+
+/*
+ * A live wakeup storm would call scheduler_wakeup() = scheduler_add(),
+ * which enqueues tasks onto the CPU's real runqueue and would corrupt it
+ * if fed synthetic processes from a kunit test.  Instead we stress the
+ * two pure primitives a wakeup storm actually drives — the EEVDF
+ * pick-order and the weighted-load sum — over 1000 synthetic tasks:
+ *   * sched_eevdf_pick_best() must return the true minimum-eligible-
+ *     deadline task over 1000 entries (cross-checked against a reference
+ *     linear scan)
+ *   * sched_balance_weighted_load() must sum all 1000 tasks' weights
+ *     exactly (cross-checked against an independent accumulation)
+ * This exercises the same arithmetic the scheduler uses on a real storm
+ * without mutating the live runqueue.
+ */
+static void sched_wakeup_storm_1000_test(struct kunit *test) {
+    enum { N = 1000 };
+    struct process *procs[N];
+    int got = 0;
+    for (int i = 0; i < N; i++) {
+        procs[i] = (struct process *)kmalloc(sizeof(struct process));
+        if (!procs[i])
+            break;
+        memset(procs[i], 0, sizeof(struct process));
+        /* Deterministic pseudo-random-ish EEVDF fields (don't need a PRNG:
+         * a simple linear pattern with a wrap gives varied deadlines). */
+        procs[i]->eevdf_deadline = (uint64_t)((i * 37u) % N) + 1;
+        procs[i]->eevdf_lag = (int64_t)((i % 7) - 3); /* -3..+3 */
+        procs[i]->sched_weight = (uint64_t)((i % 13) + 1);
+        got++;
+    }
+    KUNIT_EXPECT_EQ(test, (int64_t)got, (int64_t)N);
+    if (got != N) {
+        for (int i = 0; i < got; i++)
+            kfree(procs[i]);
+        return;
+    }
+
+    /* Cross-check: the pick primitive must match a reference min scan of
+     * the same eligible-deadline rule across all 1000 entries. */
+    struct process *picked = sched_eevdf_pick_best(procs, N);
+    struct process *ref = NULL;
+    uint64_t ref_key = ~0ULL;
+    for (int i = 0; i < N; i++) {
+        int64_t lag = procs[i]->eevdf_lag;
+        uint64_t key;
+        if (lag >= 0)
+            key = (uint64_t)lag >= procs[i]->eevdf_deadline
+                      ? 0
+                      : procs[i]->eevdf_deadline - (uint64_t)lag;
+        else
+            key = procs[i]->eevdf_deadline + (uint64_t)(-lag);
+        if (key < ref_key) {
+            ref_key = key;
+            ref = procs[i];
+        }
+    }
+    KUNIT_EXPECT_EQ(test, (uintptr_t)picked, (uintptr_t)ref);
+
+    /* Cross-check: weighted-load sum over all 1000 tasks must equal the
+     * independent accumulation. */
+    int sum = sched_balance_weighted_load(procs, N);
+    int ref_sum = 0;
+    for (int i = 0; i < N; i++)
+        ref_sum += (int)procs[i]->sched_weight;
+    KUNIT_EXPECT_EQ(test, sum, ref_sum);
+
+    /* Boundary: pick over a 1-element and 0-element list behaves sanely. */
+    KUNIT_EXPECT_EQ(test, (uintptr_t)sched_eevdf_pick_best(procs, 1), (uintptr_t)procs[0]);
+    KUNIT_EXPECT_EQ(test, (uintptr_t)sched_eevdf_pick_best(procs, 0), (uintptr_t)NULL);
+
+    for (int i = 0; i < N; i++)
+        kfree(procs[i]);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -1272,6 +1350,7 @@ static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_numa_migration_trigger_test),
     KUNIT_CASE(sched_core_cookie_assignment_test),
     KUNIT_CASE(sched_core_sibling_safety_test),
+    KUNIT_CASE(sched_wakeup_storm_1000_test),
     {0}};
 
 static struct kunit_suite sched_test_suite;
