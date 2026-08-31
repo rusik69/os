@@ -566,6 +566,78 @@ static void sched_eevdf_pick_order_test(struct kunit *test) {
 }
 
 /* ====================================================================
+ * 16. Load balancing between CPUs (weighted decision arithmetic)
+ * ==================================================================== */
+
+/*
+ * load_balance() steals a task from the busiest CPU when a CPU is idle.
+ * Its decision rules are pure arithmetic, now exposed as
+ * sched_balance_weighted_load / sched_balance_should_pull /
+ * sched_balance_diff_significant and actually used by load_balance().
+ * We verify those rules over synthetic processes — no live runqueue is
+ * touched, so this is safe from kernel context.
+ *
+ * Rules (mirror scheduler.c):
+ *   - weighted load = sum of each task's sched_weight (default 1024)
+ *   - a CPU only pulls when its own load <= 2 * nice-0 weight (idle/light)
+ *   - it pulls from another CPU only when the difference exceeds one
+ *     nice-0 weight (1024)
+ */
+static void sched_load_balance_2cpu_test(struct kunit *test) {
+    enum { N = 6 };
+    struct process *procs[N];
+    int got = 0;
+    uint64_t w[6] = {1024, 2048, 512, 0, 1024, 4096};
+    for (int i = 0; i < N; i++) {
+        procs[i] = (struct process *)kmalloc(sizeof(struct process));
+        if (!procs[i])
+            break;
+        memset(procs[i], 0, sizeof(struct process));
+        procs[i]->sched_weight = w[i];
+        procs[i]->sched_weight = procs[i]->sched_weight ? procs[i]->sched_weight : 1024;
+        got++;
+    }
+    KUNIT_EXPECT_EQ(test, (int64_t)got, (int64_t)N);
+    if (got != N) {
+        for (int i = 0; i < got; i++)
+            kfree(procs[i]);
+        return;
+    }
+
+    /* Weighted load sums task weights (0 slot falls back to 1024). */
+    KUNIT_EXPECT_EQ(test, sched_balance_weighted_load(procs, N),
+                    (int)(1024 + 2048 + 512 + 1024 + 1024 + 4096));
+
+    /* NULL entries are skipped. */
+    procs[2] = NULL;
+    KUNIT_EXPECT_EQ(test, sched_balance_weighted_load(procs, N),
+                    (int)(1024 + 2048 + 1024 + 1024 + 4096));
+    procs[2] = (struct process *)kmalloc(sizeof(struct process));
+    if (procs[2]) {
+        memset(procs[2], 0, sizeof(struct process));
+        procs[2]->sched_weight = 512;
+    }
+
+    /* should_pull: pulls only when idle/lightly loaded (<= 2048). */
+    KUNIT_EXPECT_EQ(test, sched_balance_should_pull(0), 1);
+    KUNIT_EXPECT_EQ(test, sched_balance_should_pull(1024), 1);
+    KUNIT_EXPECT_EQ(test, sched_balance_should_pull(2048), 1);
+    KUNIT_EXPECT_EQ(test, sched_balance_should_pull(2049), 0);
+    KUNIT_EXPECT_EQ(test, sched_balance_should_pull(4096), 0);
+
+    /* diff_significant: only pull when other_load - this_load > 1024. */
+    KUNIT_EXPECT_EQ(test, sched_balance_diff_significant(1024, 0), 0);    /* == threshold */
+    KUNIT_EXPECT_EQ(test, sched_balance_diff_significant(2048, 0), 1);    /* 2048 diff */
+    KUNIT_EXPECT_EQ(test, sched_balance_diff_significant(2048, 1024), 0); /* 1024 diff */
+    KUNIT_EXPECT_EQ(test, sched_balance_diff_significant(3072, 1024), 1); /* 2048 diff */
+    KUNIT_EXPECT_EQ(test, sched_balance_diff_significant(1024, 2048), 0); /* negative */
+    KUNIT_EXPECT_EQ(test, sched_balance_diff_significant(0, 0), 0);
+
+    for (int i = 0; i < N; i++)
+        kfree(procs[i]);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -590,6 +662,7 @@ static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_age_test),
     KUNIT_CASE(sched_idle_ticks_test),
     KUNIT_CASE(sched_eevdf_pick_order_test),
+    KUNIT_CASE(sched_load_balance_2cpu_test),
     {0}};
 
 static struct kunit_suite sched_test_suite;

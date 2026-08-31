@@ -84,6 +84,11 @@ uint64_t sched_autogroup_max_vruntime(int group_id);
  * list — does NOT touch the live runqueue).  See scheduler.c. */
 struct process *sched_eevdf_pick_best(struct process **list, int n);
 
+/* Pure load-balance decision helpers (no live runqueue access). */
+int sched_balance_weighted_load(struct process **list, int n);
+int sched_balance_should_pull(int this_load);
+int sched_balance_diff_significant(int other_load, int this_load);
+
 /* ── Include full struct process definition for callers ───────────── */
 #include "process.h"
 

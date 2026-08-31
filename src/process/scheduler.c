@@ -923,6 +923,33 @@ static int calculate_cpu_load(struct cpu_info *ci) {
     return load;
 }
 
+/* Pure helpers for the load-balance decision, exposed so the kunit suite can
+ * validate the balancing arithmetic without touching the live runqueues. */
+
+/* Sum weighted load over an explicit list of processes (the same rule
+ * calculate_cpu_load() applies to a CPU's queues).  NULL entries skip. */
+int sched_balance_weighted_load(struct process **list, int n) {
+    int load = 0;
+    for (int i = 0; i < n; i++) {
+        struct process *p = list[i];
+        if (p)
+            load += (int)(p->sched_weight ? p->sched_weight : CFS_NICE_0_WEIGHT);
+    }
+    return load;
+}
+
+/* Whether a CPU should attempt to pull work: only when it is idle/lightly
+ * loaded (no more than two nice-0 tasks' worth of weight). */
+int sched_balance_should_pull(int this_load) {
+    return this_load <= CFS_NICE_0_WEIGHT * 2;
+}
+
+/* Whether pulling from @other_load is worthwhile: the other CPU must beat
+ * us by more than one nice-0 task's weight (threshold from load_balance). */
+int sched_balance_diff_significant(int other_load, int this_load) {
+    return (other_load - this_load) > CFS_NICE_0_WEIGHT;
+}
+
 /*
  * load_balance() - Steal a runnable task from a busy CPU to balance load.
  *
@@ -939,7 +966,7 @@ static int load_balance(void) {
     int this_load = calculate_cpu_load(ci);
 
     /* Don't steal if we already have significant load */
-    if (this_load > CFS_NICE_0_WEIGHT * 2)
+    if (!sched_balance_should_pull(this_load))
         return 0;
 
     int this_node = numa_node_of_cpu(this_cpu_id);
@@ -955,9 +982,8 @@ static int load_balance(void) {
             continue;
         struct cpu_info *other = &cpu_info_array[cpu];
         int load = calculate_cpu_load(other);
-        int diff = load - this_load;
 
-        if (diff > CFS_NICE_0_WEIGHT) {
+        if (sched_balance_diff_significant(load, this_load)) {
             /* Track the busiest overall */
             if (load > busiest_load) {
                 busiest_load = load;
