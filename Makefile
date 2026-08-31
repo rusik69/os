@@ -595,6 +595,7 @@ C_SRCS = src/kernel/kernel.c \
          src/test/kunit_slab.c \
          src/test/kunit_sched.c \
          src/test/kunit_vmm.c \
+         src/test/kunit_heap.c \
          src/test/kunit_security.c \
          src/test/kunit_security_new.c \
          src/test/kunit_power.c \

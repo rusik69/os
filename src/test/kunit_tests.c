@@ -40,6 +40,7 @@ extern void kunit_oom_register(void);
 extern void kunit_slab_register(void);
 extern void kunit_sched_register(void);
 extern void kunit_vmm_register(void);
+extern void kunit_heap_register(void);
 extern void kunit_security_register(void);
 extern void kunit_security_new_register(void);
 extern void kunit_power_register(void);
@@ -1541,6 +1542,7 @@ void kunit_register_builtin_tests(void)
 
     /* Register the dedicated VMM test suite from kunit_vmm.c */
     kunit_vmm_register();
+    kunit_heap_register();
 
     /* Register the security subsystem test suite from kunit_security.c */
     kunit_security_register();
