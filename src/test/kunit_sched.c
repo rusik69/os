@@ -1108,6 +1108,35 @@ static void sched_numa_scan_remote_test(struct kunit *test) {
 }
 
 /* ====================================================================
+ *  NUMA balancing: task migration trigger (guard semantics)
+ * ==================================================================== */
+
+/*
+ * The scanner triggers numa_migrate_page() for each remote, non-cooled
+ * page.  That function is the migration trigger; its guard clauses reject
+ * invalid triggers deterministically (return 0 / no-op) regardless of
+ * whether the NUMA subsystem is initialised:
+ *   - a zero physical page is never migrated
+ *   - an out-of-range target node is never migrated
+ * These guards hold in every state, so they are robustly testable; the
+ * side-effecting migration path itself is gated behind them, so we do not
+ * invoke it with a live page here.
+ */
+static void sched_numa_migration_trigger_test(struct kunit *test) {
+    /* Zero page -> always rejected (return 0). */
+    KUNIT_EXPECT_EQ(test, numa_migrate_page(0, 0), (uint64_t)0);
+
+    /* Invalid target node (negative) -> rejected. */
+    KUNIT_EXPECT_EQ(test, numa_migrate_page(0x12345000ull, -1), (uint64_t)0);
+
+    /* Invalid target node (too large) -> rejected. */
+    KUNIT_EXPECT_EQ(test, numa_migrate_page(0x12345000ull, NUMA_MAX_NODES), (uint64_t)0);
+
+    /* Invalid target node (== node count when unsupported) -> rejected. */
+    KUNIT_EXPECT_EQ(test, numa_migrate_page(0x12345000ull, -2), (uint64_t)0);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -1141,6 +1170,7 @@ static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_pelt_accrual_test),
     KUNIT_CASE(sched_pelt_decay_chain_test),
     KUNIT_CASE(sched_numa_scan_remote_test),
+    KUNIT_CASE(sched_numa_migration_trigger_test),
     {0}};
 
 static struct kunit_suite sched_test_suite;
