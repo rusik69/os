@@ -519,6 +519,19 @@ static inline uint16_t slice_for_prio(int lvl) {
     return s;
 }
 
+/*
+ * Pure SCHED_RR timeslice primitive: the round-robin quantum (in ticks)
+ * for a task at the given priority LEVEL, i.e. slice_for_prio(lvl).
+ * This is the value the RR path replenishes ticks_remaining to on slice
+ * expiry — it sets the rotation cadence.  Lower priority value (higher
+ * priority) gets a larger quantum, so a higher-priority RR task is
+ * preempted less often.  Exposed for the kunit suite; does NOT touch
+ * the live runqueue.
+ */
+int sched_rr_slice_ticks(int priority_level) {
+    return (int)slice_for_prio(priority_level);
+}
+
 /* ── Sysctl handlers for scheduler latency/granularity ──────────── */
 
 static int sysctl_read_sched_latency(char *buf, int max) {

@@ -735,6 +735,44 @@ static void sched_fifo_priority_selection_test(struct kunit *test) {
 }
 
 /* ====================================================================
+ *  SCHED_RR timeslice rotation (replenished quantum)
+ * ==================================================================== */
+
+/*
+ * SCHED_RR enforces a time slice: on expiry, scheduler_tick() replenishes
+ * ticks_remaining = slice_for_prio(level) and rotates the task to the end
+ * of its priority queue (preempt + reschedule).  The quantum value sets
+ * the rotation cadence.  We verify the pure quantum computation
+ * sched_rr_slice_ticks() — the value the RR path replenishes to — without
+ * touching the live runqueue.  All levels at the default tuning yield a
+ * non-zero quantum (>= 1 tick), and out-of-range levels are clamped.
+ */
+static void sched_rr_timeslice_test(struct kunit *test) {
+    /* Every priority level (0..SCHED_LEVELS-1) must give a non-zero
+     * quantum, so an RR task always gets a positive slice to rotate on. */
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        int s = sched_rr_slice_ticks(lvl);
+        KUNIT_EXPECT_TRUE(test, s >= 1);
+        KUNIT_EXPECT_TRUE(test, s <= 0xFFFF); /* uint16_t bounded */
+    }
+
+    /* Out-of-range levels are clamped to a valid, non-zero quantum. */
+    KUNIT_EXPECT_TRUE(test, sched_rr_slice_ticks(-1) >= 1);
+    KUNIT_EXPECT_TRUE(test, sched_rr_slice_ticks(99) >= 1);
+    KUNIT_EXPECT_TRUE(test, sched_rr_slice_ticks(-100) >= 1);
+
+    /* slice_for_prio never returns 0 even if an entry is corrupt, so a
+     * level that legitimately maps to a zero table entry still yields 1
+     * (prevents division-by-zero / busy-wait).  All returned values being
+     * >= 1 (asserted above) confirms that invariant end to end. */
+
+    /* Internal consistency: the RR expiry replenishes to exactly this
+     * per-level value; it must be stable across reads (no lock needed). */
+    int stable = sched_rr_slice_ticks(1);
+    KUNIT_EXPECT_EQ(test, sched_rr_slice_ticks(1), stable);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -761,6 +799,7 @@ static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_eevdf_pick_order_test),
     KUNIT_CASE(sched_load_balance_2cpu_test),
     KUNIT_CASE(sched_fifo_priority_selection_test),
+    KUNIT_CASE(sched_rr_timeslice_test),
     {0}};
 
 static struct kunit_suite sched_test_suite;

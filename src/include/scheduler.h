@@ -92,6 +92,9 @@ int sched_balance_diff_significant(int other_load, int this_load);
 /* Pure SCHED_FIFO priority-selection comparator (no live runqueue). */
 int sched_fifo_prefer_a(struct process *a, struct process *b);
 
+/* Pure SCHED_RR round-robin quantum (ticks) for a priority level. */
+int sched_rr_slice_ticks(int priority_level);
+
 /* ── Include full struct process definition for callers ───────────── */
 #include "process.h"
 
