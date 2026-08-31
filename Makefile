@@ -601,6 +601,7 @@ C_SRCS = src/kernel/kernel.c \
          src/test/kunit_power.c \
          src/test/kunit_ext.c \
          src/test/kunit_vfs.c \
+         src/test/kunit_page_cache.c \
          src/test/kunit_container_ext.c \
          src/test/kunit_net.c \
          src/test/kunit_errno.c \

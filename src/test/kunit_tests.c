@@ -47,6 +47,7 @@ extern void kunit_power_register(void);
 extern void kunit_ext_register(void);
 extern void kunit_container_ext_register(void);
 extern void kunit_vfs_register(void);
+extern void kunit_page_cache_register(void);
 extern void kunit_net_register(void);
 extern void kunit_errno_register(void);
 extern void kunit_tls_register(void);
@@ -1558,6 +1559,9 @@ void kunit_register_builtin_tests(void)
 
     /* Register the VFS test suite from kunit_vfs.c */
     kunit_vfs_register();
+
+    /* Register the page-cache test suite from kunit_page_cache.c */
+    kunit_page_cache_register();
 
     /* Register the networking test suite from kunit_net.c */
     kunit_net_register();
