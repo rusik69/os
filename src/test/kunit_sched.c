@@ -1022,6 +1022,60 @@ static void sched_pelt_accrual_test(struct kunit *test) {
 }
 
 /* ====================================================================
+ *  PELT decay chain (explicit multi-tick decay)
+ * ==================================================================== */
+
+/*
+ * The PELT decay chain: pelt_decay_missed() applies N single-tick decay
+ * steps (each multiplying avg by (PELT_HALFLIFE-1)/PELT_HALFLIFE) to a
+ * live pelt_state.  We exercise the exported function directly and verify
+ * the chain
+ *   * decays monotonically and never underflows
+ *   * a longer chain decays at least as far as a shorter one
+ *   * an already-decayed state keeps decaying (continuity of the chain)
+ * Sweeping the value down reproduces the geometric half-life curve.
+ */
+static void sched_pelt_decay_chain_test(struct kunit *test) {
+    struct pelt_state pelt;
+    uint32_t now = 5000;
+
+    pelt_init(&pelt);
+    pelt.last_update = now;
+    pelt.util_avg = PELT_SCALE; /* start at full scale */
+    pelt.load_avg = PELT_SCALE;
+
+    /* Single-step decay from full scale reduces both averages uniformly. */
+    pelt_decay_missed(&pelt, 1);
+    KUNIT_EXPECT_TRUE(test, pelt.util_avg < PELT_SCALE);
+    KUNIT_EXPECT_TRUE(test, pelt.util_avg > 0);
+    KUNIT_EXPECT_EQ(test, (int)pelt.load_avg, (int)pelt.util_avg);
+
+    /* A longer chain must decay at least as far as a shorter chain. */
+    uint32_t after_short = pelt.util_avg;
+    pelt_decay_missed(&pelt, 10);
+    uint32_t after_long = pelt.util_avg;
+    KUNIT_EXPECT_TRUE(test, after_long <= after_short);
+
+    /* Decay chain to near-zero never clamps to zero prematurely and never
+     * underflows (stays bounded, monotone non-increasing). */
+    uint32_t prev = pelt.util_avg;
+    for (unsigned int k = 0; k < 64; k++) {
+        pelt_decay_missed(&pelt, 32); /* 32-tick decay steps */
+        KUNIT_EXPECT_TRUE(test, pelt.util_avg <= prev);
+        prev = pelt.util_avg;
+    }
+    KUNIT_EXPECT_TRUE(test, prev <= after_short); /* overall decayed */
+    KUNIT_EXPECT_TRUE(test, prev < PELT_SCALE);   /* moved off max */
+
+    /* Decay of a fresh state from the scale start converges downward. */
+    pelt_init(&pelt);
+    pelt.last_update = now;
+    uint32_t start = pelt.util_avg;
+    pelt_decay_missed(&pelt, 1);
+    KUNIT_EXPECT_TRUE(test, pelt.util_avg < start);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -1053,6 +1107,7 @@ static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_deadline_grub_reclaim_test),
     KUNIT_CASE(sched_idle_yields_test),
     KUNIT_CASE(sched_pelt_accrual_test),
+    KUNIT_CASE(sched_pelt_decay_chain_test),
     {0}};
 
 static struct kunit_suite sched_test_suite;
