@@ -9,13 +9,14 @@
  * the VFS layer's internal consistency.
  */
 
+#include "dcache.h"
+#include "errno.h"
 #include "kunit.h"
-#include "vfs.h"
-#include "string.h"
 #include "printf.h"
 #include "process.h"
+#include "string.h"
 #include "tmpfs.h"
-#include "errno.h"
+#include "vfs.h"
 
 /* ====================================================================
  *  1. File open/close/read/write operations
@@ -230,27 +231,109 @@ static void vfs_force_readonly_test(struct kunit *test)
 }
 
 /* ====================================================================
+ *  D253-1: VFS dentry creation/lookup (dcache LRU)
+ * ==================================================================== */
+
+/*
+ * The VFS dentry cache (dcache) is a pure, in-memory LRU mapping absolute
+ * paths to resolved metadata.  It is fully testable in isolation: entries
+ * are inserted with dcache_add(), looked up with dcache_lookup(), and
+ * evicted with dcache_shrink()/dcache_evict_one().  We verify the create/
+ * lookup/round-trip and miss semantics without touching any mounted
+ * filesystem.
+ */
+static void vfs_dentry_create_lookup_test(struct kunit *test) {
+    struct vfs_stat st;
+    int got;
+
+    /* Empty cache must miss. */
+    dcache_init();
+    memset(&st, 0, sizeof(st));
+    KUNIT_EXPECT_EQ(test, dcache_lookup("/kunit/dentry", &st), -1);
+
+    /* Insert an entry, then look it up: round-trip all fields. */
+    dcache_add("/kunit/dentry", (void *)0x1234, VFS_TYPE_FILE, 4096, 1000, 1000, 0644, 1001, 1002,
+               1, 777, 0, 0);
+
+    memset(&st, 0, sizeof(st));
+    KUNIT_EXPECT_EQ(test, dcache_lookup("/kunit/dentry", &st), 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)st.type, (int64_t)VFS_TYPE_FILE);
+    KUNIT_EXPECT_EQ(test, (int64_t)st.size, (int64_t)4096);
+    KUNIT_EXPECT_EQ(test, (int64_t)st.uid, (int64_t)1000);
+    KUNIT_EXPECT_EQ(test, (int64_t)st.gid, (int64_t)1000);
+    KUNIT_EXPECT_EQ(test, (int64_t)st.ino, (int64_t)777);
+    KUNIT_EXPECT_EQ(test, (int64_t)st.nlink, (int64_t)1);
+
+    /* A different path must miss. */
+    KUNIT_EXPECT_EQ(test, dcache_lookup("/kunit/other", &st), -1);
+
+    /* Lookup should not mutate the cache's fill count. */
+    got = dcache_fill_count();
+    dcache_lookup("/kunit/dentry", &st);
+    KUNIT_EXPECT_EQ(test, dcache_fill_count(), got);
+
+    /* Remove and confirm miss. */
+    dcache_remove("/kunit/dentry");
+    KUNIT_EXPECT_EQ(test, dcache_lookup("/kunit/dentry", &st), -1);
+}
+
+static void vfs_dentry_shrink_test(struct kunit *test) {
+    struct vfs_stat st;
+
+    dcache_init();
+
+    /* Fill the cache past capacity to force LRU eviction on add. */
+    char path[64];
+    for (int i = 0; i < DCACHE_SIZE + 32; i++) {
+        snprintf(path, sizeof(path), "/kunit/d%03d", i);
+        dcache_add(path, NULL, VFS_TYPE_FILE, (uint32_t)i, 1000, 1000, 0644, 0, 0, 1, (uint32_t)i,
+                   0, 0);
+    }
+
+    /* Never exceeds capacity. */
+    KUNIT_EXPECT_TRUE(test, dcache_fill_count() <= DCACHE_SIZE);
+
+    /* The oldest entries were evicted (LRU), the newest are present. */
+    KUNIT_EXPECT_EQ(test, dcache_lookup("/kunit/d001", &st), -1); /* oldest */
+    KUNIT_EXPECT_EQ(test, dcache_lookup("/kunit/d150", &st), 0);  /* recent */
+
+    /* Explicit shrink removes LRU entries and returns the count. */
+    int before = dcache_fill_count();
+    int evicted = dcache_shrink(10);
+    KUNIT_EXPECT_EQ(test, evicted, 10);
+    KUNIT_EXPECT_EQ(test, dcache_fill_count(), before - 10);
+
+    /* shrink(0) and shrink(beyond-fill) are safe. */
+    KUNIT_EXPECT_EQ(test, dcache_shrink(0), 0);
+    KUNIT_EXPECT_EQ(test, dcache_shrink(DCACHE_SIZE * 4), dcache_fill_count());
+    KUNIT_EXPECT_EQ(test, dcache_fill_count(), 0);
+
+    /* evict_one on an empty cache returns 0. */
+    KUNIT_EXPECT_EQ(test, dcache_evict_one(), 0);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
-static const struct kunit_case vfs_test_cases[] = {
-    KUNIT_CASE(vfs_file_create_test),
-    KUNIT_CASE(vfs_file_write_read_test),
-    KUNIT_CASE(vfs_file_stat_test),
-    KUNIT_CASE(vfs_file_unlink_test),
-    KUNIT_CASE(vfs_mkdir_test),
-    KUNIT_CASE(vfs_rmdir_test),
-    KUNIT_CASE(vfs_mkdir_recursive_test),
-    KUNIT_CASE(vfs_mount_test),
-    KUNIT_CASE(vfs_statfs_test),
-    KUNIT_CASE(vfs_symlink_create_test),
-    KUNIT_CASE(vfs_symlink_readlink_test),
-    KUNIT_CASE(vfs_permission_check_test),
-    KUNIT_CASE(vfs_nonexistent_path_test),
-    KUNIT_CASE(vfs_null_path_test),
-    KUNIT_CASE(vfs_force_readonly_test),
-    {0}
-};
+static const struct kunit_case vfs_test_cases[] = {KUNIT_CASE(vfs_file_create_test),
+                                                   KUNIT_CASE(vfs_file_write_read_test),
+                                                   KUNIT_CASE(vfs_file_stat_test),
+                                                   KUNIT_CASE(vfs_file_unlink_test),
+                                                   KUNIT_CASE(vfs_mkdir_test),
+                                                   KUNIT_CASE(vfs_rmdir_test),
+                                                   KUNIT_CASE(vfs_mkdir_recursive_test),
+                                                   KUNIT_CASE(vfs_mount_test),
+                                                   KUNIT_CASE(vfs_statfs_test),
+                                                   KUNIT_CASE(vfs_symlink_create_test),
+                                                   KUNIT_CASE(vfs_symlink_readlink_test),
+                                                   KUNIT_CASE(vfs_permission_check_test),
+                                                   KUNIT_CASE(vfs_nonexistent_path_test),
+                                                   KUNIT_CASE(vfs_null_path_test),
+                                                   KUNIT_CASE(vfs_force_readonly_test),
+                                                   KUNIT_CASE(vfs_dentry_create_lookup_test),
+                                                   KUNIT_CASE(vfs_dentry_shrink_test),
+                                                   {0}};
 
 static struct kunit_suite vfs_test_suite;
 
