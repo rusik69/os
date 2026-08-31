@@ -650,19 +650,80 @@ static void vmm_cow_fork_test(struct kunit *test) {
     vmm_destroy_user_pml4(parent); /* unrefs the shared frame to 0 */
 }
 
-static const struct kunit_case vmm_test_cases[] = {KUNIT_CASE(vmm_map_unmap_basic),
-                                                   KUNIT_CASE(vmm_multiple_pages),
-                                                   KUNIT_CASE(vmm_double_map),
-                                                   KUNIT_CASE(vmm_map_unmap_remap),
-                                                   KUNIT_CASE(vmm_nx_enforcement),
-                                                   KUNIT_CASE(vmm_exec_page),
-                                                   KUNIT_CASE(vmm_large_page),
-                                                   KUNIT_CASE(vmm_permission_flags),
-                                                   KUNIT_CASE(vmm_stress_map_unmap),
-                                                   KUNIT_CASE(vmm_address_translation),
-                                                   KUNIT_CASE(vmm_page_table_walk_test),
-                                                   KUNIT_CASE(vmm_cow_fork_test),
-                                                   {0}};
+/* ====================================================================
+ *  12. Huge page map (2MB) — real PDE, not just contiguous frames
+ * ==================================================================== */
+
+/*
+ * vmm_large_page() above only allocates 512 contiguous frames — it never
+ * installs a huge-page PDE.  This test actually maps a 2 MiB region with
+ * a single huge-page table entry and verifies:
+ *   - the PDE carries PTE_HUGE and PTE_PRESENT
+ *   - vmm_user_virt_to_phys resolves addresses inside the 2 MiB region
+ *     to the correct physical bases (offset preserved, present bit set)
+ *   - the huge page is torn down on pml4 destroy, so no frames leak
+ */
+static void vmm_huge_page_map_test(struct kunit *test) {
+    const uint64_t vaddr = 0x400000ULL; /* 2 MiB-aligned user address */
+
+    /* Allocate a physically-contiguous 2 MiB block. */
+    uint64_t huge_phys = (uint64_t)pmm_alloc_frames(HUGE_PAGE_NFRAMES);
+    if (!huge_phys) {
+        kprintf("[KUNIT_VMM] skip: no contiguous 2MB block for huge-page map test\n");
+        return;
+    }
+    KUNIT_EXPECT_EQ(test, (int64_t)(huge_phys & (HUGE_PAGE_SIZE - 1)), (int64_t)0);
+
+    uint64_t *pml4 = vmm_create_user_pml4();
+    if (IS_ERR(pml4)) {
+        pmm_free_frames_contiguous(huge_phys, HUGE_PAGE_NFRAMES);
+        return;
+    }
+
+    int r = vmm_map_user_hugepage_internal(pml4, vaddr, huge_phys,
+                                           VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER |
+                                               VMM_FLAG_NOEXEC);
+    KUNIT_EXPECT_EQ(test, (int64_t)r, (int64_t)0);
+    if (r < 0) {
+        vmm_destroy_user_pml4(pml4);
+        pmm_free_frames_contiguous(huge_phys, HUGE_PAGE_NFRAMES);
+        return;
+    }
+
+    /* The leaf entry (PDE here) must be a PRESENT huge-page entry. */
+    uint64_t pde = cow_leaf_pte(pml4, vaddr);
+    KUNIT_EXPECT_TRUE(test, (pde & PTE_PRESENT) != 0);
+    KUNIT_EXPECT_TRUE(test, (pde & PTE_HUGE) != 0);
+
+    /* Addresses anywhere in the 2 MiB region resolve via the huge PDE,
+     * with the correct 2 MiB-aligned physical base (plus low 21 bits). */
+    const uint64_t bases[3] = {0x000000, 0x0FE000, 0x1FFFFF}; /* offsets */
+    for (int i = 0; i < 3; i++) {
+        uint64_t got = 0;
+        KUNIT_EXPECT_EQ(test, (int64_t)vmm_user_virt_to_phys(pml4, vaddr + bases[i], &got),
+                        (int64_t)0);
+        KUNIT_EXPECT_EQ(test, (int64_t)(got & (HUGE_PAGE_SIZE - 1)), (int64_t)bases[i]);
+        KUNIT_EXPECT_EQ(test, (int64_t)(got & ~(uint64_t)(HUGE_PAGE_SIZE - 1)),
+                        (int64_t)(huge_phys & ~(uint64_t)(HUGE_PAGE_SIZE - 1)));
+    }
+
+    /* A 2 MiB-aligned but unmapped neighbouring region must not resolve. */
+    uint64_t miss_va = vaddr + HUGE_PAGE_SIZE; /* next huge slot, not mapped */
+    uint64_t miss = 0;
+    KUNIT_EXPECT_EQ(test, (int64_t)vmm_user_virt_to_phys(pml4, miss_va, &miss), (int64_t)-EFAULT);
+
+    /* Cleanup: destroy unrefs all 512 sub-frames of the huge page. */
+    vmm_destroy_user_pml4(pml4);
+}
+
+static const struct kunit_case vmm_test_cases[] = {
+    KUNIT_CASE(vmm_map_unmap_basic),      KUNIT_CASE(vmm_multiple_pages),
+    KUNIT_CASE(vmm_double_map),           KUNIT_CASE(vmm_map_unmap_remap),
+    KUNIT_CASE(vmm_nx_enforcement),       KUNIT_CASE(vmm_exec_page),
+    KUNIT_CASE(vmm_large_page),           KUNIT_CASE(vmm_permission_flags),
+    KUNIT_CASE(vmm_stress_map_unmap),     KUNIT_CASE(vmm_address_translation),
+    KUNIT_CASE(vmm_page_table_walk_test), KUNIT_CASE(vmm_cow_fork_test),
+    KUNIT_CASE(vmm_huge_page_map_test),   {0}};
 
 static struct kunit_suite vmm_test_suite;
 
