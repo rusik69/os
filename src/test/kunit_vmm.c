@@ -473,22 +473,73 @@ static void vmm_address_translation(struct kunit *test)
 }
 
 /* ====================================================================
- *  Suite definition
+ *  10. Page-table walk across level boundaries
  * ==================================================================== */
 
+/*
+ * Dedicated vmm_get_physaddr() page-table-walk test.  Maps pages at
+ * virtual addresses that fall in DIFFERENT page-table levels
+ * (PT index, PD index via a 2 MiB boundary), then verifies each
+ * translates back to exactly its own physical frame, and that an
+ * unmapped (not-present) address returns 0 through the walk.
+ */
+static void vmm_page_table_walk_test(struct kunit *test) {
+    enum { N = 5 };
+    const uint64_t koff[5] = {
+        0x000000ULL, /* PT entry 0             */
+        0x001000ULL, /* PT entry 1             */
+        0x200000ULL, /* PD entry 1 (2 MiB)     */
+        0x202000ULL, /* PD entry 1, PT entry 2 */
+        0x400000ULL, /* PD entry 2 (4 MiB)     */
+    };
+    uint64_t frames[N] = {0};
+    uint64_t vaddrs[N];
+    int have = 0;
+
+    /* Allocate N frames and map them at walk-distinct vaddrs. */
+    for (int i = 0; i < N; i++) {
+        uint64_t phys = pmm_alloc_frame();
+        KUNIT_EXPECT_NE(test, phys, (uint64_t)0);
+        if (!phys)
+            break;
+        frames[i] = phys;
+        vaddrs[i] = TEST_VADDR_BASE + koff[i];
+        int r = vmm_map_page(vaddrs[i], phys, VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC);
+        KUNIT_EXPECT_EQ(test, (int64_t)r, (int64_t)0);
+        if (r < 0)
+            break;
+        have++;
+    }
+    KUNIT_EXPECT_EQ(test, (int64_t)have, (int64_t)N);
+
+    /* Every mapped vaddr must walk back to its OWN physical frame,
+     * no cross-talk between the different page-table levels. */
+    for (int i = 0; i < have; i++) {
+        uint64_t got = vmm_get_physaddr(vaddrs[i]);
+        KUNIT_EXPECT_EQ(test, (int64_t)got, (int64_t)(frames[i] & ~(uint64_t)0xFFFULL));
+        /* Offset within the page is preserved through the walk. */
+        uint64_t got_off = vmm_get_physaddr(vaddrs[i] + 0x200);
+        KUNIT_EXPECT_EQ(test, (int64_t)got_off, (int64_t)(frames[i] & ~(uint64_t)0xFFFULL));
+    }
+
+    /* A vaddr that was never mapped must walk to 0 (not-present entry). */
+    uint64_t unmapped_va = vaddrs[0] + 0x1000000ULL; /* far from all mapped */
+    KUNIT_EXPECT_EQ(test, (int64_t)vmm_get_physaddr(unmapped_va), (int64_t)0);
+
+    /* Cleanup. */
+    for (int i = 0; i < have; i++) {
+        vmm_unmap_page(vaddrs[i]);
+        pmm_free_frame(frames[i]);
+    }
+}
+
 static const struct kunit_case vmm_test_cases[] = {
-    KUNIT_CASE(vmm_map_unmap_basic),
-    KUNIT_CASE(vmm_multiple_pages),
-    KUNIT_CASE(vmm_double_map),
-    KUNIT_CASE(vmm_map_unmap_remap),
-    KUNIT_CASE(vmm_nx_enforcement),
-    KUNIT_CASE(vmm_exec_page),
-    KUNIT_CASE(vmm_large_page),
-    KUNIT_CASE(vmm_permission_flags),
-    KUNIT_CASE(vmm_stress_map_unmap),
-    KUNIT_CASE(vmm_address_translation),
-    {0}
-};
+    KUNIT_CASE(vmm_map_unmap_basic),      KUNIT_CASE(vmm_multiple_pages),
+    KUNIT_CASE(vmm_double_map),           KUNIT_CASE(vmm_map_unmap_remap),
+    KUNIT_CASE(vmm_nx_enforcement),       KUNIT_CASE(vmm_exec_page),
+    KUNIT_CASE(vmm_large_page),           KUNIT_CASE(vmm_permission_flags),
+    KUNIT_CASE(vmm_stress_map_unmap),     KUNIT_CASE(vmm_address_translation),
+    KUNIT_CASE(vmm_page_table_walk_test), {0}};
 
 static struct kunit_suite vmm_test_suite;
 
