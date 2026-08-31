@@ -14,11 +14,12 @@
  *   # echo 1 > /sys/kernel/debug/kunit/run/vmm
  */
 
+#include "err.h"
 #include "kunit.h"
-#include "vmm.h"
 #include "pmm.h"
-#include "string.h"
 #include "printf.h"
+#include "string.h"
+#include "vmm.h"
 
 /* ====================================================================
  *  Helper: safe test virtual address range (high kernel space,
@@ -33,6 +34,9 @@
 #define TEST_VADDR_BASE  0xFFFFC0FFE0000000ULL
 #define TEST_VADDR_ALT   0xFFFFC0FFE0001000ULL  /* second mapping slot */
 #define TEST_PATTERN      0xCAFEBABEDEADBEEFULL  /* 64-bit test value */
+
+/* Access a physical frame via the kernel's direct-map window. */
+#define PHYS_TO_VIRT_frame(p) ((void *)(PHYS_TO_VIRT(p)))
 
 /* ====================================================================
  *  1. Basic map / unmap
@@ -533,13 +537,132 @@ static void vmm_page_table_walk_test(struct kunit *test) {
     }
 }
 
-static const struct kunit_case vmm_test_cases[] = {
-    KUNIT_CASE(vmm_map_unmap_basic),      KUNIT_CASE(vmm_multiple_pages),
-    KUNIT_CASE(vmm_double_map),           KUNIT_CASE(vmm_map_unmap_remap),
-    KUNIT_CASE(vmm_nx_enforcement),       KUNIT_CASE(vmm_exec_page),
-    KUNIT_CASE(vmm_large_page),           KUNIT_CASE(vmm_permission_flags),
-    KUNIT_CASE(vmm_stress_map_unmap),     KUNIT_CASE(vmm_address_translation),
-    KUNIT_CASE(vmm_page_table_walk_test), {0}};
+/* ====================================================================
+ *  11. Copy-on-write fork (vmm_clone_user_pml4 + COW fault)
+ * ==================================================================== */
+
+/* Read a leaf (4KB) PTE entry through the given pml4.  Returns the raw
+ * PTE, or 0 if the walk hits a not-present level. */
+static uint64_t cow_leaf_pte(uint64_t *pml4, uint64_t virt) {
+    int l4 = (virt >> 39) & 0x1FF;
+    int l3 = (virt >> 30) & 0x1FF;
+    int l2 = (virt >> 21) & 0x1FF;
+    int l1 = (virt >> 12) & 0x1FF;
+
+    if (!(pml4[l4] & PTE_PRESENT))
+        return 0;
+    uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[l4] & PTE_ADDR_MASK);
+    if (!(pdpt[l3] & PTE_PRESENT))
+        return 0;
+    uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[l3] & PTE_ADDR_MASK);
+    if (!(pd[l2] & PTE_PRESENT))
+        return 0;
+    if (pd[l2] & PTE_HUGE)
+        return pd[l2];
+    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[l2] & PTE_ADDR_MASK);
+    return pt[l1];
+}
+
+/*
+ * fork() COW semantics end-to-end:
+ *   1. parent maps a writable page
+ *   2. clone_user_pml4() shares it as read-only + COW for both sides
+ *   3. a write fault on the child (vmm_handle_cow_fault) gives the child
+ *      its OWN private copy; the parent's data is unchanged
+ *   4. after the write, child and parent point at different frames
+ */
+static void vmm_cow_fork_test(struct kunit *test) {
+    const uint64_t vaddr = 0x400000ULL; /* low user space, < USER_VADDR_MAX */
+
+    /* Physical frame to share between parent and child. */
+    uint64_t frame = pmm_alloc_frame();
+    KUNIT_EXPECT_NE(test, frame, (uint64_t)0);
+    if (!frame)
+        return;
+
+    /* Give it distinguishable contents before any COW break. */
+    memset(PHYS_TO_VIRT_frame(frame), 0x5A, PAGE_SIZE);
+
+    /* Parent: fresh user pml4 with a writable mapping. */
+    uint64_t *parent = vmm_create_user_pml4();
+    KUNIT_EXPECT_NE(test, (uintptr_t)parent, (uintptr_t)ERR_PTR(-ENOMEM));
+    uint64_t *child = NULL;
+    if (IS_ERR(parent)) {
+        pmm_free_frame(frame);
+        return;
+    }
+
+    int r = vmm_map_user_page(parent, vaddr, frame,
+                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NOEXEC);
+    KUNIT_EXPECT_EQ(test, (int64_t)r, (int64_t)0);
+    if (r < 0) { /* first map still owns the frame */
+        vmm_destroy_user_pml4(parent);
+        pmm_free_frame(frame);
+        return;
+    }
+
+    /* fork(): clone the pml4.  Both sides must now point at the same
+     * frame, but the leaf PTE must have WRITE stripped and COW set. */
+    child = vmm_clone_user_pml4(parent);
+    KUNIT_EXPECT_NE(test, (uintptr_t)child, (uintptr_t)NULL);
+    if (!child) {
+        vmm_destroy_user_pml4(parent);
+        return; /* note: reactor owns the frame ref (clone added one) */
+    }
+
+    uint64_t p_phys = 0, c_phys = 0;
+    KUNIT_EXPECT_EQ(test, (int64_t)vmm_user_virt_to_phys(parent, vaddr, &p_phys), (int64_t)0);
+    KUNIT_EXPECT_EQ(test, (int64_t)vmm_user_virt_to_phys(child, vaddr, &c_phys), (int64_t)0);
+    KUNIT_EXPECT_EQ(test, (int64_t)p_phys, (int64_t)(frame & ~(uint64_t)0xFFFULL));
+    KUNIT_EXPECT_EQ(test, (int64_t)c_phys, (int64_t)(frame & ~(uint64_t)0xFFFULL));
+
+    /* COW-marked on both sides: leaf PTE has COW, no WRITE. */
+    uint64_t parent_pte = cow_leaf_pte(parent, vaddr);
+    uint64_t child_pte = cow_leaf_pte(child, vaddr);
+    KUNIT_EXPECT_TRUE(test, (parent_pte & VMM_FLAG_COW) != 0);
+    KUNIT_EXPECT_TRUE(test, (parent_pte & PTE_WRITE) == 0);
+    KUNIT_EXPECT_TRUE(test, (child_pte & VMM_FLAG_COW) != 0);
+    KUNIT_EXPECT_TRUE(test, (child_pte & PTE_WRITE) == 0);
+
+    /* Child writes (COW fault) → child must get its own private copy. */
+    int handled = vmm_handle_cow_fault(child, vaddr);
+    KUNIT_EXPECT_EQ(test, (int64_t)handled, (int64_t)1);
+
+    uint64_t new_c = 0;
+    KUNIT_EXPECT_EQ(test, (int64_t)vmm_user_virt_to_phys(child, vaddr, &new_c), (int64_t)0);
+    KUNIT_EXPECT_NE(test, (int64_t)new_c, (int64_t)(frame & ~(uint64_t)0xFFFULL));
+
+    /* Data flow: original pattern stayed on the parent's frame; we write
+     * a different pattern into the child's private frame and confirm the
+     * parent's frame is untouched (true copy-on-write isolation). */
+    memset(PHYS_TO_VIRT_frame(new_c), 0xC3, PAGE_SIZE);
+    const uint8_t *parent_view = (const uint8_t *)PHYS_TO_VIRT_frame(frame);
+    const uint8_t *child_view = (const uint8_t *)PHYS_TO_VIRT_frame(new_c);
+    KUNIT_EXPECT_EQ(test, (int64_t)parent_view[0], (int64_t)0x5A);
+    KUNIT_EXPECT_EQ(test, (int64_t)child_view[0], (int64_t)0xC3);
+
+    /* Parent retains its own mapping (unchanged frame, still COW+RO). */
+    uint64_t p_after = 0;
+    KUNIT_EXPECT_EQ(test, (int64_t)vmm_user_virt_to_phys(parent, vaddr, &p_after), (int64_t)0);
+    KUNIT_EXPECT_EQ(test, (int64_t)p_after, (int64_t)(frame & ~(uint64_t)0xFFFULL));
+
+    vmm_destroy_user_pml4(child);
+    vmm_destroy_user_pml4(parent); /* unrefs the shared frame to 0 */
+}
+
+static const struct kunit_case vmm_test_cases[] = {KUNIT_CASE(vmm_map_unmap_basic),
+                                                   KUNIT_CASE(vmm_multiple_pages),
+                                                   KUNIT_CASE(vmm_double_map),
+                                                   KUNIT_CASE(vmm_map_unmap_remap),
+                                                   KUNIT_CASE(vmm_nx_enforcement),
+                                                   KUNIT_CASE(vmm_exec_page),
+                                                   KUNIT_CASE(vmm_large_page),
+                                                   KUNIT_CASE(vmm_permission_flags),
+                                                   KUNIT_CASE(vmm_stress_map_unmap),
+                                                   KUNIT_CASE(vmm_address_translation),
+                                                   KUNIT_CASE(vmm_page_table_walk_test),
+                                                   KUNIT_CASE(vmm_cow_fork_test),
+                                                   {0}};
 
 static struct kunit_suite vmm_test_suite;
 
