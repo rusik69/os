@@ -11,6 +11,7 @@
 
 #include "dcache.h"
 #include "errno.h"
+#include "file_lock.h"
 #include "kunit.h"
 #include "printf.h"
 #include "process.h"
@@ -313,6 +314,116 @@ static void vfs_dentry_shrink_test(struct kunit *test) {
 }
 
 /* ====================================================================
+ *  D253-15: POSIX file lock / unlock (in-memory lock table)
+ * ==================================================================== */
+
+/*
+ * The file-lock subsystem (src/fs/file_lock.c) keeps a pure in-memory
+ * table of POSIX advisory locks keyed by path.  All operations here are
+ * RAM-only (no filesystem or device access), so they are testable in
+ * isolation with synthetic paths.  We verify acquire/lookup/release
+ * (F_RDLCK/F_WRLCK/F_UNLCK), range-based conflict and non-conflict, and
+ * NULL safety.  Unique paths avoid colliding with real running-system
+ * locks.
+ */
+static void vfs_file_lock_basic_test(struct kunit *test) {
+    struct file_lock flk;
+    struct file_lock got;
+    const char *path = "/kunit/lock_basic";
+
+    memset(&got, 0, sizeof(got));
+
+    /* No lock held yet -> lookup returns -ENOENT. */
+    KUNIT_EXPECT_EQ(test, file_lock_get(path, &got), -ENOENT);
+
+    /* Acquire a write lock on the whole file. */
+    memset(&flk, 0, sizeof(flk));
+    flk.l_type = F_WRLCK;
+    flk.l_whence = 0; /* SEEK_SET */
+    flk.l_start = 0;
+    flk.l_len = 0; /* to EOF */
+    KUNIT_EXPECT_EQ(test, file_lock_set(path, &flk, 0), 0);
+
+    /* Read it back: type and range must round-trip. */
+    memset(&got, 0, sizeof(got));
+    KUNIT_EXPECT_EQ(test, file_lock_get(path, &got), 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)got.l_type, (int64_t)F_WRLCK);
+    KUNIT_EXPECT_EQ(test, (int64_t)got.l_start, (int64_t)0);
+    KUNIT_EXPECT_EQ(test, (int64_t)got.l_len, (int64_t)0);
+
+    /* Release it; afterwards lookup must miss again. */
+    memset(&flk, 0, sizeof(flk));
+    flk.l_type = F_UNLCK;
+    KUNIT_EXPECT_EQ(test, file_lock_set(path, &flk, 0), 0);
+    KUNIT_EXPECT_EQ(test, file_lock_get(path, &got), -ENOENT);
+
+    /* file_lock_unlock() is a convenience wrapper for unlock. */
+    memset(&flk, 0, sizeof(flk));
+    flk.l_type = F_RDLCK;
+    flk.l_len = 0;
+    KUNIT_EXPECT_EQ(test, file_lock_set(path, &flk, 0), 0);
+    KUNIT_EXPECT_EQ(test, file_lock_unlock(path, &flk), 0);
+    KUNIT_EXPECT_EQ(test, file_lock_get(path, &got), -ENOENT);
+
+    /* NULL args are rejected, not crashes. */
+    KUNIT_EXPECT_EQ(test, file_lock_set(NULL, &flk, 0), -EINVAL);
+    KUNIT_EXPECT_EQ(test, file_lock_set(path, NULL, 0), -EINVAL);
+    KUNIT_EXPECT_EQ(test, file_lock_get(NULL, &got), -EINVAL);
+    KUNIT_EXPECT_EQ(test, file_lock_get(path, NULL), -EINVAL);
+}
+
+static void vfs_file_lock_lock_test(struct kunit *test) {
+    struct file_lock flk;
+    struct file_lock conflicting;
+
+    /* Conflicting WRLCK overlapping an existing F_RDLCK: no wait -> conflict. */
+    const char *path = "/kunit/lock_range";
+
+    memset(&flk, 0, sizeof(flk));
+    flk.l_type = F_WRLCK;
+    flk.l_len = 100;
+    KUNIT_EXPECT_EQ(test, file_lock_set(path, &flk, 0), 0); /* acquire */
+
+    /* Test query: a proposed conflicting write lock must report a conflict
+     * (file_lock_test returns 0 and fills "conflicting"). */
+    struct file_lock prop;
+    memset(&prop, 0, sizeof(prop));
+    prop.l_type = F_WRLCK;
+    prop.l_len = 50; /* overlaps [0,100) */
+    memset(&conflicting, 0, sizeof(conflicting));
+    int trc = file_lock_test(path, &prop, &conflicting);
+    KUNIT_EXPECT_EQ(test, trc, 0); /* 0 == conflict found */
+    KUNIT_EXPECT_EQ(test, (int64_t)conflicting.l_type, (int64_t)F_WRLCK);
+
+    /* A non-overlapping range (beyond the locked region) is not a conflict:
+     * file_lock_test returns -ENOENT. */
+    memset(&prop, 0, sizeof(prop));
+    prop.l_type = F_WRLCK;
+    prop.l_start = 1000;
+    prop.l_len = 50;
+    memset(&conflicting, 0, sizeof(conflicting));
+    KUNIT_EXPECT_EQ(test, file_lock_test(path, &prop, &conflicting), -ENOENT);
+
+    /* Same-process conflicting set upgrades the existing lock (returns 0),
+     * never -EAGAIN — -EAGAIN is reserved for cross-process conflict.  The
+     * PID-independent conflict semantics are exercised above via
+     * file_lock_test(). */
+    memset(&prop, 0, sizeof(prop));
+    prop.l_type = F_WRLCK;
+    prop.l_len = 50;
+    KUNIT_EXPECT_EQ(test, file_lock_set(path, &prop, 0), 0);
+
+    /* Unlock and confirm freed. */
+    struct file_lock got;
+    struct file_lock un;
+    memset(&un, 0, sizeof(un));
+    un.l_type = F_UNLCK;
+    KUNIT_EXPECT_EQ(test, file_lock_set(path, &un, 0), 0);
+    memset(&got, 0, sizeof(got));
+    KUNIT_EXPECT_EQ(test, file_lock_get(path, &got), -ENOENT);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -333,6 +444,8 @@ static const struct kunit_case vfs_test_cases[] = {KUNIT_CASE(vfs_file_create_te
                                                    KUNIT_CASE(vfs_force_readonly_test),
                                                    KUNIT_CASE(vfs_dentry_create_lookup_test),
                                                    KUNIT_CASE(vfs_dentry_shrink_test),
+                                                   KUNIT_CASE(vfs_file_lock_basic_test),
+                                                   KUNIT_CASE(vfs_file_lock_lock_test),
                                                    {0}};
 
 static struct kunit_suite vfs_test_suite;
