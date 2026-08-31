@@ -1137,6 +1137,59 @@ static void sched_numa_migration_trigger_test(struct kunit *test) {
 }
 
 /* ====================================================================
+ *  Core scheduling: cookie assignment
+ * ==================================================================== */
+
+/*
+ * Core scheduling assigns each task a uint64 cookie; tasks with the same
+ * non-zero cookie may be co-scheduled on sibling CPUs, tasks with
+ * different non-zero cookies must not share a core, and cookie 0 means no
+ * restriction.  We verify the pure assignment/accessors
+ * sched_core_set_cookie()/sched_core_get_cookie() (round-trips, NULL
+ * safety, 0 = unrestricted default) and the sched_core_allow() guard for
+ * invalid targets.  No live core state is trusted beyond init's default.
+ */
+static void sched_core_cookie_assignment_test(struct kunit *test) {
+    struct process *p = (struct process *)kmalloc(sizeof(struct process));
+    KUNIT_EXPECT_NOT_NULL(test, p);
+    if (!p)
+        return;
+    memset(p, 0, sizeof(struct process));
+
+    /* Freshly-zeroed task has cookie 0 (no restriction). */
+    KUNIT_EXPECT_EQ(test, sched_core_get_cookie(p), (uint64_t)0);
+
+    /* Assign a non-zero cookie and read it back (round-trip). */
+    sched_core_set_cookie(p, 0xDEADBEEF);
+    KUNIT_EXPECT_EQ(test, sched_core_get_cookie(p), (uint64_t)0xDEADBEEF);
+
+    /* Another distinct cookie round-trips too. */
+    sched_core_set_cookie(p, 0xC00C1E);
+    KUNIT_EXPECT_EQ(test, sched_core_get_cookie(p), (uint64_t)0xC00C1E);
+
+    /* Setting back to 0 restores "no restriction". */
+    sched_core_set_cookie(p, 0);
+    KUNIT_EXPECT_EQ(test, sched_core_get_cookie(p), (uint64_t)0);
+
+    /* NULL handling is safe. */
+    KUNIT_EXPECT_EQ(test, sched_core_get_cookie(NULL), (uint64_t)0);
+    sched_core_set_cookie(NULL, 0x1234); /* must not crash */
+
+    /* Cookie 0 (no restriction) is always allowed on any valid CPU
+     * (sched_core_allow returns 1 before any sibling check). */
+    KUNIT_EXPECT_EQ(test, sched_core_allow(p, 0), 1);
+
+    /* Invalid target CPU is rejected (0), cookie 0 notwithstanding. */
+    KUNIT_EXPECT_EQ(test, sched_core_allow(p, -1), 0);
+    KUNIT_EXPECT_EQ(test, sched_core_allow(p, SMP_MAX_CPUS), 0);
+
+    /* NULL task is rejected (0). */
+    KUNIT_EXPECT_EQ(test, sched_core_allow(NULL, 0), 0);
+
+    kfree(p);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -1171,6 +1224,7 @@ static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_pelt_decay_chain_test),
     KUNIT_CASE(sched_numa_scan_remote_test),
     KUNIT_CASE(sched_numa_migration_trigger_test),
+    KUNIT_CASE(sched_core_cookie_assignment_test),
     {0}};
 
 static struct kunit_suite sched_test_suite;
