@@ -12,6 +12,7 @@
 #include "heap.h"
 #include "kunit.h"
 #include "nohz.h"
+#include "numa_balancing.h"
 #include "pelt.h"
 #include "printf.h"
 #include "process.h"
@@ -1076,6 +1077,37 @@ static void sched_pelt_decay_chain_test(struct kunit *test) {
 }
 
 /* ====================================================================
+ *  NUMA balancing: page table scanning (remote-page decision)
+ * ==================================================================== */
+
+/*
+ * The periodic NUMA scanner (numa_scan_process) walks each user process's
+ * lower-half page tables, resolves each present page's physical address to
+ * a NUMA node via phys_to_node_id(), and flags it for migration when its
+ * node differs from the process's home node.  That remote-page predicate
+ * is the pure decision exposed as numa_scan_page_is_remote(); we verify
+ * it without driving the live scanner / page tables.
+ */
+static void sched_numa_scan_remote_test(struct kunit *test) {
+    /* A page on a DIFFERENT valid node than home is remote -> migrate. */
+    KUNIT_EXPECT_EQ(test, numa_scan_page_is_remote(1, 0), 1);
+    KUNIT_EXPECT_EQ(test, numa_scan_page_is_remote(0, 1), 1);
+    KUNIT_EXPECT_EQ(test, numa_scan_page_is_remote(3, 2), 1);
+
+    /* Same node as home -> local, no migration. */
+    KUNIT_EXPECT_EQ(test, numa_scan_page_is_remote(0, 0), 0);
+    KUNIT_EXPECT_EQ(test, numa_scan_page_is_remote(2, 2), 0);
+
+    /* Node resolution failed (-1) -> treated as non-remote (skip). */
+    KUNIT_EXPECT_EQ(test, numa_scan_page_is_remote(-1, 0), 0);
+    KUNIT_EXPECT_EQ(test, numa_scan_page_is_remote(-1, 3), 0);
+
+    /* Home node defaulting to 0 (scanner falls back when home<0). */
+    KUNIT_EXPECT_EQ(test, numa_scan_page_is_remote(0, 0), 0); /* local */
+    KUNIT_EXPECT_EQ(test, numa_scan_page_is_remote(1, 0), 1); /* remote */
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -1108,6 +1140,7 @@ static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_idle_yields_test),
     KUNIT_CASE(sched_pelt_accrual_test),
     KUNIT_CASE(sched_pelt_decay_chain_test),
+    KUNIT_CASE(sched_numa_scan_remote_test),
     {0}};
 
 static struct kunit_suite sched_test_suite;

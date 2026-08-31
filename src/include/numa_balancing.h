@@ -56,6 +56,10 @@ uint64_t numa_migrate_page(uint64_t page, int target_node);
  */
 const struct numa_node_stats *numa_get_node_stats(int node);
 
+/* Pure NUMA scan decision: 1 if page_node is valid (>=0) and differs from
+ * home_node (remote page the scanner should consider migrating), else 0. */
+int numa_scan_page_is_remote(int page_node, int home_node);
+
 /* Enable/disable the periodic NUMA scanner. */
 void numa_scan_set_enabled(int enabled);
 int  numa_scan_is_enabled(void);

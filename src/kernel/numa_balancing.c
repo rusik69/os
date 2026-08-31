@@ -71,6 +71,18 @@ static int phys_to_node_id(uint64_t phys)
     return -1;
 }
 
+/*
+ * Pure NUMA scan decision: is a page (already resolved to its NUMA node
+ * via phys_to_node_id()) remote relative to the process's home node?
+ * Returns 1 when the page's node is a valid one that differs from home
+ * (i.e. the scanner should consider migrating it), 0 otherwise.  This is
+ * the exact predicate numa_scan_process() applies per scanned page.
+ * Exposed for the kunit suite; does NOT touch live NUMA state.
+ */
+int numa_scan_page_is_remote(int page_node, int home_node) {
+    return (page_node >= 0 && page_node != home_node) ? 1 : 0;
+}
+
 /* ── Migration cool-down helpers ──────────────────────────────────── */
 
 /* Check if a page is on cool-down (recently migrated). */
@@ -342,7 +354,7 @@ static void numa_scan_process(struct process *proc)
 
                     /* Check if this page is on a remote NUMA node */
                     int page_node = phys_to_node_id(phys);
-                    if (page_node >= 0 && page_node != home) {
+                    if (numa_scan_page_is_remote(page_node, home)) {
                         pages_remote++;
 
                         /* Check cool-down to prevent bouncing */
