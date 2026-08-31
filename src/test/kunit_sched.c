@@ -12,6 +12,7 @@
 #include "heap.h"
 #include "kunit.h"
 #include "nohz.h"
+#include "pelt.h"
 #include "printf.h"
 #include "process.h"
 #include "sched_deadline.h"
@@ -962,6 +963,65 @@ static void sched_idle_yields_test(struct kunit *test) {
 }
 
 /* ====================================================================
+ *  PELT load tracking accrual
+ * ==================================================================== */
+
+/*
+ * PELT (Per-Entity Load Tracking) accumulates a decaying load average:
+ * while a task is running, util_avg ratchets up toward PELT_SCALE (1024)
+ * via an EWMA with half-life PELT_HALFLIFE ticks; while idle it decays
+ * toward 0.  We exercise the real pelt_init()/pelt_update() functions
+ * directly (they are exported and operate on a caller-supplied
+ * pelt_state, so no live scheduler state is touched).
+ */
+static void sched_pelt_accrual_test(struct kunit *test) {
+    struct pelt_state pelt;
+    uint32_t now = 1000;
+
+    pelt_init(&pelt);
+    pelt.last_update = now; /* determinism: ignore boot tick */
+
+    uint32_t prev = pelt.util_avg;
+    /* A freshly-initialised PELT has a non-zero starting load. */
+    KUNIT_EXPECT_TRUE(test, pelt.util_avg > 0);
+
+    /* Repeated running updates must keep pushing util_avg up toward the
+     * saturation point PELT_SCALE (monotone non-decreasing accrual). */
+    for (int i = 0; i < 200; i++) {
+        now += 1;
+        pelt_update(&pelt, 1 /*running*/, 1 /*runnable*/, now);
+        KUNIT_EXPECT_TRUE(test, pelt.util_avg >= prev);
+        prev = pelt.util_avg;
+    }
+    /* After enough running ticks it saturates near the scale maximum. */
+    KUNIT_EXPECT_TRUE(test, pelt.util_avg >= PELT_SCALE / 2);
+    KUNIT_EXPECT_TRUE(test, pelt.util_avg <= PELT_SCALE);
+    KUNIT_EXPECT_EQ(test, (int)pelt.last_update, (int)now);
+
+    /* With runnable=1 and running=1, load_avg tracks util_avg in tandem. */
+    KUNIT_EXPECT_EQ(test, (int)pelt.load_avg, (int)pelt.util_avg);
+
+    /* Now mark the task NOT running and NOT runnable: util must decay
+     * monotonically toward 0 (never increase, never go negative. */
+    prev = pelt.util_avg;
+    int decayed = 0;
+    for (int i = 0; i < 400 && pelt.util_avg > 0; i++) {
+        now += 1;
+        pelt_update(&pelt, 0, 0, now);
+        KUNIT_EXPECT_TRUE(test, pelt.util_avg <= prev);
+        if (pelt.util_avg < prev)
+            decayed = 1;
+        prev = pelt.util_avg;
+    }
+    KUNIT_EXPECT_TRUE(test, decayed);
+
+    /* pelt_init resets to a fresh starting value. */
+    pelt_init(&pelt);
+    pelt.last_update = now;
+    KUNIT_EXPECT_TRUE(test, pelt.util_avg > 0 && pelt.util_avg < PELT_SCALE);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -992,6 +1052,7 @@ static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_deadline_budget_test),
     KUNIT_CASE(sched_deadline_grub_reclaim_test),
     KUNIT_CASE(sched_idle_yields_test),
+    KUNIT_CASE(sched_pelt_accrual_test),
     {0}};
 
 static struct kunit_suite sched_test_suite;
