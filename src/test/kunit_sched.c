@@ -8,15 +8,16 @@
  * Item 270: KUnit — scheduler tests
  */
 
-#include "kunit.h"
-#include "scheduler.h"
-#include "process.h"
-#include "string.h"
-#include "printf.h"
-#include "waitqueue.h"
-#include "spinlock.h"
 #include "core_sched.h"
+#include "heap.h"
+#include "kunit.h"
 #include "nohz.h"
+#include "printf.h"
+#include "process.h"
+#include "scheduler.h"
+#include "spinlock.h"
+#include "string.h"
+#include "waitqueue.h"
 
 /* ====================================================================
  *  1. Scheduler Statistics Tests
@@ -467,6 +468,104 @@ static void sched_idle_ticks_test(struct kunit *test)
 }
 
 /* ====================================================================
+ * 15. EEVDF pick order (CFS: smallest eligible deadline wins)
+ * ==================================================================== */
+
+/*
+ * The scheduler is EEVDF-based, not a literal rb-tree: the runqueue keeps
+ * tasks in a 4-level multilevel queue and eevdf_pick_next() picks the task
+ * with the smallest eligible deadline (a linear scan that would be an
+ * rb_tree keyed by eevdf_eligible_deadline in a full implementation).
+ *
+ * This test verifies the CFS ordering invariant deterministically against
+ * the pure selection primitive sched_eevdf_pick_best(), using synthetic
+ * processes with hand-set EEVDF fields.  It never touches the live
+ * runqueue, so it is safe to run from kernel context.
+ *
+ * eligible_deadline(p) =
+ *     lag >= 0  ? max(0, deadline - lag)      // positive lag pulls deadline earlier
+ *     lag <  0  ? deadline + |lag|            // negative lag pushes it later
+ */
+static void sched_eevdf_pick_order_test(struct kunit *test) {
+    /* Four synthetic processes.  Only the EEVDF fields are read by the
+     * selection primitive; we zero the rest for cleanliness. */
+    enum { N = 4 };
+    struct process *procs[N];
+    int got = 0;
+    for (int i = 0; i < N; i++) {
+        procs[i] = (struct process *)kmalloc(sizeof(struct process));
+        if (!procs[i])
+            break;
+        memset(procs[i], 0, sizeof(struct process));
+        procs[i]->eevdf_deadline = 0;
+        procs[i]->eevdf_lag = 0;
+        got++;
+    }
+    KUNIT_EXPECT_EQ(test, (int64_t)got, (int64_t)N);
+    if (got != N) {
+        for (int i = 0; i < got; i++)
+            kfree(procs[i]);
+        return;
+    }
+
+    /* Case 1: equal lag (0), distinct deadlines -> smallest deadline wins. */
+    procs[0]->eevdf_deadline = 1000;
+    procs[1]->eevdf_deadline = 300;
+    procs[2]->eevdf_deadline = 800;
+    procs[3]->eevdf_deadline = 500;
+    struct process *best = sched_eevdf_pick_best(procs, N);
+    KUNIT_EXPECT_EQ(test, (uintptr_t)best, (uintptr_t)procs[1]); /* 300 */
+
+    /* Case 2: positive lag advances eligibility (deadline - lag).  A task
+     * with a larger deadline but a big positive lag can edge out others. */
+    procs[0]->eevdf_deadline = 1000;
+    procs[0]->eevdf_lag = 900; /* elig 100 */
+    procs[1]->eevdf_deadline = 300;
+    procs[1]->eevdf_lag = 0; /* elig 300 */
+    procs[2]->eevdf_deadline = 800;
+    procs[2]->eevdf_lag = 0; /* elig 800 */
+    procs[3]->eevdf_deadline = 500;
+    procs[3]->eevdf_lag = 0; /* elig 500 */
+    best = sched_eevdf_pick_best(procs, N);
+    KUNIT_EXPECT_EQ(test, (uintptr_t)best, (uintptr_t)procs[0]); /* elig 100 */
+
+    /* Case 3: negative lag delays eligibility (deadline + |lag|). */
+    procs[0]->eevdf_deadline = 1000;
+    procs[0]->eevdf_lag = 900; /* elig 100 */
+    procs[1]->eevdf_deadline = 300;
+    procs[1]->eevdf_lag = 0; /* elig 300 */
+    procs[2]->eevdf_deadline = 800;
+    procs[2]->eevdf_lag = -500; /* elig 1300 */
+    procs[3]->eevdf_deadline = 500;
+    procs[3]->eevdf_lag = 0; /* elig 500 */
+    best = sched_eevdf_pick_best(procs, N);
+    KUNIT_EXPECT_EQ(test, (uintptr_t)best, (uintptr_t)procs[0]);
+
+    /* Case 4: lag >= deadline clamps eligible deadline to 0 (floor). */
+    procs[0]->eevdf_deadline = 1000;
+    procs[0]->eevdf_lag = 1500; /* elig 0 */
+    procs[1]->eevdf_deadline = 300;
+    procs[1]->eevdf_lag = 0; /* elig 300 */
+    procs[2]->eevdf_deadline = 800;
+    procs[2]->eevdf_lag = 0; /* elig 800 */
+    procs[3]->eevdf_deadline = 500;
+    procs[3]->eevdf_lag = 0; /* elig 500 */
+    best = sched_eevdf_pick_best(procs, N);
+    KUNIT_EXPECT_EQ(test, (uintptr_t)best, (uintptr_t)procs[0]);
+
+    /* Case 5: NULL / degenerate inputs handled safely. */
+    KUNIT_EXPECT_EQ(test, (uintptr_t)sched_eevdf_pick_best(NULL, N), (uintptr_t)NULL);
+    KUNIT_EXPECT_EQ(test, (uintptr_t)sched_eevdf_pick_best(procs, 0), (uintptr_t)NULL);
+    KUNIT_EXPECT_EQ(test, (uintptr_t)sched_eevdf_pick_best(procs, -1), (uintptr_t)NULL);
+    procs[0] = NULL; /* all-NULL list -> NULL */
+    KUNIT_EXPECT_EQ(test, (uintptr_t)sched_eevdf_pick_best(procs, N), (uintptr_t)NULL);
+    procs[0] = best; /* restore */
+
+    for (int i = 0; i < N; i++)
+        kfree(procs[i]);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -490,8 +589,8 @@ static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_tick_test),
     KUNIT_CASE(sched_age_test),
     KUNIT_CASE(sched_idle_ticks_test),
-    {0}
-};
+    KUNIT_CASE(sched_eevdf_pick_order_test),
+    {0}};
 
 static struct kunit_suite sched_test_suite;
 

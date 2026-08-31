@@ -80,6 +80,10 @@ void sched_autogroup_assign(struct process *proc, int group_id);
 /* Find highest vruntime among group members */
 uint64_t sched_autogroup_max_vruntime(int group_id);
 
+/* Pure EEVDF pick-order primitive (min eligible deadline over an explicit
+ * list — does NOT touch the live runqueue).  See scheduler.c. */
+struct process *sched_eevdf_pick_best(struct process **list, int n);
+
 /* ── Include full struct process definition for callers ───────────── */
 #include "process.h"
 

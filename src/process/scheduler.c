@@ -242,6 +242,38 @@ static inline uint64_t eevdf_eligible_deadline(struct process *p) {
     }
 }
 
+/*
+ * Pure EEVDF ordering primitive: return the process with the SMALLEST
+ * eligible deadline from an explicit list.  This is exactly the selection
+ * rule eevdf_pick_next() applies to the live runqueue (which there is a
+ * linear scan over the multilevel queue; an rb_tree keyed by
+ * eevdf_eligible_deadline would encode the same total order).  Exposing
+ * the ordering rule apart from the runqueue lets the kunit suite verify
+ * the CFS pick-order invariant deterministically, without mutating the
+ * live runqueue.  The list must be non-NULL-terminated and @n must be its
+ * length; caller passes only processes it owns.  Returns NULL if n<=0 or
+ * every element is NULL.
+ */
+struct process *sched_eevdf_pick_best(struct process **list, int n) {
+    struct process *best = NULL;
+    uint64_t best_key = ~0ULL;
+
+    if (!list || n <= 0)
+        return NULL;
+
+    for (int i = 0; i < n; i++) {
+        struct process *p = list[i];
+        if (!p)
+            continue;
+        uint64_t key = eevdf_eligible_deadline(p);
+        if (key < best_key) {
+            best_key = key;
+            best = p;
+        }
+    }
+    return best;
+}
+
 /* Forward declaration */
 static struct process *dequeue_next_specific(struct process *target);
 
