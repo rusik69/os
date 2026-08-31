@@ -893,6 +893,75 @@ static void sched_deadline_grub_reclaim_test(struct kunit *test) {
 }
 
 /* ====================================================================
+ *  SCHED_IDLE yields to any other scheduling class
+ * ==================================================================== */
+
+/*
+ * SCHED_IDLE is the lowest scheduling class (rank 3 in sched_class_rank).
+ * It runs only when nothing else wants the CPU — so it must lose to RT
+ * (SCHED_FIFO/RR), to CFS (SCHED_OTHER/SCHED_BATCH), and to any unknown
+ * policy, regardless of the idle task's own priority value.  We verify
+ * this "yields to any other class" invariant through the pure comparator
+ * sched_fifo_prefer_a() — no live runqueue access.
+ */
+static void sched_idle_yields_test(struct kunit *test) {
+    struct process *i = (struct process *)kmalloc(sizeof(struct process));
+    struct process *f = (struct process *)kmalloc(sizeof(struct process));
+    struct process *r = (struct process *)kmalloc(sizeof(struct process));
+    struct process *o = (struct process *)kmalloc(sizeof(struct process));
+    struct process *b = (struct process *)kmalloc(sizeof(struct process));
+    if (!i || !f || !r || !o || !b) {
+        kfree(i);
+        kfree(f);
+        kfree(r);
+        kfree(o);
+        kfree(b);
+        return;
+    }
+    memset(i, 0, sizeof(struct process));
+    memset(f, 0, sizeof(struct process));
+    memset(r, 0, sizeof(struct process));
+    memset(o, 0, sizeof(struct process));
+    memset(b, 0, sizeof(struct process));
+
+    i->sched_policy = SCHED_IDLE;
+    i->priority = 0; /* even prio 0 loses */
+    f->sched_policy = SCHED_FIFO;
+    f->priority = 0;
+    r->sched_policy = SCHED_RR;
+    r->priority = 0;
+    o->sched_policy = SCHED_OTHER;
+    o->priority = 0;
+    b->sched_policy = SCHED_BATCH;
+    b->priority = 0;
+
+    /* Idle always yields to a real-time task. */
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(f, i), 1);
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(i, f), 0);
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(r, i), 1);
+
+    /* Idle always yields to a CFS task (OTHER and BATCH). */
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(o, i), 1);
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(i, o), 0);
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(b, i), 1);
+
+    /* Idle's own priority value is irrelevant: even an idle task with the
+     * highest-level priority (0) still loses to a CFS task. */
+    i->priority = 0;
+    o->priority = 3;
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(o, i), 1);
+
+    /* Idle never steals from a real-time task (always yields). */
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(f, i), 1);
+
+    kfree(i);
+    kfree(f);
+    kfree(r);
+    kfree(o);
+    kfree(b);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -922,6 +991,7 @@ static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_rr_timeslice_test),
     KUNIT_CASE(sched_deadline_budget_test),
     KUNIT_CASE(sched_deadline_grub_reclaim_test),
+    KUNIT_CASE(sched_idle_yields_test),
     {0}};
 
 static struct kunit_suite sched_test_suite;
