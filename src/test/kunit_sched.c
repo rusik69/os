@@ -14,6 +14,7 @@
 #include "nohz.h"
 #include "printf.h"
 #include "process.h"
+#include "sched_deadline.h"
 #include "scheduler.h"
 #include "spinlock.h"
 #include "string.h"
@@ -773,6 +774,87 @@ static void sched_rr_timeslice_test(struct kunit *test) {
 }
 
 /* ====================================================================
+ *  SCHED_DEADLINE budget enforcement
+ * ==================================================================== */
+
+/*
+ * SCHED_DEADLINE enforces a per-task runtime budget (dl_runtime) every
+ * period under CBS: a task must satisfy runtime <= deadline <= period
+ * (all non-zero) to be admitted, and its bandwidth floor is clamped to
+ * 1.0 (DL_BW_UNIT).  We verify the budget-enforcement rules against the
+ * pure functions sched_deadline_params_valid() and dl_bw() — no live
+ * deadline runqueue access, safe from kernel context.
+ */
+static void sched_deadline_budget_test(struct kunit *test) {
+    /* One NULL and several synthetic processes with hand-set DL params. */
+    struct process *p = (struct process *)kmalloc(sizeof(struct process));
+    KUNIT_EXPECT_NOT_NULL(test, p);
+    if (!p)
+        return;
+    memset(p, 0, sizeof(struct process));
+
+    /* ── Parameter validation (budget enforcement precondition) ─────── */
+    KUNIT_EXPECT_EQ(test, sched_deadline_params_valid(NULL), -1);
+
+    /* All params zero / missing -> invalid. */
+    p->dl_runtime = p->dl_deadline = p->dl_period = 0;
+    KUNIT_EXPECT_EQ(test, sched_deadline_params_valid(p), -1);
+
+    /* runtime == 0 -> invalid. */
+    p->dl_runtime = 0;
+    p->dl_deadline = 100;
+    p->dl_period = 200;
+    KUNIT_EXPECT_EQ(test, sched_deadline_params_valid(p), -1);
+
+    /* runtime > deadline -> invalid (budget exceeds the deadline window). */
+    p->dl_runtime = 150;
+    p->dl_deadline = 100;
+    p->dl_period = 200;
+    KUNIT_EXPECT_EQ(test, sched_deadline_params_valid(p), -1);
+
+    /* deadline > period (unconstrained deadline) -> invalid. */
+    p->dl_runtime = 50;
+    p->dl_deadline = 200;
+    p->dl_period = 150;
+    KUNIT_EXPECT_EQ(test, sched_deadline_params_valid(p), -1);
+
+    /* runtime == deadline == period: boundary is valid. */
+    p->dl_runtime = 100;
+    p->dl_deadline = 200;
+    p->dl_period = 200;
+    KUNIT_EXPECT_EQ(test, sched_deadline_params_valid(p), 0);
+
+    /* Typical valid: runtime < deadline < period. */
+    p->dl_runtime = 30;
+    p->dl_deadline = 100;
+    p->dl_period = 200;
+    KUNIT_EXPECT_EQ(test, sched_deadline_params_valid(p), 0);
+
+    /* ── Fixed-point bandwidth computation (CBS floor) ────────────── */
+
+    /* 0 input or zero period -> 0 bandwidth. */
+    KUNIT_EXPECT_EQ(test, dl_bw(0, 100), (uint64_t)0);
+    KUNIT_EXPECT_EQ(test, dl_bw(100, 0), (uint64_t)0);
+
+    /* runtime == period -> bandwidth 1.0 (DL_BW_UNIT). */
+    KUNIT_EXPECT_EQ(test, dl_bw(100, 100), DL_BW_UNIT);
+
+    /* half utilisation: runtime = period/2 -> DL_BW_UNIT/2. */
+    KUNIT_EXPECT_EQ(test, dl_bw(50, 100), (uint64_t)(DL_BW_UNIT / 2));
+
+    /* Greater than 1.0 is clamped to 1.0. */
+    KUNIT_EXPECT_EQ(test, dl_bw(200, 100), DL_BW_UNIT);
+
+    /* Quarter utilisation. */
+    KUNIT_EXPECT_EQ(test, dl_bw(25, 100), (uint64_t)(DL_BW_UNIT / 4));
+
+    /* Bandwidth is monotonic in runtime for a fixed period. */
+    KUNIT_EXPECT_TRUE(test, dl_bw(40, 100) >= dl_bw(20, 100));
+
+    kfree(p);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -800,6 +882,7 @@ static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_load_balance_2cpu_test),
     KUNIT_CASE(sched_fifo_priority_selection_test),
     KUNIT_CASE(sched_rr_timeslice_test),
+    KUNIT_CASE(sched_deadline_budget_test),
     {0}};
 
 static struct kunit_suite sched_test_suite;

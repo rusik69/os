@@ -53,6 +53,10 @@ extern struct cpu_dl_rq cpu_dl_rq[SMP_MAX_CPUS];
  * Returns 0 on invalid input; clamps to 1.0 (DL_BW_UNIT). */
 uint64_t dl_bw(uint64_t runtime, uint64_t period);
 
+/* Pure budget-enforcement precondition: 0 if the task is a valid DL task
+ * (non-zero, runtime <= deadline <= period), -1 otherwise. */
+int sched_deadline_params_valid(const struct process *proc);
+
 /* Initialise the per-CPU deadline runqueue for a CPU */
 void sched_deadline_init_cpu(int cpu);
 

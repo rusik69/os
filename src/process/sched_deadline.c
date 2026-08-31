@@ -84,6 +84,17 @@ static int dl_params_valid(const struct process *proc)
     return 0;
 }
 
+/*
+ * Pure deadline-budget enforcement precondition: 0 if proc is a valid DL
+ * task (runtime <= deadline <= period, all non-zero), -1 otherwise.  This
+ * is the gate sched_deadline_add_task() enforces before admitting a task,
+ * exposed so the kunit suite can verify budget enforcement rules without
+ * touching the live deadline runqueue.
+ */
+int sched_deadline_params_valid(const struct process *proc) {
+    return dl_params_valid(proc);
+}
+
 /* ── Admission control ───────────────────────────────────────────────── */
 
 /*
