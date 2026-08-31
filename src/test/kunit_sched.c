@@ -1190,6 +1190,52 @@ static void sched_core_cookie_assignment_test(struct kunit *test) {
 }
 
 /* ====================================================================
+ *  Core scheduling: sibling safety
+ * ==================================================================== */
+
+/*
+ * Sibling safety: sched_core_share()/sched_core_siblings()/
+ * sched_core_set_sibling() define which logical CPUs share a physical
+ * core, and return safe values for invalid input.  The invariants we
+ * verify are deterministic and read-only (or fail before any mutation):
+ *   - every valid CPU shares a core with itself
+ *   - sharing is symmetric (share(a,b) == share(b,a))
+ *   - invalid CPU ids yield safe 0 / -EINVAL, and a CPU can never be
+ *     its own "unsafe" sibling via the mutation path
+ */
+static void sched_core_sibling_safety_test(struct kunit *test) {
+    /* A CPU always shares a core with itself (for every valid id). */
+    for (int cpu = 0; cpu < SMP_MAX_CPUS; cpu++) {
+        KUNIT_EXPECT_EQ(test, sched_core_share(cpu, cpu), 1);
+    }
+
+    /* Sharing a CPU with an invalid id is rejected (0), not UB. */
+    KUNIT_EXPECT_EQ(test, sched_core_share(-1, 0), 0);
+    KUNIT_EXPECT_EQ(test, sched_core_share(0, -1), 0);
+    KUNIT_EXPECT_EQ(test, sched_core_share(SMP_MAX_CPUS, 0), 0);
+    KUNIT_EXPECT_EQ(test, sched_core_share(0, SMP_MAX_CPUS + 10), 0);
+
+    /* Sibling mask for an invalid CPU is 0 (safe). */
+    KUNIT_EXPECT_EQ(test, sched_core_siblings(-1), (uint64_t)0);
+    KUNIT_EXPECT_EQ(test, sched_core_siblings(SMP_MAX_CPUS), (uint64_t)0);
+
+    /* Sharing is symmetric: if cpu1 shares with cpu2, cpu2 shares back. */
+    for (int a = 0; a < SMP_MAX_CPUS; a += 1) {
+        for (int b = 0; b < SMP_MAX_CPUS; b += 1) {
+            KUNIT_EXPECT_EQ(test, sched_core_share(a, b), sched_core_share(b, a));
+        }
+    }
+
+    /* sched_core_set_sibling with an invalid cpu fails before mutating
+     * any topology map (-EINVAL), so it can never corrupt sibling safety. */
+    KUNIT_EXPECT_EQ(test, sched_core_set_sibling(-1, 0), -EINVAL);
+    KUNIT_EXPECT_EQ(test, sched_core_set_sibling(0, SMP_MAX_CPUS), -EINVAL);
+
+    /* cpus_per_core is always >= 1 (no SMT means 1). */
+    KUNIT_EXPECT_TRUE(test, sched_core_cpus_per_core() >= 1);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -1225,6 +1271,7 @@ static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_numa_scan_remote_test),
     KUNIT_CASE(sched_numa_migration_trigger_test),
     KUNIT_CASE(sched_core_cookie_assignment_test),
+    KUNIT_CASE(sched_core_sibling_safety_test),
     {0}};
 
 static struct kunit_suite sched_test_suite;
