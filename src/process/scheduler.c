@@ -1828,6 +1828,36 @@ static inline int sched_class_rank(uint8_t policy) {
     return 4; /* unknown — treated as lowest */
 }
 
+/*
+ * Pure SCHED_FIFO priority-selection comparator.  Returns 1 if task @a is
+ * selected ahead of task @b, 0 otherwise, using the same class hierarchy
+ * the scheduler applies when picking the next runnable task:
+ *   - a higher-priority class wins (RT > CFS > IDLE, by sched_class_rank)
+ *   - within the same class, a LOWER priority level value wins
+ *     (SCHED_LEVELS: 0 = highest, matching SCHED_FIFO static priority)
+ *   - equal class and equal priority: a wins (first-in-list, matches the
+ *     queue's head-first ordering)
+ * Exposed for the kunit suite; does NOT touch the live runqueue.
+ */
+int sched_fifo_prefer_a(struct process *a, struct process *b) {
+    if (!a)
+        return 0;
+    if (!b)
+        return 1;
+
+    int ra = sched_class_rank(a->sched_policy);
+    int rb = sched_class_rank(b->sched_policy);
+    if (ra != rb)
+        return ra < rb;
+
+    int pa = (int)a->priority;
+    int pb = (int)b->priority;
+    if (pa != pb)
+        return pa < pb;
+
+    return 1; /* identical class+priority: a first (head order) */
+}
+
 /* ── CFS minimum vruntime tracking ────────────────────────────
  *
  * Track the minimum vruntime across all runnable tasks on this

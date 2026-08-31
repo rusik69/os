@@ -638,6 +638,103 @@ static void sched_load_balance_2cpu_test(struct kunit *test) {
 }
 
 /* ====================================================================
+ *  SCHED_FIFO priority-based selection
+ * ==================================================================== */
+
+/*
+ * SCHED_FIFO selection follows the scheduling class hierarchy: RT tasks
+ * outrank CFS, which outranks SCHED_IDLE; within the same class, a lower
+ * priority level value (0 = highest) is selected first.  This is the rule
+ * scheduler_pick_next() applies when choosing the next runnable task.
+ * We verify it against the pure comparator sched_fifo_prefer_a() using
+ * synthetic processes — no live runqueue access, safe from kernel context.
+ */
+static void sched_fifo_priority_selection_test(struct kunit *test) {
+    /* Heap-allocated synthetic processes: only sched_policy and priority
+     * are read by the comparator. */
+    struct process *fifo_a = (struct process *)kmalloc(sizeof(struct process));
+    struct process *fifo_b = (struct process *)kmalloc(sizeof(struct process));
+    struct process *rr = (struct process *)kmalloc(sizeof(struct process));
+    struct process *cfs = (struct process *)kmalloc(sizeof(struct process));
+    struct process *idle = (struct process *)kmalloc(sizeof(struct process));
+    struct process *fifo_c = (struct process *)kmalloc(sizeof(struct process));
+    struct process *unknown = (struct process *)kmalloc(sizeof(struct process));
+    if (!fifo_a || !fifo_b || !rr || !cfs || !idle || !fifo_c || !unknown) {
+        kfree(fifo_a);
+        kfree(fifo_b);
+        kfree(rr);
+        kfree(cfs);
+        kfree(idle);
+        kfree(fifo_c);
+        kfree(unknown);
+        return;
+    }
+
+    memset(fifo_a, 0, sizeof(struct process));
+    memset(fifo_b, 0, sizeof(struct process));
+    memset(rr, 0, sizeof(struct process));
+    memset(cfs, 0, sizeof(struct process));
+    memset(idle, 0, sizeof(struct process));
+    memset(fifo_c, 0, sizeof(struct process));
+    memset(unknown, 0, sizeof(struct process));
+
+    fifo_a->sched_policy = SCHED_FIFO;
+    fifo_a->priority = 0;
+    fifo_b->sched_policy = SCHED_FIFO;
+    fifo_b->priority = 2;
+    rr->sched_policy = SCHED_RR;
+    rr->priority = 1;
+    cfs->sched_policy = SCHED_OTHER;
+    cfs->priority = 1;
+    idle->sched_policy = SCHED_IDLE;
+    idle->priority = 3;
+    fifo_c->sched_policy = SCHED_FIFO;
+    fifo_c->priority = 0;
+    unknown->sched_policy = 99;
+    unknown->priority = 0;
+
+    /* FIFO outranks CFS, regardless of priority value. */
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(fifo_a, cfs), 1);
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(cfs, fifo_a), 0);
+
+    /* FIFO outranks SCHED_IDLE. */
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(fifo_a, idle), 1);
+
+    /* RR is also RT — FIFO and RR are the same class (lower prio wins). */
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(fifo_b, rr), 0); /* rr prio 1 < fifo_b prio 2 */
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(rr, fifo_b), 1);
+
+    /* Within SCHED_FIFO: lower priority level value wins. */
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(fifo_a, fifo_b), 1); /* 0 < 2 */
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(fifo_b, fifo_a), 0);
+
+    /* CFS (OTHER) outranks SCHED_IDLE. */
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(cfs, idle), 1);
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(idle, cfs), 0);
+
+    /* Unknown policy is treated as lowest (rank 4) — still loses to FIFO. */
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(fifo_a, unknown), 1);
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(unknown, fifo_a), 0);
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(unknown, idle), 0); /* idle rank 3 < 4 */
+
+    /* Equal class and equal priority: a wins (first-in-list / head order). */
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(fifo_a, fifo_c), 1);
+
+    /* NULL handling. */
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(NULL, fifo_a), 0);
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(fifo_a, NULL), 1);
+    KUNIT_EXPECT_EQ(test, sched_fifo_prefer_a(NULL, NULL), 0);
+
+    kfree(fifo_a);
+    kfree(fifo_b);
+    kfree(rr);
+    kfree(cfs);
+    kfree(idle);
+    kfree(fifo_c);
+    kfree(unknown);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -663,6 +760,7 @@ static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_idle_ticks_test),
     KUNIT_CASE(sched_eevdf_pick_order_test),
     KUNIT_CASE(sched_load_balance_2cpu_test),
+    KUNIT_CASE(sched_fifo_priority_selection_test),
     {0}};
 
 static struct kunit_suite sched_test_suite;

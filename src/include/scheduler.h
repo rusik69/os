@@ -89,6 +89,9 @@ int sched_balance_weighted_load(struct process **list, int n);
 int sched_balance_should_pull(int this_load);
 int sched_balance_diff_significant(int other_load, int this_load);
 
+/* Pure SCHED_FIFO priority-selection comparator (no live runqueue). */
+int sched_fifo_prefer_a(struct process *a, struct process *b);
+
 /* ── Include full struct process definition for callers ───────────── */
 #include "process.h"
 
