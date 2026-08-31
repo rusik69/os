@@ -15,14 +15,15 @@
  *   # echo 1 > /sys/kernel/debug/kunit/run/slab_full
  */
 
-#include "kunit.h"
-#include "slab.h"
+#include "export.h"
 #include "heap.h"
 #include "kasan_light.h"
-#include "string.h"
-#include "printf.h"
-#include "export.h"
+#include "kunit.h"
 #include "page_allocator_ext.h"
+#include "printf.h"
+#include "rng.h"
+#include "slab.h"
+#include "string.h"
 
 /* ── Convenience helpers (mirrored from kunit.h for readability) ──── */
 #ifndef KUNIT_EXPECT_GT
@@ -389,8 +390,111 @@ static void slab_stress_tenk_test(struct kunit *test)
 }
 
 /* ====================================================================
- *  6. Cache constructor test
+ *  5b. Random free-list integrity
  * ==================================================================== */
+
+/* Count distinct (non-aliasing) pointers in a batch — freelist must never
+ * hand out the same object twice within one reclaim pass. */
+static int nr_return_unique(void *const *arr, int n) {
+    int unique = 0;
+    for (int i = 0; i < n; i++) {
+        int dup = 0;
+        for (int j = 0; j < i; j++) {
+            if (arr[j] == arr[i]) {
+                dup = 1;
+                break;
+            }
+        }
+        if (!dup) {
+            unique++;
+        }
+    }
+    return unique;
+}
+
+/*
+ * Allocate a full cache of objects, free them in RANDOM order, then
+ * reclaim the same count again.  Verifies the slab freelist maintains
+ * integrity under non-sequential (adversarial) frees:
+ *   - every freed object is returned exactly once on reclaim
+ *   - no freelist slot is handed out twice (no double-inclusion /
+ *     cycle in the free list)
+ *   - the reclaimed set is exactly the set that was freed (no leak,
+ *     no foreign objects injected into the free list)
+ */
+static void slab_free_list_random_test(struct kunit *test) {
+    enum { N = 256 };
+    struct kmem_cache *cache = kmem_cache_create("slab_freelist_rnd", 64, 0, NULL);
+    KUNIT_EXPECT_NOT_NULL(test, cache);
+    if (!cache) {
+        return; /* can't test without a cache */
+    }
+
+    void *alloc_batch[N];
+    void *reclaim_batch[N];
+    int nr_alloc = 0;
+    int nr_reclaim = 0;
+
+    /* Fill the cache: allocate N objects, tag each with its index. */
+    for (int i = 0; i < N; i++) {
+        uint64_t *obj = (uint64_t *)kmem_cache_alloc(cache, GFP_KERNEL);
+        if (!obj) {
+            break; /* cache exhausted by growth limits; continue with what we have */
+        }
+        *obj = (uint64_t)i + 1; /* non-zero tag */
+        alloc_batch[nr_alloc++] = obj;
+    }
+    KUNIT_EXPECT_EQ(test, (int64_t)nr_alloc, (int64_t)N);
+
+    /* Random shuffle of the free order (Fisher–Yates, PRNG-driven). */
+    for (int i = nr_alloc - 1; i > 0; i--) {
+        unsigned int j = rng_get_u32() % (unsigned int)(i + 1);
+        void *tmp = alloc_batch[i];
+        alloc_batch[i] = alloc_batch[j];
+        alloc_batch[j] = tmp;
+    }
+
+    /* Free in the shuffled order — this is the adversarial freelist path. */
+    for (int i = 0; i < nr_alloc; i++) {
+        kmem_cache_free(cache, alloc_batch[i]);
+    }
+
+    /* Reclaim the same number of objects and verify freelist integrity:
+     * each reclaim slot must be distinct and must match a freed object's
+     * index (so the freelist didn't leak or synthesize objects). */
+    int seen[N] = {0};
+    for (int i = 0; i < nr_alloc; i++) {
+        uint64_t *obj = (uint64_t *)kmem_cache_alloc(cache, GFP_KERNEL);
+        if (!obj) {
+            break; /* freelist shorter than expected -> leak / dropped node */
+        }
+        reclaim_batch[nr_reclaim++] = obj;
+    }
+
+    /* 1. Full count reclaimed (nothing lost from the free list). */
+    KUNIT_EXPECT_EQ(test, (int64_t)nr_reclaim, (int64_t)nr_alloc);
+
+    /* 2. No duplicate slot handed out twice (freelist cycle / double-inclusion). */
+    KUNIT_EXPECT_EQ(test, (int64_t)nr_return_unique(reclaim_batch, nr_reclaim),
+                    (int64_t)nr_reclaim);
+
+    /* 3. Every reclaimed object is one we freed (tag matches, no foreign data). */
+    int all_match = 1;
+    for (int i = 0; i < nr_reclaim; i++) {
+        uint64_t tag = *(uint64_t *)reclaim_batch[i];
+        if (tag < 1 || tag > (uint64_t)N || seen[tag - 1]) {
+            all_match = 0;
+            break;
+        }
+        seen[tag - 1] = 1;
+    }
+    KUNIT_EXPECT_TRUE(test, all_match);
+
+    for (int i = 0; i < nr_reclaim; i++) {
+        kmem_cache_free(cache, reclaim_batch[i]);
+    }
+    kmem_cache_destroy(cache);
+}
 
 /* Constructor that initialises allocated objects to a known state. */
 static void slab_test_ctor(void *obj)
@@ -451,22 +555,14 @@ static void slab_aligned_cache_test(struct kunit *test)
  * ==================================================================== */
 
 static const struct kunit_case slab_full_test_cases[] = {
-    KUNIT_CASE(slab_alloc_pattern_test),
-    KUNIT_CASE(slab_alloc_zero_test),
-    KUNIT_CASE(slab_alloc_huge_test),
-    KUNIT_CASE(slab_alloc_free_reuse_test),
-    KUNIT_CASE(slab_varied_sizes_test),
-    KUNIT_CASE(slab_cache_basic_test),
-    KUNIT_CASE(slab_cache_multi_alloc_test),
-    KUNIT_CASE(slab_kasan_overflow_test),
-    KUNIT_CASE(slab_kasan_underflow_test),
-    KUNIT_CASE(slab_stress_mix_test),
-    KUNIT_CASE(slab_stress_rapid_test),
-    KUNIT_CASE(slab_stress_tenk_test),
-    KUNIT_CASE(slab_cache_ctor_test),
-    KUNIT_CASE(slab_aligned_cache_test),
-    {0}
-};
+    KUNIT_CASE(slab_alloc_pattern_test),     KUNIT_CASE(slab_alloc_zero_test),
+    KUNIT_CASE(slab_alloc_huge_test),        KUNIT_CASE(slab_alloc_free_reuse_test),
+    KUNIT_CASE(slab_varied_sizes_test),      KUNIT_CASE(slab_cache_basic_test),
+    KUNIT_CASE(slab_cache_multi_alloc_test), KUNIT_CASE(slab_kasan_overflow_test),
+    KUNIT_CASE(slab_kasan_underflow_test),   KUNIT_CASE(slab_stress_mix_test),
+    KUNIT_CASE(slab_stress_rapid_test),      KUNIT_CASE(slab_stress_tenk_test),
+    KUNIT_CASE(slab_free_list_random_test),  KUNIT_CASE(slab_cache_ctor_test),
+    KUNIT_CASE(slab_aligned_cache_test),     {0}};
 
 static struct kunit_suite slab_full_test_suite;
 
