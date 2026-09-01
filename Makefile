@@ -1341,6 +1341,16 @@ stress: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 	    echo "[stress] Warning: mcopy stress_disk.elf failed"
 	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_runner.elf ::/stress_runner 2>/dev/null || \
 	    echo "[stress] Warning: mcopy stress_runner.elf failed"
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_mem.elf ::/bin/stress_mem 2>/dev/null || \
+	    echo "[stress] Warning: mcopy stress_mem.elf failed"
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_sched.elf ::/bin/stress_sched 2>/dev/null || \
+	    echo "[stress] Warning: mcopy stress_sched.elf failed"
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_fs.elf ::/bin/stress_fs 2>/dev/null || \
+	    echo "[stress] Warning: mcopy stress_fs.elf failed"
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_net.elf ::/bin/stress_net 2>/dev/null || \
+	    echo "[stress] Warning: mcopy stress_net.elf failed"
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_all.elf ::/stress_all 2>/dev/null || \
+	    echo "[stress] Warning: mcopy stress_all.elf failed"
 	@echo ""
 	@echo "=== Creating stress boot inittab ==="
 	@# Create inittab that runs stress tests via the runner, then spawns shell
@@ -1369,7 +1379,39 @@ stress: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 	@echo ""
 	@echo "=== Stress tests completed ==="
 
-# Show help for stress target
+# ── Combined / soak stress: run all subsystems together ───────────
+# Boots directly into /stress_all (mixed mem+disk+net load + soak),
+# which halts the VM via isa-debug-exit when done. Override
+# STRESS_DURATION for a longer soak (e.g. 24h: STRESS_DURATION=86400).
+stress-all: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
+	@echo "=== Building stress test ELFs ==="
+	$(MAKE) -C src/test/stress all 2>&1 | tail -5
+	@echo ""
+	@echo "=== Injecting stress test ELFs into disk image ==="
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_cpu.elf ::/bin/stress_cpu 2>/dev/null || true
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_memory.elf ::/bin/stress_memory 2>/dev/null || true
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_disk.elf ::/bin/stress_disk 2>/dev/null || true
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_mem.elf ::/bin/stress_mem 2>/dev/null || true
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_sched.elf ::/bin/stress_sched 2>/dev/null || true
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_fs.elf ::/bin/stress_fs 2>/dev/null || true
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_net.elf ::/bin/stress_net 2>/dev/null || true
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_all.elf ::/stress_all 2>/dev/null || true
+	@echo '::sysinit:/stress_all $(STRESS_DURATION) 4' > /tmp/stress_all_inittab
+	mcopy -i $(BUILDDIR)/disk.img -o /tmp/stress_all_inittab ::/etc/inittab 2>/dev/null || true
+	@echo ""
+	@echo "=== Running combined/soak stress in QEMU ($(STRESS_DURATION)s) ==="
+	qemu-system-x86_64 -cpu max,-x2apic \
+		-kernel $(BUILDDIR)/kernel.bin \
+		-m 256M \
+		-serial stdio \
+		-vga none -display none \
+		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
+		-netdev user,id=net0 -device e1000,netdev=net0 \
+		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+		-no-reboot 2>&1 || true
+	@echo "=== Combined/soak stress completed ==="
+
+.PHONY: stress stress-all stress-help
 stress-help:
 	@echo "Stress test targets:"
 	@echo "  make stress             Run all stress tests in QEMU (default: 20s each)"

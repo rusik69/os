@@ -19,6 +19,11 @@
 #include "string.h"
 #include "unistd.h"
 
+#ifndef _SIZE_T_DEFINED
+typedef __SIZE_TYPE__ size_t;
+#define _SIZE_T_DEFINED
+#endif
+
 #define DEFAULT_DURATION 30
 #define DEFAULT_DIR      "/stress_tmp"
 
@@ -562,12 +567,12 @@ int main(int argc, char *argv[])
 /* ── stress_disk_run ────────────────────────────────────── */
 int stress_disk_run(const char *path, size_t size)
 {
-    kprintf("[stress] Disk stress at %s size=%zu\n", path, size);
+    printf("[stress] Disk stress at %s size=%zu\n", path, size);
     return 0;
 }
 /* ── stress_disk_stop ────────────────────────────────────── */
 int stress_disk_stop(void)
 {
-    kprintf("[stress] Disk stress stopped\n");
+    printf("[stress] Disk stress stopped\n");
     return 0;
 }

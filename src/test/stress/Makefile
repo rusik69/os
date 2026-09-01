@@ -15,7 +15,8 @@ CFLAGS = -ffreestanding -nostdlib -nostdinc -fno-builtin -mno-red-zone \
          -I$(LIBC_DIR)/include -Wall -Wextra -Wundef -Wduplicated-branches -Wlogical-op -Wmaybe-uninitialized -O2 -g -MMD -MP
 LDFLAGS = -T $(LIBC_USER_LD) -nostdlib -z max-page-size=0x1000 -z noexecstack
 
-STRESS_ELFS = stress_cpu.elf stress_memory.elf stress_disk.elf stress_runner.elf
+STRESS_ELFS = stress_cpu.elf stress_memory.elf stress_disk.elf stress_runner.elf \
+	       stress_mem.elf stress_sched.elf stress_fs.elf stress_net.elf stress_all.elf
 
 .PHONY: all clean
 
@@ -33,6 +34,21 @@ stress_disk.elf: stress_disk.o $(LIBC_A)
 stress_runner.elf: stress_runner.o $(LIBC_A)
 	$(LD) $(LDFLAGS) stress_runner.o $(LIBC_A) -o $@
 
+stress_mem.elf: stress_mem.o $(LIBC_A)
+	$(LD) $(LDFLAGS) stress_mem.o $(LIBC_A) -o $@
+
+stress_sched.elf: stress_sched.o $(LIBC_A)
+	$(LD) $(LDFLAGS) stress_sched.o $(LIBC_A) -o $@
+
+stress_fs.elf: stress_fs.o $(LIBC_A)
+	$(LD) $(LDFLAGS) stress_fs.o $(LIBC_A) -o $@
+
+stress_net.elf: stress_net.o $(LIBC_A)
+	$(LD) $(LDFLAGS) stress_net.o $(LIBC_A) -o $@
+
+stress_all.elf: stress_all.o $(LIBC_A)
+	$(LD) $(LDFLAGS) stress_all.o $(LIBC_A) -o $@
+
 stress_cpu.o: stress_cpu.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -43,6 +59,21 @@ stress_disk.o: stress_disk.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 stress_runner.o: stress_runner.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+stress_mem.o: stress_mem.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+stress_sched.o: stress_sched.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+stress_fs.o: stress_fs.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+stress_net.o: stress_net.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+stress_all.o: stress_all.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:

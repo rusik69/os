@@ -20,6 +20,11 @@
 #include "string.h"
 #include "unistd.h"
 
+#ifndef _SIZE_T_DEFINED
+typedef __SIZE_TYPE__ size_t;
+#define _SIZE_T_DEFINED
+#endif
+
 #define DEFAULT_DURATION 30
 #define CLOCK_REALTIME   0
 
@@ -530,12 +535,12 @@ int main(int argc, char *argv[])
 /* ── stress_memory_run ──────────────────────────────────── */
 int stress_memory_run(size_t size)
 {
-    kprintf("[stress] Memory stress test with %zu bytes\n", size);
+    printf("[stress] Memory stress test with %zu bytes\n", size);
     return 0;
 }
 /* ── stress_memory_stop ──────────────────────────────────── */
 int stress_memory_stop(void)
 {
-    kprintf("[stress] Memory stress stopped\n");
+    printf("[stress] Memory stress stopped\n");
     return 0;
 }

@@ -358,12 +358,12 @@ int main(int argc, char *argv[])
 /* ── stress_cpu_run ─────────────────────────────────────── */
 int stress_cpu_run(int duration)
 {
-    kprintf("[stress] CPU stress for %ds\n", duration);
+    printf("[stress] CPU stress for %ds\n", duration);
     return 0;
 }
 /* ── stress_cpu_stop ─────────────────────────────────────── */
 int stress_cpu_stop(void)
 {
-    kprintf("[stress] CPU stress stopped\n");
+    printf("[stress] CPU stress stopped\n");
     return 0;
 }

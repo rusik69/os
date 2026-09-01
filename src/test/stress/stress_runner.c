@@ -171,26 +171,26 @@ int main(void)
 /* ── stress_runner_start ─────────────────────────────────── */
 int stress_runner_start(void)
 {
-    kprintf("[stress] Stress runner started\n");
+    printf("[stress] Stress runner started\n");
     return 0;
 }
 /* ── stress_runner_stop ──────────────────────────────────── */
 int stress_runner_stop(void)
 {
-    kprintf("[stress] Stress runner stopped\n");
+    printf("[stress] Stress runner stopped\n");
     return 0;
 }
 /* ── stress_runner_add ──────────────────────────────────── */
 int stress_runner_add(const char *name, void *fn)
 {
     (void)fn;
-    kprintf("[stress] Registered stress test: %s\n", name);
+    printf("[stress] Registered stress test: %s\n", name);
     return 0;
 }
 /* ── stress_runner_report ────────────────────────────────── */
 int stress_runner_report(void *report)
 {
     (void)report;
-    kprintf("[stress] Stress report generated\n");
+    printf("[stress] Stress report generated\n");
     return 0;
 }

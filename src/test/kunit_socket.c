@@ -11,31 +11,30 @@
  * network peer.
  */
 
+#include "errno.h"
 #include "kunit.h"
-#include "socket.h"
 #include "net.h"
 #include "net_internal.h"
-#include "string.h"
 #include "printf.h"
 #include "process.h"
-#include "errno.h"
+#include "socket.h"
+#include "string.h"
 
 /* sys_setsockopt_impl / sys_getsockopt_impl live in net/socket.c;
  * they are not exposed via a public header, so declare them here. */
-extern int sys_setsockopt_impl(int sockfd, int level, int optname,
-                               const void *optval, uint32_t optlen);
-extern int sys_getsockopt_impl(int sockfd, int level, int optname,
-                               void *optval, uint32_t *optlen);
+extern int sys_setsockopt_impl(int sockfd, int level, int optname, const void *optval,
+                               uint32_t optlen);
+extern int sys_getsockopt_impl(int sockfd, int level, int optname, void *optval, uint32_t *optlen);
 
 /* ====================================================================
  *  1. Socket: create / bind / listen / accept (state machine)
  * ==================================================================== */
 
-static void socket_create_test(struct kunit *test)
-{
+static void socket_create_test(struct kunit *test) {
     int slot = sock_alloc();
     KUNIT_EXPECT_TRUE(test, slot >= 0);
-    if (slot < 0) return;
+    if (slot < 0)
+        return;
 
     int fd = sock_fd_from_slot(slot);
     struct socket *s = sock_get(fd);
@@ -47,29 +46,29 @@ static void socket_create_test(struct kunit *test)
     sock_free(fd);
 }
 
-static void socket_bind_listen_accept_test(struct kunit *test)
-{
+static void socket_bind_listen_accept_test(struct kunit *test) {
     int slot = sock_alloc();
     KUNIT_EXPECT_TRUE(test, slot >= 0);
-    if (slot < 0) return;
+    if (slot < 0)
+        return;
 
     int fd = sock_fd_from_slot(slot);
     struct socket *s = sock_get(fd);
     KUNIT_EXPECT_NOT_NULL(test, s);
 
-    s->domain  = AF_INET;
-    s->type    = SOCK_STREAM;
+    s->domain = AF_INET;
+    s->type = SOCK_STREAM;
     s->protocol = IPPROTO_TCP;
 
     /* Bind to loopback:127.0.0.1:9000 */
-    s->local_ip   = 0x7F000001;   /* 127.0.0.1 */
+    s->local_ip = 0x7F000001; /* 127.0.0.1 */
     s->local_port = 9000;
-    s->state      = SOCK_STATE_BOUND;
+    s->state = SOCK_STATE_BOUND;
     KUNIT_EXPECT_EQ(test, (int64_t)s->state, (int64_t)SOCK_STATE_BOUND);
     KUNIT_EXPECT_EQ(test, (int64_t)s->local_port, (int64_t)9000);
 
     /* Listen */
-    s->state   = SOCK_STATE_LISTENING;
+    s->state = SOCK_STATE_LISTENING;
     s->backlog = 5;
     KUNIT_EXPECT_EQ(test, (int64_t)s->state, (int64_t)SOCK_STATE_LISTENING);
 
@@ -93,26 +92,26 @@ static void socket_bind_listen_accept_test(struct kunit *test)
  *     (upper-layer lifecycle + safe error paths)
  * ==================================================================== */
 
-static void socket_connect_lifecycle_test(struct kunit *test)
-{
+static void socket_connect_lifecycle_test(struct kunit *test) {
     int slot = sock_alloc();
     KUNIT_EXPECT_TRUE(test, slot >= 0);
-    if (slot < 0) return;
+    if (slot < 0)
+        return;
 
     int fd = sock_fd_from_slot(slot);
     struct socket *s = sock_get(fd);
     KUNIT_EXPECT_NOT_NULL(test, s);
 
-    s->domain    = AF_INET;
-    s->type      = SOCK_STREAM;
-    s->protocol  = IPPROTO_TCP;
-    s->local_ip  = 0x7F000001;
+    s->domain = AF_INET;
+    s->type = SOCK_STREAM;
+    s->protocol = IPPROTO_TCP;
+    s->local_ip = 0x7F000001;
     s->local_port = 9100;
 
     /* connect → CONNECTING with remote endpoint recorded */
-    s->remote_ip   = 0x7F000001;  /* 127.0.0.1 */
+    s->remote_ip = 0x7F000001; /* 127.0.0.1 */
     s->remote_port = 9101;
-    s->state       = SOCK_STATE_CONNECTING;
+    s->state = SOCK_STATE_CONNECTING;
     KUNIT_EXPECT_EQ(test, (int64_t)s->state, (int64_t)SOCK_STATE_CONNECTING);
     KUNIT_EXPECT_EQ(test, (int64_t)s->remote_port, (int64_t)9101);
 
@@ -135,8 +134,7 @@ static void socket_connect_lifecycle_test(struct kunit *test)
     sock_free(fd);
 }
 
-static void socket_invalid_ops_test(struct kunit *test)
-{
+static void socket_invalid_ops_test(struct kunit *test) {
     /* Freeing / getting never-allocated slots must be safe. */
     sock_free(-1);
     sock_free(SOCK_MAX + 10);
@@ -157,11 +155,11 @@ static void socket_invalid_ops_test(struct kunit *test)
  *  3. Socket options: SO_REUSEADDR / SO_KEEPALIVE
  * ==================================================================== */
 
-static void socket_opt_reuseaddr_test(struct kunit *test)
-{
+static void socket_opt_reuseaddr_test(struct kunit *test) {
     int slot = sock_alloc();
     KUNIT_EXPECT_TRUE(test, slot >= 0);
-    if (slot < 0) return;
+    if (slot < 0)
+        return;
 
     int fd = sock_fd_from_slot(slot);
     struct socket *s = sock_get(fd);
@@ -195,11 +193,11 @@ static void socket_opt_reuseaddr_test(struct kunit *test)
     sock_free(fd);
 }
 
-static void socket_opt_keepalive_test(struct kunit *test)
-{
+static void socket_opt_keepalive_test(struct kunit *test) {
     int slot = sock_alloc();
     KUNIT_EXPECT_TRUE(test, slot >= 0);
-    if (slot < 0) return;
+    if (slot < 0)
+        return;
 
     int fd = sock_fd_from_slot(slot);
     struct socket *s = sock_get(fd);
@@ -233,11 +231,11 @@ static void socket_opt_keepalive_test(struct kunit *test)
     sock_free(fd);
 }
 
-static void socket_opt_invalid_test(struct kunit *test)
-{
+static void socket_opt_invalid_test(struct kunit *test) {
     int slot = sock_alloc();
     KUNIT_EXPECT_TRUE(test, slot >= 0);
-    if (slot < 0) return;
+    if (slot < 0)
+        return;
 
     int fd = sock_fd_from_slot(slot);
 
@@ -253,8 +251,7 @@ static void socket_opt_invalid_test(struct kunit *test)
                     (int64_t)-EINVAL);
 
     /* optlen too small → -EINVAL. */
-    KUNIT_EXPECT_EQ(test,
-                    (int64_t)sys_setsockopt_impl(fd, SOL_SOCKET, SO_REUSEADDR, &v, 1),
+    KUNIT_EXPECT_EQ(test, (int64_t)sys_setsockopt_impl(fd, SOL_SOCKET, SO_REUSEADDR, &v, 1),
                     (int64_t)-EINVAL);
 
     sock_free(fd);
@@ -264,16 +261,14 @@ static void socket_opt_invalid_test(struct kunit *test)
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
-static const struct kunit_case socket_test_cases[] = {
-    KUNIT_CASE(socket_create_test),
-    KUNIT_CASE(socket_bind_listen_accept_test),
-    KUNIT_CASE(socket_connect_lifecycle_test),
-    KUNIT_CASE(socket_invalid_ops_test),
-    KUNIT_CASE(socket_opt_reuseaddr_test),
-    KUNIT_CASE(socket_opt_keepalive_test),
-    KUNIT_CASE(socket_opt_invalid_test),
-    {0}
-};
+static const struct kunit_case socket_test_cases[] = {KUNIT_CASE(socket_create_test),
+                                                      KUNIT_CASE(socket_bind_listen_accept_test),
+                                                      KUNIT_CASE(socket_connect_lifecycle_test),
+                                                      KUNIT_CASE(socket_invalid_ops_test),
+                                                      KUNIT_CASE(socket_opt_reuseaddr_test),
+                                                      KUNIT_CASE(socket_opt_keepalive_test),
+                                                      KUNIT_CASE(socket_opt_invalid_test),
+                                                      {0}};
 
 static struct kunit_suite socket_test_suite;
 
@@ -281,29 +276,27 @@ static struct kunit_suite socket_test_suite;
  *  Suite Registration
  * ==================================================================== */
 
-void kunit_socket_register(void)
-{
+void kunit_socket_register(void) {
     int ci = 0;
     for (int i = 0; i < (int)(sizeof(socket_test_cases) / sizeof(socket_test_cases[0])) &&
                     socket_test_cases[i].run != NULL;
          i++) {
         socket_test_suite.cases[ci].name = socket_test_cases[i].name;
-        socket_test_suite.cases[ci].run  = socket_test_cases[i].run;
+        socket_test_suite.cases[ci].run = socket_test_cases[i].run;
         ci++;
     }
     socket_test_suite.cases[ci].name = NULL;
-    socket_test_suite.cases[ci].run  = NULL;
+    socket_test_suite.cases[ci].run = NULL;
 
-    socket_test_suite.name     = "socket";
-    socket_test_suite.setup    = NULL;
+    socket_test_suite.name = "socket";
+    socket_test_suite.setup = NULL;
     socket_test_suite.teardown = NULL;
 
     kunit_register_suite(&socket_test_suite);
     kprintf("[KUnit] Socket tests registered (%d cases)\n", ci);
 }
 
-int kunit_socket_init(void)
-{
+int kunit_socket_init(void) {
     kprintf("[kunit] Socket tests initialized\n");
     return 0;
 }
