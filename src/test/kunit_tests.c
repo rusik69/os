@@ -49,6 +49,8 @@ extern void kunit_container_ext_register(void);
 extern void kunit_vfs_register(void);
 extern void kunit_page_cache_register(void);
 extern void kunit_net_register(void);
+extern void kunit_tcp_register(void);
+extern void kunit_socket_register(void);
 extern void kunit_errno_register(void);
 extern void kunit_tls_register(void);
 extern void kunit_usb_register(void);
@@ -1565,6 +1567,12 @@ void kunit_register_builtin_tests(void)
 
     /* Register the networking test suite from kunit_net.c */
     kunit_net_register();
+
+    /* Register the TCP/IP core test suite from kunit_tcp.c */
+    kunit_tcp_register();
+
+    /* Register the socket-layer test suite from kunit_socket.c */
+    kunit_socket_register();
 
     /* Register the container exec enhanced test suite from kunit_container_ext.c */
     kunit_container_ext_register();
