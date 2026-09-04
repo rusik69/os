@@ -12,6 +12,7 @@
 #include "ioprio.h"
 #include "kcov.h"
 #include "kpti.h"
+#include "lsm.h"
 #include "mnt_namespace.h"
 #include "pid_namespace.h"
 #include "pmm.h"
@@ -701,6 +702,9 @@ struct process *process_create(void (*entry)(void), const char *name) {
         free_guarded_kernel_stack(proc);
         return NULL;
     }
+    /* LSM task_alloc hook: security modules initialize per-task state
+     * (Smack label, Landlock bindings) for a newly reserved pid. */
+    lsm_task_alloc(proc->pid);
     proc->state = PROCESS_READY;
     proc->next = NULL;
     proc->pending_signals = 0;
@@ -919,6 +923,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp, uint64_t 
         free_guarded_kernel_stack(proc);
         return NULL;
     }
+    lsm_task_alloc(proc->pid);
     proc->state = PROCESS_READY;
     proc->next = NULL;
     proc->pending_signals = 0;
@@ -1486,6 +1491,7 @@ int process_fork(void) {
     child->parent_pid = parent->pid;
     child->is_suspended = 0;
     child->stack_canary = prng_rand64();
+    lsm_task_alloc(child->pid);
 
     if (alloc_guarded_kernel_stack(child) < 0) {
         free_pid(child->pid);
@@ -1687,6 +1693,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack, uin
     child->state = PROCESS_UNUSED;
     *child = *parent;
     child->pid = alloc_pid();
+    lsm_task_alloc(child->pid);
     /* After fork/clone, parent and child share file offsets */
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
         if (parent->fd_table[i].used) {
@@ -2106,6 +2113,7 @@ void process_cleanup(struct process *proc) {
     }
     if (proc->pid) {
         free_pid(proc->pid);
+        lsm_task_free(proc->pid);
     }
     /* Free namespace-local PID (Item 111) */
     if (proc->pid_ns && proc->pid_ns != &init_pid_ns && proc->ns_pid > 0) {
