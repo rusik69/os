@@ -11,9 +11,11 @@
 
 #define KERNEL_INTERNAL
 #include "yama.h"
+
+#include "caps.h"
+#include "lsm.h"
 #include "printf.h"
 #include "process.h"
-#include "caps.h"
 #include "sysctl.h"
 
 /* YAMA ptrace scope: 0 = disabled, 1 = restricted (descendants only),
@@ -22,6 +24,8 @@ int __read_mostly yama_ptrace_scope = YAMA_PTRACE_SCOPE_RESTRICTED;
 
 void __init yama_init(void) {
     kprintf("[OK] YAMA ptrace initialized (scope=%d)\n", yama_ptrace_scope);
+    /* Join the active LSM stack (evaluation priority order). */
+    lsm_stack_register("yama");
 }
 
 /* Set the allowed tracer PID for a process (called from prctl PR_SET_PTRACER) */

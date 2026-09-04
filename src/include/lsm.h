@@ -19,6 +19,9 @@
 #include "jump_label.h"
 #include "types.h"
 
+/* Maximum number of stacked security modules (LSM stacking). */
+#define LSM_STACK_MAX_MODULES 8
+
 /* Hook identifiers.  Keep in sync with lsm_hook_names[] in lsm.c. */
 enum lsm_hook_id {
     LSM_HOOK_FILE_PERMISSION = 0, /* int (*)(const char *path, int mask) */
@@ -83,5 +86,27 @@ int lsm_socket_connect(int domain, int type, int protocol);
 int lsm_mount(const char *src, const char *dest);
 int lsm_umount(const char *dest);
 int lsm_bprm_check_security(const char *filename);
+
+/* ── LSM stacking (see lsm_stack.c) ─────────────────────────────── */
+/* Security modules call lsm_stack_register() during their init to join
+ * the active LSM stack.  Modules are evaluated in registration order
+ * (first-fail), which is independent of the per-hook handler order. */
+
+/* Add a named module to the active LSM stack.  Returns its stack index
+ * (0-based, in registration/priority order) or -1 if the stack is full
+ * or the name is already present. */
+int lsm_stack_register(const char *name);
+
+/* Number of modules currently on the stack. */
+int lsm_stack_count(void);
+
+/* Name of the module at index i, or NULL if out of range. */
+const char *lsm_stack_name(int i);
+
+/* True if a module with the given name is stacked. */
+int lsm_stack_has(const char *name);
+
+/* Initialize the stacking registry (called once, from lsm_init). */
+void lsm_stack_init(void);
 
 #endif /* LSM_H */

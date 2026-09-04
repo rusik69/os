@@ -414,6 +414,7 @@ C_SRCS = src/kernel/kernel.c \
          src/ipc/semaphore.c \
          src/kernel/audit.c \
          src/kernel/lsm.c \
+         src/kernel/lsm_stack.c \
          src/kernel/yama.c \
          src/kernel/kptr_restrict.c \
          src/kernel/dmesg.c \

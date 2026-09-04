@@ -159,6 +159,9 @@ void smack_init(void)
     lsm_register_hook(LSM_HOOK_FILE_PERMISSION, (void *)smack_file_permission);
     lsm_register_hook(LSM_HOOK_BPRM_CHECK_SECURITY, (void *)smack_bprm_set_creds);
 
+    /* Join the active LSM stack (evaluation priority order). */
+    lsm_stack_register("smack");
+
     smack_initialized = 1;
     kprintf("[OK] SMACK initialized (floor=_, star=*, hat=^)\n");
 }

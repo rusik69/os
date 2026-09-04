@@ -43,6 +43,7 @@ void lsm_init(void) {
 
     lsm_initialized = 1;
     lsm_enabled = 1;
+    lsm_stack_init();
     kprintf("[OK] lsm: hook framework ready (%d hook types)\n", LSM_HOOK_COUNT);
 }
 
