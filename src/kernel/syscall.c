@@ -39,6 +39,7 @@
 #include "keyboard.h"
 #include "kptr_restrict.h"
 #include "lockdown.h"
+#include "lsm.h"
 #include "madvise_ext.h"
 #include "mem_policy.h" /* for NUMA memory policy syscalls */
 #include "memfd.h"
@@ -1766,6 +1767,14 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
             perm_op |= VFS_W_OK;
         if (vfs_check_perms(path, (uint16_t)p->uid, (uint16_t)p->gid, perm_op) < 0)
             return (uint64_t)(int64_t)-EACCES;
+
+        /* LSM file_permission hook: security modules (Landlock/Smack)
+         * can deny the open based on the requested access mask. */
+        {
+            int lsm_ret = lsm_file_permission(path, (int)perm_op);
+            if (lsm_ret < 0)
+                return (uint64_t)(int64_t)lsm_ret;
+        }
     }
 
     /* Handle O_TMPFILE */
