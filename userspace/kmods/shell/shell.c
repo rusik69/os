@@ -295,6 +295,34 @@ int shell_stdin_read(char *buf, int max) {
     return n;
 }
 
+/* ── Stderr redirection: cmd 2>file / cmd 2>>file ─────────────────── */
+static int g_err_redirect_mode = 0; /* 0=none, 1=overwrite, 2=append */
+static char g_err_redirect_path[64];
+
+/* Route a shell diagnostic to stderr, honoring a pending 2>/2>> redirect. */
+static void shell_err_write(const char *s) {
+    size_t n = strlen(s);
+    if (g_err_redirect_mode == 0) {
+        kprintf("%s", s);
+        return;
+    }
+    if (g_err_redirect_mode == 2) {
+        uint32_t existing = 0;
+        char old[1024];
+        if (vfs_read(g_err_redirect_path, old, 1022, &existing) == 0 && existing > 0) {
+            int total = (int)existing + (int)n;
+            if (total > 1023)
+                total = 1023;
+            memcpy(old + existing, s, (size_t)(total - (int)existing));
+            old[total] = '\0';
+            vfs_write(g_err_redirect_path, old, (uint32_t)total);
+            return;
+        }
+    }
+    vfs_create(g_err_redirect_path, 1);
+    vfs_write(g_err_redirect_path, s, (uint32_t)n);
+}
+
 /* ── Arithmetic evaluator for $(( expr )) ───────────────────────── */
 static const char *arith_p;
 
@@ -1420,7 +1448,7 @@ static void process_cmd(void) {
                 p->sid = p->pid;
             kprintf("[%lu] %s\n", (unsigned long)p->pid, bg_slots[slot].cmd);
         } else {
-            kprintf("Failed to create background process\n");
+            shell_err_write("Failed to create background process\n");
         }
         return;
     }
@@ -1678,6 +1706,66 @@ static void process_cmd(void) {
             vfs_write(filepath, redir_buf, (uint32_t)redir_len);
         }
         return;
+    }
+
+    /* --- Check for stderr redirection: cmd 2>file or cmd 2>>file --- */
+    {
+        char *epos = 0;
+        int eappend = 0;
+        for (char *p = cmd; *p; p++) {
+            /* Standalone '2>' / '2>>' operator (preceded by space or start). */
+            if (p[0] == '2' && p[1] == '>' && (p == cmd || *(p - 1) == ' ')) {
+                epos = p;
+                eappend = (p[2] == '>') ? 1 : 0;
+                break;
+            }
+        }
+        if (epos) {
+            *epos = '\0';
+            char *efile = epos + (eappend ? 3 : 2);
+            while (*efile == ' ')
+                efile++;
+            int eflen = strlen(efile);
+            while (eflen > 0 && efile[eflen - 1] == ' ')
+                efile[--eflen] = '\0';
+
+            char epath[64];
+            if (efile[0] != '/') {
+                epath[0] = '/';
+                strncpy(epath + 1, efile, 62);
+            } else {
+                strncpy(epath, efile, 63);
+            }
+            epath[63] = '\0';
+
+            /* Trim left side and parse cmd/args */
+            char *lcmd = cmd;
+            while (*lcmd == ' ')
+                lcmd++;
+            char *lt = epos - 1;
+            while (lt > lcmd && *lt == ' ') {
+                *lt = '\0';
+                lt--;
+            }
+            char *largs = lcmd;
+            while (*largs && *largs != ' ')
+                largs++;
+            if (*largs) {
+                *largs = '\0';
+                largs++;
+                while (*largs == ' ')
+                    largs++;
+            } else
+                largs = 0;
+
+            g_err_redirect_mode = eappend ? 2 : 1;
+            strncpy(g_err_redirect_path, epath, sizeof(g_err_redirect_path) - 1);
+            g_err_redirect_path[sizeof(g_err_redirect_path) - 1] = '\0';
+            shell_exec_cmd(lcmd, largs);
+            g_err_redirect_mode = 0;
+            g_err_redirect_path[0] = '\0';
+            return;
+        }
     }
 
     /* --- Normal command --- */
@@ -2130,7 +2218,7 @@ static int process_if_block(const char *block) {
 
         /* We must have at least "then" and "fi" */
         if (!then_pos || !fi_pos) {
-            kprintf("if: syntax error — missing then or fi\n");
+            shell_err_write("if: syntax error — missing then or fi\n");
             last_exit_status = 2;
             return 2;
         }
@@ -2358,7 +2446,7 @@ static int process_loop_block(const char *block) {
     }
 
     if (!do_pos || !done_pos) {
-        kprintf("loop: syntax error — missing do or done\n");
+        shell_err_write("loop: syntax error — missing do or done\n");
         last_exit_status = 2;
         return 2;
     }
@@ -2416,7 +2504,7 @@ static int process_loop_block(const char *block) {
         while (*v == ' ' || *v == '\t')
             v++;
         if (strncmp(v, "in ", 3) != 0 && strncmp(v, "in\t", 3) != 0) {
-            kprintf("for: syntax error — expected 'in' after variable\n");
+            shell_err_write("for: syntax error — expected 'in' after variable\n");
             if (s_loop_nest_level > 0)
                 s_loop_nest_level--;
             last_exit_status = 2;
@@ -2951,7 +3039,11 @@ void shell_exec_cmd(const char *cmd, const char *args) {
             kprintf("Usage: %s\n  %s\n", cmd, d);
             return;
         }
-        kprintf("Unknown command: %s\n", cmd);
+        {
+            char ebuf[128];
+            snprintf(ebuf, sizeof(ebuf), "Unknown command: %s\n", cmd);
+            shell_err_write(ebuf);
+        }
         return;
     }
 
@@ -2970,7 +3062,11 @@ void shell_exec_cmd(const char *cmd, const char *args) {
         cmd_test(args);
         return;
     }
-    kprintf("Unknown command: %s\n", cmd);
+    {
+        char ebuf[128];
+        snprintf(ebuf, sizeof(ebuf), "Unknown command: %s\n", cmd);
+        shell_err_write(ebuf);
+    }
     last_exit_status = 127;
 }
 
