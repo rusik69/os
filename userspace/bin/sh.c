@@ -24,12 +24,15 @@
 #define CLOCK_MONOTONIC 1
 #endif
 
-/* Exit status decoding macros (Linux-compatible encoding) */
+/* Exit status decoding macros (Linux-compatible encoding).
+ * Guarded behind SH_UNIT_TEST: the system <stdlib.h> already provides these. */
+#ifndef SH_UNIT_TEST
 #define WIFEXITED(s) (((s) & 0x7f) == 0)
 #define WEXITSTATUS(s) (((s) >> 8) & 0xff)
 #define WIFSIGNALED(s) ((((s) & 0x7f) != 0) && (((s) & 0x7f) < 0x7f))
 #define WTERMSIG(s) ((s) & 0x7f)
 #define WNOHANG 1
+#endif
 
 /* Signals (libc provides these in unistd.h) */
 #ifndef SIG_IGN
@@ -43,10 +46,19 @@
 #define S_IFREG 0x8000
 #define S_IFDIR 0x4000
 #endif
+#ifndef S_ISREG          /* system headers may already define these on host */
 #define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
+#endif
+#ifndef S_ISDIR
 #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
+#endif
 
-/* freestanding-libc missing helpers */
+/* freestanding-libc missing helpers.
+ * Guarded behind SH_UNIT_TEST so the host-side unit test (tests/unit/test_sh.c)
+ * can include this file against the real glibc without redefinition errors.
+ * In a normal OS build these shims exist because the freestanding libc lacks
+ * them; under SH_UNIT_TEST we use the system's. Behavior is unchanged. */
+#ifndef SH_UNIT_TEST
 static char *strdup(const char *s) {
     if (!s)
         return 0;
@@ -81,12 +93,15 @@ static char *strpbrk(const char *s, const char *accept) {
                 return (char *)s;
     return 0;
 }
+#endif /* !SH_UNIT_TEST */
+
 static char *sh_strchr(const char *s, int c) {
     for (; *s; s++)
         if (*s == (char)c)
             return (char *)s;
     return 0;
 }
+#ifndef SH_UNIT_TEST
 static char *strncat(char *dst, const char *src, int n) {
     int i = 0;
     while (dst[i])
@@ -98,6 +113,8 @@ static char *strncat(char *dst, const char *src, int n) {
     dst[i] = '\0';
     return dst;
 }
+#endif /* !SH_UNIT_TEST */
+
 static char *itoa_buf(long v);
 static int fnmatch_simple(const char *pat, const char *str);
 
@@ -118,7 +135,9 @@ static int opt_xtrace;
 #define MAX_LINE 4096
 #define MAX_ARGS 64
 #define MAX_ENV 128
+#ifndef PATH_MAX          /* system headers may already define it on host */
 #define PATH_MAX 256
+#endif
 #define MAX_NODES 256
 #define MAX_SEGS 16
 #define MAX_JOBS 64
@@ -401,7 +420,9 @@ static int execute_node(struct ast_node *node);
 static int execute_command_node(struct ast_node *node);
 static int file_exists(const char *path, int type);
 static int eval_test_binary(const char *op, const char *l, const char *r);
+#ifndef SH_UNIT_TEST
 static int sh_try_array_assign(char *line);
+#endif
 static int tokenize(const char *src, struct token *toks, int maxtoks);
 static int tokenize(const char *src, struct token *toks, int maxtoks) {
     int nt = 0;
@@ -485,8 +506,39 @@ static int tokenize(const char *src, struct token *toks, int maxtoks) {
         /* word (with quotes) */
         int qi = 0;
         int has_quote = 0;
-        while (*p && *p != ' ' && *p != '\t' && *p != '|' && *p != ';' && *p != '&' && *p != '(' &&
-               *p != ')' && *p != '<' && *p != '>') {
+        while (*p && *p != ' ' && *p != '\t' && *p != '|' && *p != ';' && *p != '&' && *p != '<' &&
+               *p != '>') {
+            /* Group $(...) and $((...)) as a single word: when a '$' is
+             * immediately followed by a paren, keep consuming until the matching
+             * close paren(s) so expansion sees the whole construct. This applies
+             * anywhere a '$' appears (e.g. mid-word in "BAR=$((...))"). */
+            if (*p == '$' && p[1] == '(') {
+                if (qi < 1023)
+                    toks[nt].text[qi++] = *p++; /* the '$' */
+                int depth = 0;
+                do {
+                    if (qi < 1023)
+                        toks[nt].text[qi++] = *p;
+                    if (*p == '(')
+                        depth++;
+                    else if (*p == ')')
+                        depth--;
+                    p++;
+                } while (*p && depth > 0);
+                if (*p == '\0' || *p == ' ' || *p == '\t' || *p == '|' ||
+                    *p == ';' || *p == '&' || *p == '<' || *p == '>')
+                    break;
+                continue;
+            }
+            /* Outside of the $(...) grouping, standalone '(' ')' are word
+             * characters too (e.g. subshell / grouping) — they are only split
+             * when not part of a $() construct. */
+            if (*p == '(' || *p == ')') {
+                if (qi < 1023)
+                    toks[nt].text[qi++] = *p;
+                p++;
+                continue;
+            }
             if (*p == '\'' || *p == '"') {
                 char q = *p++;
                 has_quote = 1;
@@ -675,9 +727,10 @@ static long arith_primary(const char *s, const char **end, int *ok) {
             return ~v;
         return v;
     }
-    /* number or variable */
-    if ((*s >= '0' && *s <= '9') || *s == '$') {
-        int isnum = (*s != '$');
+    /* number or variable or bare identifier */
+    if ((*s >= '0' && *s <= '9') || *s == '$' || (*s >= 'A' && *s <= 'Z') ||
+        (*s >= 'a' && *s <= 'z') || *s == '_') {
+        int isnum = (*s >= '0' && *s <= '9');
         char name[64];
         int ni = 0;
         const char *sp = s;
@@ -717,10 +770,14 @@ static long arith_primary(const char *s, const char **end, int *ok) {
 
 static long arith_term(const char *s, const char **end, int *ok) {
     long v = arith_primary(s, end, ok);
+    while (**end == ' ' || **end == '\t')
+        *end = *end + 1;
     while (**end == '*' || **end == '/' || **end == '%') {
         char op = **end;
         const char *e;
         *end = *end + 1;
+        while (**end == ' ' || **end == '\t')
+            *end = *end + 1;
         long r = arith_primary(*end, &e, ok);
         *end = e;
         if (op == '*')
@@ -729,21 +786,29 @@ static long arith_term(const char *s, const char **end, int *ok) {
             v = r ? v / r : 0;
         else
             v = r ? v % r : 0;
+        while (**end == ' ' || **end == '\t')
+            *end = *end + 1;
     }
     return v;
 }
 static long arith_expr(const char *s, const char **end, int *ok) {
     long v = arith_term(s, end, ok);
+    while (**end == ' ' || **end == '\t')
+        *end = *end + 1;
     while (**end == '+' || **end == '-') {
         char op = **end;
         const char *e;
         *end = *end + 1;
+        while (**end == ' ' || **end == '\t')
+            *end = *end + 1;
         long r = arith_term(*end, &e, ok);
         *end = e;
         if (op == '+')
             v += r;
         else
             v -= r;
+        while (**end == ' ' || **end == '\t')
+            *end = *end + 1;
     }
     return v;
 }
@@ -869,6 +934,26 @@ static char *expand_word(const char *s, int *fail) {
                 char ops[8];
                 char arg[256];
                 name[0] = ops[0] = arg[0] = '\0';
+                /* ${#VAR} / ${#ARR[@]} / ${#ARR[i]} — length prefix */
+                if (expr[0] == '#') {
+                    ops[0] = '#';
+                    ops[1] = '\0';
+                    /* name is everything after the leading '#' (may include
+                     * an array index like [#i] / [#*]); do_param_expand handles
+                     * the index + length combination. */
+                    int ni = 0;
+                    for (int k = 1; expr[k] && expr[k] != '}' && ni < 127; k++)
+                        name[ni++] = expr[k];
+                    name[ni] = '\0';
+                    /* No further ops/arg parsing for the length form. */
+                    char *val = do_param_expand(name, ops, 0);
+                    if (val) {
+                        strcat(out, val);
+                        free(val);
+                    }
+                    p = end + 1;
+                    continue;
+                }
                 /* detect ops at first of :- := :+ # ## % %% */
                 int oi = 0;
                 int i = 0;
@@ -1607,20 +1692,20 @@ static int cmd_test(int argc, char **argv) {
             result = (strcmp(a[0], a[1]) == 0);
     } else {
         /* binary: a[0] OP a[2]  with optional -a/-o chaining */
-        result = eval_test_binary(a[0], a[1], a[2]);
+        result = eval_test_binary(a[1], a[0], a[2]);
         int i = 3;
         while (i < n) {
             if (strcmp(a[i], "-a") == 0 && i + 1 < n) {
-                result = result && eval_test_binary(a[i + 1], a[i + 2], a[i + 3]);
+                result = result && eval_test_binary(a[i + 2], a[i + 1], a[i + 3]);
                 i += 3;
             } else if (strcmp(a[i], "-o") == 0 && i + 1 < n) {
-                result = result || eval_test_binary(a[i + 1], a[i + 2], a[i + 3]);
+                result = result || eval_test_binary(a[i + 2], a[i + 1], a[i + 3]);
                 i += 3;
             } else
                 break;
         }
     }
-    return negate ? !result : result;
+    return negate ? !result : (result ? 0 : 1);
 }
 
 static int eval_test_binary(const char *op, const char *l, const char *r) {
@@ -2417,6 +2502,7 @@ static int execute_line_raw(const char *line) {
 }
 
 /* ── Line input ──────────────────────────────────────────────── */
+#ifndef SH_UNIT_TEST
 static int sh_getline(char *buf, int max) {
     int i = 0;
     while (i < max - 1) {
@@ -2440,6 +2526,7 @@ static int sh_getline(char *buf, int max) {
     buf[i] = '\0';
     return i;
 }
+#endif /* !SH_UNIT_TEST */
 
 /* ── command which ───────────────────────────────────────────── */
 static int cmd_which(char **argv) {
@@ -2689,6 +2776,7 @@ static int getpid_impl(void) {
 }
 
 /* ── Main ─────────────────────────────────────────────────────── */
+#ifndef SH_UNIT_TEST
 int main(int argc, char *argv[]) {
     sh_init_env();
     signal(SIGPIPE, SIG_IGN);
@@ -2795,8 +2883,10 @@ int main(int argc, char *argv[]) {
     }
     return last_exit_code;
 }
+#endif /* !SH_UNIT_TEST */
 
 /* ── array assignment (kept from original) ───────────────────── */
+#ifndef SH_UNIT_TEST
 static int sh_try_array_assign(char *line) {
     char *eq = line;
     while (*eq && *eq != '=')
@@ -2846,3 +2936,4 @@ static int sh_try_array_assign(char *line) {
     }
     return 1;
 }
+#endif /* !SH_UNIT_TEST */
