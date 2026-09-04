@@ -47,6 +47,7 @@ LAUNCHER(digital_clock)
 LAUNCHER(paint)
 LAUNCHER(terminal)
 LAUNCHER(file_manager)
+LAUNCHER(settings)
 LAUNCHER(minesweeper)
 LAUNCHER(snake)
 LAUNCHER(tetris)
@@ -205,7 +206,7 @@ static void draw_taskbar(int32_t mx, int32_t my) {
         {"DCLK2", 326, 48, launch_clock_dual}, {"HEART", 376, 48, launch_heartbeat},
         {"NOTE", 428, 60, launch_notepad},     {"<PAGE", 490, 44, page_prev},
         {"TERM", 540, 44, launch_terminal},    {"FMGR", 586, 44, launch_file_manager},
-        {"EXIT", 632, 44, exit_gui},
+        {"SETS", 632, 44, launch_settings},    {"EXIT", 678, 44, exit_gui},
     };
 
     tb_btn_t *btns;
@@ -389,7 +390,7 @@ void gui_shell_run(void) {
                     {"", 326, 48, launch_clock_dual}, {"", 376, 48, launch_heartbeat},
                     {"", 428, 60, launch_notepad},    {"", 490, 44, page_prev},
                     {"", 540, 44, launch_terminal},   {"", 586, 44, launch_file_manager},
-                    {"", 632, 44, exit_gui},
+                    {"", 632, 44, launch_settings},   {"", 678, 44, exit_gui},
                 };
                 tb_btn_t *b;
                 int nb;

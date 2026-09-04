@@ -1659,6 +1659,184 @@ void gui_app_file_manager_run(void) {
     gui_window_set_focused_widget(win, cw);
 }
 
+/* ===== Settings: display, sound, network config panel =====
+ *
+ * A tabbed configuration panel for the desktop. Three tabs select a
+ * section (Display, Sound, Network); each draws its controls on the
+ * right-hand content area and reacts to mouse clicks. Settings live in
+ * an in-memory state struct (s_set) and are purely illustrative for the
+ * desktop shell — raw syscalls only, no FILE*.
+ */
+#define SET_W 480
+#define SET_H 360
+#define SET_TAB_DISPLAY 0
+#define SET_TAB_SOUND 1
+#define SET_TAB_NET 2
+#define SET_RES_MODES 3
+
+typedef struct {
+    int tab;
+    int res;        /* selected resolution index */
+    int brightness; /* 0..100 */
+    int volume;     /* 0..100 */
+    int muted;
+    int eth; /* network link up */
+} settings_state_t;
+
+static settings_state_t s_set = {SET_TAB_DISPLAY, 0, 80, 50, 0, 1};
+
+static const char *const s_set_res[SET_RES_MODES] = {"800x600", "1024x768", "1280x720"};
+
+/* Draw a titled button and return its fill color boolean. */
+static void set_btn(gui_widget_t *w, int32_t x, int32_t y, uint32_t bw, uint32_t bh,
+                    const char *label, gui_color_t bg) {
+    (void)w;
+    gui_rect_t r = {x, y, bw, bh};
+    gui_window_draw_rect(NULL, r, bg);
+    gui_window_draw_rect_outline(NULL, r, GUI_DARK_GRAY, 1);
+    gui_window_draw_text(NULL, x + 4, y + bh / 2 - 4, label, GUI_BUTTON_FG, bg);
+}
+
+/* Draw a simple slider (track + filled portion + label). */
+static void set_slider(gui_widget_t *w, int32_t x, int32_t y, uint32_t bw, const char *label,
+                       int val) {
+    (void)w;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%s %d%%", label, val);
+    gui_window_draw_text(NULL, x, y, buf, GUI_TEXT_FG, GUI_WINDOW_BG);
+    gui_rect_t track = {x, y + 12, bw, 12};
+    gui_window_draw_rect(NULL, track, GUI_WHITE);
+    gui_window_draw_rect_outline(NULL, track, GUI_DARK_GRAY, 1);
+    int fill = val * (int)bw / 100;
+    if (fill > 2) {
+        gui_rect_t fr = {x + 1, y + 13, (uint32_t)(fill - 2), 10};
+        gui_window_draw_rect(NULL, fr, GUI_BLUE);
+    }
+}
+
+/* Hit-test a slider click and map relative x onto 0..100. */
+static int set_slider_pct(gui_widget_t *w, int32_t lx, int32_t ly, int32_t x, int32_t y,
+                          uint32_t bw) {
+    if (ly < y || ly > y + 24)
+        return -1;
+    if (lx < x || lx > (int32_t)(x + bw))
+        return -1;
+    int pct = (lx - x) * 100 / (int)bw;
+    if (pct < 0)
+        pct = 0;
+    if (pct > 100)
+        pct = 100;
+    (void)w;
+    return pct;
+}
+
+static void settings_draw(gui_widget_t *w) {
+    settings_state_t *st = &s_set;
+    int32_t ox = w->rect.x, oy = w->rect.y;
+    gui_window_draw_rect(NULL, w->rect, GUI_WINDOW_BG);
+
+    /* Section list on the left. */
+    static const char *const tabs[3] = {"DISPLAY", "SOUND", "NETWORK"};
+    for (int i = 0; i < 3; i++) {
+        gui_rect_t tr = {ox + 6, oy + 8 + i * 26, 96, 24};
+        gui_color_t bg = (i == st->tab) ? GUI_LIGHT_GRAY : GUI_BUTTON_BG;
+        gui_window_draw_rect(NULL, tr, bg);
+        gui_window_draw_rect_outline(NULL, tr, GUI_DARK_GRAY, 1);
+        gui_window_draw_text(NULL, tr.x + 10, tr.y + 5, tabs[i], GUI_BUTTON_FG, bg);
+    }
+
+    int32_t cx = ox + 112;
+    gui_window_draw_text(NULL, cx, oy + 6, "Settings", GUI_TITLE_BG, GUI_WINDOW_BG);
+
+    if (st->tab == SET_TAB_DISPLAY) {
+        gui_window_draw_text(NULL, cx, oy + 28, "Resolution:", GUI_TEXT_FG, GUI_WINDOW_BG);
+        for (int i = 0; i < SET_RES_MODES; i++) {
+            gui_color_t bg = (i == st->res) ? GUI_LIGHT_GRAY : GUI_BUTTON_BG;
+            set_btn(w, cx, oy + 40 + i * 24, 120, 22, s_set_res[i], bg);
+        }
+        set_slider(w, cx, oy + 116, 200, "Brightness", st->brightness);
+    } else if (st->tab == SET_TAB_SOUND) {
+        set_slider(w, cx, oy + 28, 260, "Volume", st->muted ? 0 : st->volume);
+        set_btn(w, cx, oy + 56, 90, 22, st->muted ? "MUTED" : "MUTE",
+                st->muted ? GUI_RED : GUI_BUTTON_BG);
+        gui_window_draw_text(NULL, cx, oy + 90, st->muted ? "Audio muted" : "Audio enabled",
+                             st->muted ? GUI_RED : GUI_GREEN, GUI_WINDOW_BG);
+    } else {
+        gui_window_draw_text(NULL, cx, oy + 28, "Network:", GUI_TEXT_FG, GUI_WINDOW_BG);
+        gui_window_draw_text(NULL, cx, oy + 42, "eth0", GUI_BLUE, GUI_WINDOW_BG);
+        gui_window_draw_text(NULL, cx + 60, oy + 42, st->eth ? "LINK UP" : "LINK DOWN",
+                             st->eth ? GUI_GREEN : GUI_RED, GUI_WINDOW_BG);
+        set_btn(w, cx, oy + 58, 96, 22, st->eth ? "DISCONNECT" : "CONNECT", GUI_BUTTON_BG);
+        gui_window_draw_text(NULL, cx, oy + 92, "Gateway 10.0.2.2", GUI_TEXT_FG, GUI_WINDOW_BG);
+        gui_window_draw_text(NULL, cx, oy + 106, "Subnet 255.255.255.0", GUI_TEXT_FG,
+                             GUI_WINDOW_BG);
+    }
+}
+
+static void settings_event(gui_widget_t *w, gui_event_t *evt) {
+    settings_state_t *st = &s_set;
+    int32_t lx;
+    int32_t ly;
+    if (evt->type != GUI_EVENT_MOUSE_DOWN || evt->button != 1)
+        return;
+    lx = evt->x - w->rect.x;
+    ly = evt->y - w->rect.y;
+
+    /* Section tabs on the left. */
+    if (lx >= 6 && lx < 102 && ly >= 8 && ly < 80) {
+        int i = (ly - 8) / 26;
+        if (i >= 0 && i <= 2)
+            st->tab = i;
+        return;
+    }
+
+    int32_t cx = lx - 112;
+    if (cx < 0)
+        return;
+
+    if (st->tab == SET_TAB_DISPLAY) {
+        /* Resolution rows. */
+        for (int i = 0; i < SET_RES_MODES; i++) {
+            if (cx < 120 && ly >= 40 + i * 24 && ly < 62 + i * 24) {
+                st->res = i;
+                return;
+            }
+        }
+        int pct = set_slider_pct(w, lx, ly, 112, 128, 200);
+        if (pct >= 0)
+            st->brightness = pct;
+    } else if (st->tab == SET_TAB_SOUND) {
+        int pct = set_slider_pct(w, lx, ly, 112, 40, 260);
+        if (pct >= 0) {
+            if (!st->muted)
+                st->volume = pct;
+            return;
+        }
+        if (cx < 90 && ly >= 68 && ly < 90)
+            st->muted = !st->muted;
+    } else {
+        if (cx < 96 && ly >= 70 && ly < 92)
+            st->eth = !st->eth;
+    }
+}
+
+void gui_app_settings_run(void) {
+    gui_window_t *win = gui_window_create("Settings", 200, 80, SET_W, SET_H, GUI_WINDOW_BG);
+    if (!win)
+        return;
+    gui_add_window(win);
+    gui_window_bring_to_front(win);
+    gui_rect_t wr = gui_window_get_rect(win);
+    gui_rect_t wrect = {wr.x + 8, wr.y + 24 + 8, SET_W - 16, SET_H - 32};
+    gui_widget_t *cw = gui_widget_create(wrect);
+    if (!cw)
+        return;
+    cw->draw = settings_draw;
+    cw->on_event = settings_event;
+    gui_window_add_widget(win, cw);
+    gui_window_set_focused_widget(win, cw);
+}
+
 /* 7. Minesweeper */
 void gui_app_minesweeper_run(void) {
     gui_window_t *win = gui_window_create("Minesweeper", 200, 150, 220, 260, GUI_LIGHT_GRAY);
