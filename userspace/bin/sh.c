@@ -1288,15 +1288,16 @@ static int cmd_uptime(void);
 /* Shared builtin-name table: used by `which` and Tab-completion
  * (D280 task 18).  Keep in sync with run_builtin(). */
 static const char *sh_builtins[] = {
-    "cd",    "pwd",   "exit",     "help",   "echo",   "clear",  "exec", "export", "unset", "local",
-    "set",   "alias", "unalias",  "jobs",   "fg",     "bg",     "kill", "source", ".",     "trap",
-    "read",  "which", "ps",       "free",   "uptime", "uname",  "time", "test",   "[",     "true",
-    "false", "break", "continue", "return", "type",   "ulimit", 0};
+    "cd",    "pwd",   "exit",     "help",   "echo",   "clear",  "exec",  "export", "unset", "local",
+    "set",   "alias", "unalias",  "jobs",   "fg",     "bg",     "kill",  "source", ".",     "trap",
+    "read",  "which", "ps",       "free",   "uptime", "uname",  "time",  "test",   "[",     "true",
+    "false", "break", "continue", "return", "type",   "ulimit", "umask", 0};
 static int cmd_uname(int argc, char **argv);
 static int cmd_time(int argc, char **argv);
 static int cmd_help(void);
 static int cmd_type(int argc, char **argv);
 static int cmd_ulimit(int argc, char **argv);
+static int cmd_umask(int argc, char **argv);
 static int cmd_test(int argc, char **argv);
 
 static int run_builtin(int argc, char **argv) {
@@ -1603,6 +1604,8 @@ static int run_builtin(int argc, char **argv) {
         return cmd_type(argc, argv);
     if (strcmp(cmd, "ulimit") == 0)
         return cmd_ulimit(argc, argv);
+    if (strcmp(cmd, "umask") == 0)
+        return cmd_umask(argc, argv);
     if (strcmp(cmd, "ps") == 0)
         return cmd_ps();
     if (strcmp(cmd, "free") == 0)
@@ -2883,6 +2886,33 @@ static int cmd_ulimit(int argc, char **argv) {
         return 1;
     }
     printf("%lu\n", hard ? rlim.rlim_max : rlim.rlim_cur);
+    return 0;
+}
+
+/* ── umask builtin: get/set file mode creation mask ──────────── */
+static int cmd_umask(int argc, char **argv) {
+    if (argc < 2) {
+        /* query without changing: read then restore */
+        unsigned int cur = umask(0);
+        umask(cur);
+        printf("%03o\n", cur);
+        return 0;
+    }
+    char *p = argv[1];
+    unsigned long newmask = 0;
+    if (*p == '\0') {
+        printf("umask: invalid mask: %s\n", argv[1]);
+        return 1;
+    }
+    while (*p) {
+        if (*p < '0' || *p > '7') {
+            printf("umask: invalid mask: %s\n", argv[1]);
+            return 1;
+        }
+        newmask = (newmask << 3) | (unsigned long)(*p - '0');
+        p++;
+    }
+    umask((unsigned int)(newmask & 0777));
     return 0;
 }
 
