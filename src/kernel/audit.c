@@ -168,8 +168,8 @@ static int sysctl_read_audit_rule(char *buf, int max) {
         struct audit_rule r;
         if (!audit_rule_get(i, &r))
             break;
-        int n = snprintf(buf + pos, (size_t)(max - pos - 2), "rule[%d] syscall=%ld match=%u\n", i,
-                         r.syscall, r.match);
+        int n = snprintf(buf + pos, (size_t)(max - pos - 2),
+                         "rule[%d] syscall=%ld pid=%u match=%u\n", i, r.syscall, r.pid, r.match);
         if (n > 0)
             pos += n;
     }
@@ -190,6 +190,22 @@ static int sysctl_write_audit_rule(const char *buf, int len) {
         r.match = AUDIT_MATCH_SYSCALL;
         r.syscall = num;
         r.pid = 0;
+        return audit_rule_add(&r) >= 0 ? 0 : -1;
+    }
+
+    /* Accept "pid=<N>" to install a process-filter rule (log only
+     * syscalls issued by this pid). */
+    if (len > 4 && strncmp(buf, "pid=", 4) == 0) {
+        uint32_t val = 0;
+        int i;
+        for (i = 4; i < len && buf[i] >= '0' && buf[i] <= '9'; i++)
+            val = val * 10 + (uint32_t)(buf[i] - '0');
+
+        struct audit_rule r;
+        memset(&r, 0, sizeof(r));
+        r.match = AUDIT_MATCH_PID;
+        r.syscall = -1;
+        r.pid = val;
         return audit_rule_add(&r) >= 0 ? 0 : -1;
     }
     return -EINVAL;
@@ -280,10 +296,10 @@ void audit_syscall_entry(uint64_t num, uint64_t a1, uint64_t a2,
         p->audit_syscall_args[3] = a4;
     }
 
-    /* Syscall-filter rules: if any are installed, only emit a SYSCALL
-     * record for syscalls that match (by number and caller pid).  With no
-     * rules installed (default) everything is logged. */
-    if (audit_rules_filter_syscall()) {
+    /* Rule-based filtering: if any rule is installed (syscall or pid
+     * filter), only emit a SYSCALL record for events the rules accept.
+     * With no rules installed (default) everything is logged. */
+    if (audit_rule_count() > 0) {
         uint32_t pid = p ? p->pid : 0;
         if (!audit_rule_matches((long)num, pid, NULL))
             return;

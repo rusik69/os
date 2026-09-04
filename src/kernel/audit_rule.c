@@ -14,21 +14,18 @@
  */
 
 #include "audit.h"
-
 #include "errno.h"
 #include "string.h"
 
 static struct audit_rule audit_rules[AUDIT_RULE_MAX];
 static int audit_rules_used;
 
-void audit_rule_clear(void)
-{
+void audit_rule_clear(void) {
     memset(audit_rules, 0, sizeof(audit_rules));
     audit_rules_used = 0;
 }
 
-int audit_rule_add(const struct audit_rule *r)
-{
+int audit_rule_add(const struct audit_rule *r) {
     if (!r)
         return -1;
     if (audit_rules_used >= AUDIT_RULE_MAX)
@@ -38,8 +35,7 @@ int audit_rule_add(const struct audit_rule *r)
     return audit_rules_used - 1;
 }
 
-int audit_rule_remove(int idx)
-{
+int audit_rule_remove(int idx) {
     int i;
 
     if (idx < 0 || idx >= audit_rules_used)
@@ -53,8 +49,7 @@ int audit_rule_remove(int idx)
     return 0;
 }
 
-int audit_rule_matches(long syscall, uint32_t pid, const char *path)
-{
+int audit_rule_matches(long syscall, uint32_t pid, const char *path) {
     int i;
 
     for (i = 0; i < audit_rules_used; i++) {
@@ -62,8 +57,7 @@ int audit_rule_matches(long syscall, uint32_t pid, const char *path)
 
         /* Each enabled criterion must match; disabled criteria are
          * ignored (an "any" filter). */
-        if ((r->match & AUDIT_MATCH_SYSCALL) && r->syscall >= 0 &&
-            r->syscall != syscall)
+        if ((r->match & AUDIT_MATCH_SYSCALL) && r->syscall >= 0 && r->syscall != syscall)
             continue;
         if ((r->match & AUDIT_MATCH_PID) && r->pid != 0 && r->pid != pid)
             continue;
@@ -76,8 +70,7 @@ int audit_rule_matches(long syscall, uint32_t pid, const char *path)
     return 0;
 }
 
-int audit_rules_filter_syscall(void)
-{
+int audit_rules_filter_syscall(void) {
     int i;
 
     for (i = 0; i < audit_rules_used; i++) {
@@ -87,15 +80,13 @@ int audit_rules_filter_syscall(void)
     return 0;
 }
 
-int audit_rule_get(int idx, struct audit_rule *out)
-{
+int audit_rule_get(int idx, struct audit_rule *out) {
     if (idx < 0 || idx >= audit_rules_used || !out)
         return 0;
     *out = audit_rules[idx];
     return 1;
 }
 
-int audit_rule_count(void)
-{
+int audit_rule_count(void) {
     return audit_rules_used;
 }
