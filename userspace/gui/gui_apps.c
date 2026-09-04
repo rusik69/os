@@ -815,8 +815,8 @@ void gui_app_digital_clock_run(void) {
  * render, ESC closes — matching the other GUI apps.  Hand geometry uses the
  * same __icos/__isin integer lookup convention as the analog clock.
  */
-static void gui_clock_hand(gui_window_t *win, int cx, int cy, int len,
-                           int hdeg, int mdeg, int sec, int w, gui_color_t c) {
+static void gui_clock_hand(gui_window_t *win, int cx, int cy, int len, int hdeg, int mdeg, int sec,
+                           int w, gui_color_t c) {
     /* Hour hand sweeps the 12-hour ring, minute/second the 60-minute ring. */
     int deg = hdeg + mdeg + sec;
     int ex = cx + len * __icos(deg) / 100;
@@ -848,12 +848,12 @@ void gui_app_clock_run(void) {
         gui_draw_line(x1, y1, x2, y2, (i % 5 == 0) ? GUI_DARK_GRAY : GUI_GRAY);
     }
     /* Hands: hour advances 0.5deg/min, minute 6deg/sec, second 6deg/s */
-    int hdeg = (hour % 12) * 30;          /* 300 for 10 o'clock */
-    int mdeg = minute * 6 + sec / 10;     /* 60 + 3 = 63 at 10:10:30 */
-    int sdeg = sec * 6;                   /* 180 at second 30 */
-    gui_clock_hand(win, cx, cy, 36, hdeg + mdeg / 12, 0, 0, 4, GUI_BLACK);  /* hour */
-    gui_clock_hand(win, cx, cy, 54, 0, mdeg / 6, 0, 2, GUI_BLACK);          /* minute */
-    gui_clock_hand(win, cx, cy, 62, 0, 0, sdeg, 1, GUI_RED);                /* second */
+    int hdeg = (hour % 12) * 30;      /* 300 for 10 o'clock */
+    int mdeg = minute * 6 + sec / 10; /* 60 + 3 = 63 at 10:10:30 */
+    int sdeg = sec * 6;               /* 180 at second 30 */
+    gui_clock_hand(win, cx, cy, 36, hdeg + mdeg / 12, 0, 0, 4, GUI_BLACK); /* hour */
+    gui_clock_hand(win, cx, cy, 54, 0, mdeg / 6, 0, 2, GUI_BLACK);         /* minute */
+    gui_clock_hand(win, cx, cy, 62, 0, 0, sdeg, 1, GUI_RED);               /* second */
     gui_draw_circle_filled(cx, cy, 4, GUI_RED);
 
     /* Digital readout of the same time */
