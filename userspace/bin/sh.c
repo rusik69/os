@@ -306,6 +306,11 @@ struct shell_alias {
 static struct shell_alias shell_aliases[MAX_ALIASES];
 static int sh_alias_count;
 
+/* ── Positional parameters (set by function call / shift) ────── */
+#define MAX_POS 64
+static char *g_pos[MAX_POS];
+static int g_pos_count;
+
 /* ── Traps ───────────────────────────────────────────────────── */
 struct shell_trap {
     int sig;
@@ -613,6 +618,38 @@ static char *do_param_expand(const char *name, const char *ops, const char *arg)
     if (ops[0] == '#' && (ops[1] == '\0' || ops[1] == '[')) {
         is_len = 1;
         real_ops = ops + 1;
+    }
+
+    /* positional parameter ${N} */
+    if (name[0] >= '1' && name[0] <= '9' && name[1] == '\0') {
+        int pidx = name[0] - '0';
+        if (pidx >= 1 && pidx <= g_pos_count && g_pos[pidx - 1]) {
+            if (is_len)
+                snprintf(buf, sizeof buf, "%d", (int)strlen(g_pos[pidx - 1]));
+            else
+                snprintf(buf, sizeof buf, "%s", g_pos[pidx - 1]);
+        } else {
+            if (real_ops[0] == '-') /* ${1:-default} */
+                snprintf(buf, sizeof buf, "%s", arg ? arg : "");
+            else if (real_ops[0] == '+') /* ${1:+alt} */
+                return strdup(arg ? arg : "");
+        }
+        if (is_len || real_ops[0] == '-')
+            return strdup(buf);
+        return strdup(buf);
+    }
+    /* ${#} / ${@} / ${*} — positional count / all */
+    if (name[0] == '#' && name[1] == '\0') {
+        return strdup(itoa_buf(g_pos_count));
+    }
+    if ((name[0] == '@' || name[0] == '*') && name[1] == '\0') {
+        int pos = 0;
+        for (int pi = 0; pi < g_pos_count; pi++) {
+            if (pi)
+                pos += snprintf(buf + pos, sizeof buf - pos, " ");
+            pos += snprintf(buf + pos, sizeof buf - pos, "%s", g_pos[pi]);
+        }
+        return strdup(buf);
     }
 
     if (a) {
@@ -1057,6 +1094,28 @@ static char *expand_word(const char *s, int *fail) {
                 p = end + 1;
                 continue;
             }
+            /* bare $# / $@ / $* / $1..$9 — positional parameters */
+            if (p[1] >= '0' && p[1] <= '9') {
+                int idx = p[1] - '0';
+                p += 2;
+                if (idx >= 1 && idx <= g_pos_count && g_pos[idx - 1])
+                    strcat(out, g_pos[idx - 1]);
+                continue;
+            }
+            if (p[1] == '@' || p[1] == '*') {
+                p += 2;
+                for (int pi = 0; pi < g_pos_count; pi++) {
+                    if (pi)
+                        strcat(out, " ");
+                    strcat(out, g_pos[pi]);
+                }
+                continue;
+            }
+            if (p[1] == '#') {
+                strcat(out, itoa_buf(g_pos_count));
+                p += 2;
+                continue;
+            }
             /* bare $VAR */
             if ((p[1] >= 'A' && p[1] <= 'Z') || (p[1] >= 'a' && p[1] <= 'z') || p[1] == '_') {
                 char name[64];
@@ -1313,11 +1372,11 @@ static int cmd_uptime(void);
 /* Shared builtin-name table: used by `which` and Tab-completion
  * (D280 task 18).  Keep in sync with run_builtin(). */
 static const char *sh_builtins[] = {
-    "cd",       "pwd",    "exit", "help",   "echo",    "clear", "exec",     "export",
-    "unset",    "local",  "set",  "alias",  "unalias", "jobs",  "fg",       "bg",
-    "kill",     "source", ".",    "trap",   "read",    "which", "ps",       "free",
-    "uptime",   "uname",  "time", "test",   "[",       "true",  "false",    "break",
-    "continue", "return", "type", "ulimit", "umask",   "times", "readonly", 0};
+    "cd",    "pwd",    "exit",  "help",    "echo",     "clear", "exec",   "export",   "unset",
+    "local", "set",    "alias", "unalias", "jobs",     "fg",    "bg",     "kill",     "source",
+    ".",     "trap",   "read",  "which",   "ps",       "free",  "uptime", "uname",    "time",
+    "test",  "[",      "true",  "false",   "break",    "false", "break",  "continue", "return",
+    "type",  "ulimit", "umask", "times",   "readonly", "shift", 0};
 static int cmd_uname(int argc, char **argv);
 static int cmd_time(int argc, char **argv);
 static int cmd_help(void);
@@ -1326,6 +1385,7 @@ static int cmd_ulimit(int argc, char **argv);
 static int cmd_umask(int argc, char **argv);
 static int cmd_times(int argc, char **argv);
 static int cmd_readonly(int argc, char **argv);
+static int cmd_shift(int argc, char **argv);
 static int cmd_test(int argc, char **argv);
 
 static int run_builtin(int argc, char **argv) {
@@ -1638,6 +1698,8 @@ static int run_builtin(int argc, char **argv) {
         return cmd_times(argc, argv);
     if (strcmp(cmd, "readonly") == 0)
         return cmd_readonly(argc, argv);
+    if (strcmp(cmd, "shift") == 0)
+        return cmd_shift(argc, argv);
     if (strcmp(cmd, "ps") == 0)
         return cmd_ps();
     if (strcmp(cmd, "free") == 0)
@@ -2478,7 +2540,34 @@ static int execute_command_node(struct ast_node *node) {
     /* function? */
     if (func_find(argv[0])) {
         struct shell_func *f = func_find(argv[0]);
+        /* save positional params, set new from args */
+        char *saved_pos[MAX_POS];
+        int saved_count = g_pos_count;
+        for (int i = 0; i < saved_count; i++) {
+            saved_pos[i] = g_pos[i];
+            g_pos[i] = 0;
+        }
+        int n = argc - 1;
+        if (n > MAX_POS)
+            n = MAX_POS;
+        for (int i = 0; i < n; i++) {
+            g_pos[i] = argv[i + 1];
+            argv[i + 1] = 0; /* ownership transferred to g_pos */
+        }
+        g_pos_count = n;
         int r = run_line(f->body);
+        /* restore */
+        for (int i = 0; i < MAX_POS; i++) {
+            if (g_pos[i])
+                free(g_pos[i]);
+            g_pos[i] = 0;
+        }
+        g_pos_count = saved_count;
+        for (int i = 0; i < saved_count; i++)
+            g_pos[i] = saved_pos[i];
+        /* free remaining argv (those not consumed as pos params) */
+        for (int a = n + 1; a < argc; a++)
+            free(argv[a]);
         return r;
     }
     /* alias expansion (top-level command only) */
@@ -2994,6 +3083,30 @@ static int cmd_readonly(int argc, char **argv) {
         }
     }
     return rc;
+}
+
+/* ── shift builtin: drop leading positional parameters ────────── */
+static int cmd_shift(int argc, char **argv) {
+    (void)argc;
+    int n = 1;
+    if (argv[1])
+        n = atoi(argv[1]);
+    if (n < 0)
+        n = 1;
+    if (n > g_pos_count)
+        n = g_pos_count;
+    for (int i = 0; i < n; i++) {
+        if (g_pos[i])
+            free(g_pos[i]);
+    }
+    for (int i = n; i < g_pos_count; i++) {
+        g_pos[i - n] = g_pos[i];
+        g_pos[i] = 0;
+    }
+    g_pos_count -= n;
+    for (int i = g_pos_count; i < MAX_POS; i++)
+        g_pos[i] = 0;
+    return 0;
 }
 
 /* ── ps / free / uptime / uname / time / help ────────────────── */
