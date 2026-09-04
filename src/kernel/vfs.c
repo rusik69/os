@@ -9,6 +9,7 @@
 #include "fsnotify.h"
 #include "heap.h"
 #include "landlock.h"
+#include "lsm.h"
 #include "mnt_namespace.h"
 #include "page_cache.h"
 #include "printf.h"
@@ -2344,6 +2345,15 @@ int vfs_check_perms(const char *path, uint16_t uid, uint16_t gid, uint16_t op) {
             perm |= (mode & S_IWOTH) ? VFS_W_OK : 0;
         if (op & VFS_X_OK)
             perm |= (mode & S_IXOTH) ? VFS_X_OK : 0;
+    }
+
+    /* LSM inode_permission hook: security modules may deny access after
+     * the DAC (uid/gid mode-bit) check has passed, using the requested
+     * access mask.  Skip the pure existence probe (VFS_F_OK). */
+    if (op != VFS_F_OK) {
+        int lsm_ret = lsm_inode_permission(path, (int)op);
+        if (lsm_ret < 0)
+            return lsm_ret;
     }
 
     return (perm == op) ? 0 : -EACCES;
