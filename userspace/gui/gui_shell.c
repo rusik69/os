@@ -44,6 +44,7 @@ LAUNCHER(notepad)
 LAUNCHER(rgb_mixer)
 LAUNCHER(analog_clock)
 LAUNCHER(digital_clock)
+LAUNCHER(clock)
 LAUNCHER(paint)
 LAUNCHER(terminal)
 LAUNCHER(file_manager)
@@ -209,7 +210,8 @@ static void draw_taskbar(int32_t mx, int32_t my) {
         {"NOTE", 428, 60, launch_notepad},       {"<PAGE", 490, 44, page_prev},
         {"TERM", 540, 44, launch_terminal},      {"FMGR", 586, 44, launch_file_manager},
         {"SETS", 632, 44, launch_settings},      {"IMG", 682, 44, launch_image_viewer},
-        {"MUSIC", 732, 48, launch_music_player}, {"EXIT", 786, 44, exit_gui},
+        {"MUSIC", 732, 48, launch_music_player}, {"CLK2", 800, 44, launch_clock},
+        {"EXIT", 900, 44, exit_gui},
     };
 
     tb_btn_t *btns;

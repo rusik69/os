@@ -807,6 +807,72 @@ void gui_app_digital_clock_run(void) {
     gui_window_draw_text(win, 30, 60, "HH:MM:SS", GUI_DARK_GRAY, GUI_BLACK);
 }
 
+/* 5c. Clock — combined analog + digital display.
+ *
+ * A single window renders BOTH an analog clock face (twelve hour markers plus
+ * hour/min/sec hands) and a matching digital HH:MM:SS readout of the same
+ * time, so the two presentations always agree.  Raw syscalls only, static
+ * render, ESC closes — matching the other GUI apps.  Hand geometry uses the
+ * same __icos/__isin integer lookup convention as the analog clock.
+ */
+static void gui_clock_hand(gui_window_t *win, int cx, int cy, int len,
+                           int hdeg, int mdeg, int sec, int w, gui_color_t c) {
+    /* Hour hand sweeps the 12-hour ring, minute/second the 60-minute ring. */
+    int deg = hdeg + mdeg + sec;
+    int ex = cx + len * __icos(deg) / 100;
+    int ey = cy + len * __isin(deg) / 100;
+    (void)win;
+    gui_draw_thick_line(cx, cy, ex, ey, w, c);
+}
+
+void gui_app_clock_run(void) {
+    const int hour = 10, minute = 10, sec = 30; /* sample time: both views agree */
+    gui_window_t *win = gui_window_create("Clock", 400, 200, 300, 290, GUI_WHITE);
+    if (!win)
+        return;
+    gui_add_window(win);
+
+    int cx = 150, cy = 115, r = 80;
+    /* Face */
+    gui_draw_circle(cx, cy, r, GUI_DARK_GRAY);
+    gui_draw_circle_filled(cx, cy, r - 2, GUI_COLOR(245, 245, 255));
+    /* Minute ticks + 12 hour markers */
+    for (int i = 0; i < 60; i++) {
+        int ang = i * 6;
+        int outer = (i % 5 == 0) ? (r - 2) : (r - 9);
+        int inner = (i % 5 == 0) ? (r - 16) : (r - 14);
+        int x1 = cx + outer * __icos(ang) / 100;
+        int y1 = cy + outer * __isin(ang) / 100;
+        int x2 = cx + inner * __icos(ang) / 100;
+        int y2 = cy + inner * __isin(ang) / 100;
+        gui_draw_line(x1, y1, x2, y2, (i % 5 == 0) ? GUI_DARK_GRAY : GUI_GRAY);
+    }
+    /* Hands: hour advances 0.5deg/min, minute 6deg/sec, second 6deg/s */
+    int hdeg = (hour % 12) * 30;          /* 300 for 10 o'clock */
+    int mdeg = minute * 6 + sec / 10;     /* 60 + 3 = 63 at 10:10:30 */
+    int sdeg = sec * 6;                   /* 180 at second 30 */
+    gui_clock_hand(win, cx, cy, 36, hdeg + mdeg / 12, 0, 0, 4, GUI_BLACK);  /* hour */
+    gui_clock_hand(win, cx, cy, 54, 0, mdeg / 6, 0, 2, GUI_BLACK);          /* minute */
+    gui_clock_hand(win, cx, cy, 62, 0, 0, sdeg, 1, GUI_RED);                /* second */
+    gui_draw_circle_filled(cx, cy, 4, GUI_RED);
+
+    /* Digital readout of the same time */
+    char t[16];
+    int n = 0;
+    t[n++] = (char)('0' + hour / 10);
+    t[n++] = (char)('0' + hour % 10);
+    t[n++] = ':';
+    t[n++] = (char)('0' + minute / 10);
+    t[n++] = (char)('0' + minute % 10);
+    t[n++] = ':';
+    t[n++] = (char)('0' + sec / 10);
+    t[n++] = (char)('0' + sec % 10);
+    t[n] = '\0';
+    gui_window_draw_text(win, 105, 225, t, GUI_BLUE, GUI_WHITE);
+    gui_window_draw_text(win, 108, 245, "HH:MM:SS", GUI_DARK_GRAY, GUI_WHITE);
+    gui_window_draw_text(win, 90, 265, "Press ESC to close", GUI_GRAY, GUI_WHITE);
+}
+
 /* 6. Paint Program */
 /* 2c. Paint — drawing canvas, brush, colors.
  *
