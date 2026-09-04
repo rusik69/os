@@ -1,10 +1,12 @@
-/* nc.c — Netcat: TCP/UDP connect and listen modes.
+/* nc.c — Netcat: TCP/UDP connect and listen modes, port scanning.
  *
  *   nc [-l] [-u] <host> <port>     client mode (TCP by default)
  *   nc [-l] [-u] <port>            listen mode
+ *   nc -z <host> <port> [endport]  TCP port scan
  *
  *   -l  listen for an inbound connection / bind a listening UDP port
  *   -u  use UDP instead of TCP
+ *   -z  port scanning mode (TCP connect scan)
  *
  * TCP modes forward bytes bidirectionally between the local terminal and the
  * connection. UDP client mode sends typed input to host:port and prints any
@@ -19,10 +21,12 @@
 #define LOCAL_UDP_PORT 12345
 
 static void usage(void) {
-    printf("Usage: nc [-l] [-u] <host> <port>   (client)\n");
-    printf("       nc [-l] [-u] <port>          (listen)\n");
+    printf("Usage: nc [-l] [-u] <host> <port>          (client)\n");
+    printf("       nc [-l] [-u] <port>                 (listen)\n");
+    printf("       nc -z <host> <port> [endport]       (TCP scan)\n");
     printf("  -l  listen mode\n");
     printf("  -u  use UDP\n");
+    printf("  -z  port scan mode\n");
 }
 
 /* Bidirectional terminal <-> conn forward; returns when the peer or the
@@ -44,9 +48,10 @@ static void tcp_forward(int conn) {
 }
 
 int main(int argc, char *argv[]) {
-    int listen_mode = 0, udp = 0;
+    int listen_mode = 0, udp = 0, scan = 0;
     char *host = 0;
     char *portstr = 0;
+    char *endportstr = 0;
 
     for (int i = 1; i < argc; i++) {
         if (argv[i][0] == '-' && argv[i][1] != 0) {
@@ -55,6 +60,8 @@ int main(int argc, char *argv[]) {
                     listen_mode = 1;
                 else if (*c == 'u')
                     udp = 1;
+                else if (*c == 'z')
+                    scan = 1;
                 else if (*c == 'h') {
                     usage();
                     return 0;
@@ -64,6 +71,8 @@ int main(int argc, char *argv[]) {
             host = argv[i];
         } else if (!portstr) {
             portstr = argv[i];
+        } else if (!endportstr) {
+            endportstr = argv[i];
         }
     }
 
@@ -75,6 +84,39 @@ int main(int argc, char *argv[]) {
     if (port <= 0 || port > 65535) {
         printf("nc: invalid port %s\n", portstr);
         return 1;
+    }
+
+    /* Port scan mode: probe each port with a TCP connect attempt. */
+    if (scan) {
+        if (!host) {
+            usage();
+            return 1;
+        }
+        int ip = net_dns(host);
+        if (ip < 0) {
+            printf("nc: could not resolve %s\n", host);
+            return 1;
+        }
+        int endport = port;
+        if (endportstr) {
+            endport = atoi(endportstr);
+            if (endport <= 0 || endport > 65535 || endport < port) {
+                printf("nc: invalid end port %s\n", endportstr);
+                return 1;
+            }
+        }
+        printf("nc: scanning %s ports %d-%d\n", host, port, endport);
+        int open = 0;
+        for (int p = port; p <= endport; p++) {
+            int conn = net_tcp_connect((unsigned int)ip, p);
+            if (conn >= 0) {
+                printf("Port %d: open\n", p);
+                open++;
+                net_tcp_close_conn(conn);
+            }
+        }
+        printf("nc: %d port(s) open\n", open);
+        return 0;
     }
 
     if (listen_mode) {
