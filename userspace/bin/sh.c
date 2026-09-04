@@ -1372,11 +1372,12 @@ static int cmd_uptime(void);
 /* Shared builtin-name table: used by `which` and Tab-completion
  * (D280 task 18).  Keep in sync with run_builtin(). */
 static const char *sh_builtins[] = {
-    "cd",    "pwd",   "exit",     "help",    "echo",    "clear",    "exec",    "export", "unset",
-    "local", "set",   "alias",    "unalias", "jobs",    "fg",       "bg",      "kill",   "source",
-    ".",     "trap",  "read",     "which",   "ps",      "free",     "uptime",  "uname",  "time",
-    "test",  "[",     "true",     "false",   "break",   "continue", "return",  "type",   "ulimit",
-    "umask", "times", "readonly", "shift",   "getopts", "printf",   "mapfile", 0};
+    "cd",       "pwd",    "exit",    "help",    "echo",    "clear", "exec",     "export",
+    "unset",    "local",  "set",     "alias",   "unalias", "jobs",  "fg",       "bg",
+    "kill",     "source", ".",       "trap",    "read",    "which", "ps",       "free",
+    "uptime",   "uname",  "time",    "test",    "[",       "true",  "false",    "break",
+    "continue", "return", "type",    "ulimit",  "umask",   "times", "readonly", "shift",
+    "getopts",  "printf", "mapfile", "declare", "typeset", 0};
 static int cmd_uname(int argc, char **argv);
 static int cmd_time(int argc, char **argv);
 static int cmd_help(void);
@@ -1389,6 +1390,7 @@ static int cmd_shift(int argc, char **argv);
 static int cmd_getopts(int argc, char **argv);
 static int cmd_printf(int argc, char **argv);
 static int cmd_mapfile(int argc, char **argv);
+static int cmd_declare(int argc, char **argv);
 static int cmd_test(int argc, char **argv);
 
 static int run_builtin(int argc, char **argv) {
@@ -1709,6 +1711,8 @@ static int run_builtin(int argc, char **argv) {
         return cmd_printf(argc, argv);
     if (strcmp(cmd, "mapfile") == 0)
         return cmd_mapfile(argc, argv);
+    if (strcmp(cmd, "declare") == 0 || strcmp(cmd, "typeset") == 0)
+        return cmd_declare(argc, argv);
     if (strcmp(cmd, "ps") == 0)
         return cmd_ps();
     if (strcmp(cmd, "free") == 0)
@@ -3404,6 +3408,75 @@ static int cmd_mapfile(int argc, char **argv) {
             a->elems[a->count][MAX_ARRAY_ELEM_LEN - 1] = '\0';
             a->count++;
         }
+    }
+    return 0;
+}
+
+/* ── declare / typeset builtin: variable attributes ───────────── */
+static int cmd_declare(int argc, char **argv) {
+    int opt_array = 0, opt_readonly = 0, opt_print = 0;
+    int ai = 1;
+    while (ai < argc && argv[ai][0] == '-' && argv[ai][1] && argv[ai][1] != '-') {
+        for (int k = 1; argv[ai][k]; k++) {
+            if (argv[ai][k] == 'a')
+                opt_array = 1;
+            else if (argv[ai][k] == 'r')
+                opt_readonly = 1;
+            else if (argv[ai][k] == 'p')
+                opt_print = 1;
+        }
+        ai++;
+    }
+    if (opt_print || ai >= argc) {
+        /* list variables */
+        for (int i = 0; i < sh_env_count && sh_env[i]; i++) {
+            if (opt_readonly && !var_is_readonly(sh_env[i])) {
+                const char *eq = sh_strchr(sh_env[i], '=');
+                if (!eq)
+                    continue;
+                char nm[64];
+                unsigned long nl = (unsigned long)(eq - sh_env[i]);
+                if (nl >= sizeof nm)
+                    nl = sizeof nm - 1;
+                memcpy(nm, sh_env[i], nl);
+                nm[nl] = '\0';
+                if (!var_is_readonly(nm))
+                    continue;
+            }
+            printf("declare -- %s\n", sh_env[i]);
+        }
+        for (int i = 0; i < MAX_ARRAYS; i++) {
+            if (shell_arrays[i].name[0]) {
+                for (int e = 0; e < shell_arrays[i].count; e++)
+                    printf("declare -a %s[%d]=%s\n", shell_arrays[i].name, e,
+                           shell_arrays[i].elems[e]);
+            }
+        }
+        return 0;
+    }
+    /* declare [attrs] name[=value] ... */
+    for (; ai < argc; ai++) {
+        char namebuf[64];
+        const char *arg = argv[ai];
+        const char *eq = sh_strchr(arg, '=');
+        unsigned long nl = eq ? (unsigned long)(eq - arg) : (unsigned long)strlen(arg);
+        if (nl >= sizeof namebuf)
+            nl = sizeof namebuf - 1;
+        memcpy(namebuf, arg, nl);
+        namebuf[nl] = '\0';
+        if (opt_array) {
+            struct shell_array *a = array_get_or_create(namebuf);
+            if (a && eq) {
+                char mut[160];
+                strncpy(mut, arg, sizeof mut - 1);
+                mut[sizeof mut - 1] = '\0';
+                sh_try_array_assign(mut);
+            }
+        } else if (eq) {
+            sh_setenv(namebuf, eq + 1);
+        }
+        if (opt_readonly)
+            var_mark_readonly(namebuf);
     }
     return 0;
 }
