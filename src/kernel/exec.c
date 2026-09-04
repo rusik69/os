@@ -14,20 +14,21 @@
  *   - Clear child TID on exec (as per CLONE_CHILD_CLEARTID semantics)
  */
 
-#include "types.h"
-#include "elf.h"
-#include "process.h"
-#include "vmm.h"
-#include "printf.h"
-#include "string.h"
-#include "errno.h"
-#include "signal.h"
-#include "vfs.h"
 #include "caps.h"
-#include "scheduler.h"
-#include "uaccess.h"
-#include "heap.h"
+#include "elf.h"
 #include "err.h"
+#include "errno.h"
+#include "heap.h"
+#include "lsm.h"
+#include "printf.h"
+#include "process.h"
+#include "scheduler.h"
+#include "signal.h"
+#include "string.h"
+#include "types.h"
+#include "uaccess.h"
+#include "vfs.h"
+#include "vmm.h"
 
 /* ── Configuration ─────────────────────────────────────────────────── */
 
@@ -286,6 +287,17 @@ int do_execve(const char *filename, const char **argv, const char **envp)
     if (ret != 0) {
         vfs_close(binary);
         return ret;
+    }
+
+    /* LSM bprm_check_security hook: allow security modules (Smack, etc.)
+     * to veto an exec (label transition, deny-list on the binary path)
+     * before credentials are switched. */
+    {
+        int lsm_ret = lsm_bprm_check_security(filename);
+        if (lsm_ret < 0) {
+            vfs_close(binary);
+            return lsm_ret;
+        }
     }
 
     /* ── Switch credentials ─────────────────────────────────────────── */
