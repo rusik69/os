@@ -262,6 +262,9 @@ struct process {
     /* Landlock ruleset IDs (-1 per slot = unrestricted).
      * Supports stacking up to LANDLOCK_MAX_RULESETS_PER_PROC (4) rulesets. */
     int landlock_ruleset_ids[4];
+    /* Accumulated union of handled_access_fs across all stacked Landlock
+     * rulesets.  Access rights not in this set are never enforced. */
+    uint64_t landlock_handled_access_fs;
     /* Securebits flags */
     uint8_t securebits;
     /* Capability sets (Linux-style) */

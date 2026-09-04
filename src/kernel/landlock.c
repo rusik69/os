@@ -247,6 +247,12 @@ int landlock_restrict_self(int ruleset_fd, uint32_t flags)
     /* Store the ruleset index so landlock_check_path() can find it */
     current->landlock_ruleset_ids[slot] = ruleset_fd;
 
+    /* Track the union of handled_access_fs across all stacked rulesets.
+     * Access rights outside this set are never enforced (Landlock: a
+     * process that never declared handling an access type is unrestricted
+     * for it). */
+    current->landlock_handled_access_fs |= landlock_table[ruleset_fd].handled_access_fs;
+
     return 0;
 }
 
@@ -338,6 +344,14 @@ int landlock_enforce(const char *path, int mask) {
         return 0;
 
     bits = landlock_mask_from_vfs(mask);
+    if (bits == 0)
+        return 0;
+
+    /* Only enforce access rights the process has declared handling via
+     * its stacked rulesets (tracked handled_access_fs union).  Unhandled
+     * rights are unrestricted, so nothing to enforce if the requested
+     * access falls entirely outside the handled set. */
+    bits &= cur->landlock_handled_access_fs;
     if (bits == 0)
         return 0;
 
