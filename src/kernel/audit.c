@@ -284,25 +284,62 @@ void audit_syscall_exit(uint64_t ret) {
 
 /* ── Structured audit events (S105) ─────────────────────────────── */
 
+/* Forward decl of the file-scope builder state variable, which is
+ * defined later in this file.  The builder functions themselves are
+ * declared in audit.h (already included above). */
+static int audit_record_active; /* -1 when idle */
+
 /*
- * audit_log_path — Log a PATH record.
+ * audit_log_path — Log a PATH record (used to record a file access).
+ * Emits the PATH record, optionally as an AUX record to the current
+ * in-progress syscall record (build-a-record then end it).
  */
 void audit_log_path(const char *pathname, uint32_t inode, uint32_t mode)
 {
-    char buf[256];
-    audit_format_path(buf, sizeof(buf), pathname, inode, mode);
-    audit_log_formatted(AUDIT_EVENT_LOG, "%s", buf);
+    if (!audit_enabled)
+        return;
+
+    if (audit_record_active != -1) {
+        /* Attach as an AUX record to the in-progress record. */
+        audit_log_add_aux("PATH", "name=%s inode=%u mode=%o nametype=NORMAL",
+                          pathname ? pathname : "?", inode, mode);
+        audit_log_end();
+        return;
+    }
+
+    if (audit_log_start(AUDIT_EVENT_LOG) < 0)
+        return;
+    audit_log_format("type=PATH name=%s inode=%u mode=%o nametype=NORMAL",
+                     pathname ? pathname : "?", inode, mode);
+    audit_log_end();
 }
 
 /*
  * audit_log_denial — Log an AVC denial record.
  */
-void audit_log_denial(const char *subj, const char *obj,
-                       const char *requested)
-{
-    char buf[256];
-    audit_format_denial(buf, sizeof(buf), subj, obj, requested);
-    audit_log_formatted(AUDIT_EVENT_DENIAL, "%s", buf);
+void audit_log_denial(const char *subj, const char *obj, const char *requested) {
+    struct process *p;
+    uint32_t pid;
+
+    if (!audit_enabled)
+        return;
+
+    if (audit_record_active != -1) {
+        audit_log_add_aux("AVC", "denied { %s } subj=%s obj=%s", requested ? requested : "unknown",
+                          subj ? subj : "kernel", obj ? obj : "unknown");
+        audit_log_end();
+        return;
+    }
+
+    p = process_get_current();
+    pid = p ? p->pid : 0;
+
+    if (audit_log_start(AUDIT_EVENT_DENIAL) < 0)
+        return;
+    audit_log_format("avc: denied { %s } for pid=%u subj=%s obj=%s",
+                     requested ? requested : "unknown", pid, subj ? subj : "kernel",
+                     obj ? obj : "unknown");
+    audit_log_end();
 }
 
 int audit_read_log(char *buf, int max) {

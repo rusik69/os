@@ -1766,8 +1766,15 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
             perm_op |= VFS_W_OK;
         if ((flags & O_TRUNC))
             perm_op |= VFS_W_OK;
-        if (vfs_check_perms(path, (uint16_t)p->uid, (uint16_t)p->gid, perm_op) < 0)
+        if (vfs_check_perms(path, (uint16_t)p->uid, (uint16_t)p->gid, perm_op) < 0) {
+            /* Audit the denied file access (PATH + AVC records). */
+            struct vfs_stat ast;
+            if (vfs_stat(path, &ast) < 0)
+                memset(&ast, 0, sizeof(ast));
+            audit_log_path(path, ast.ino, ast.mode);
+            audit_log_denial("kernel", path, "read write");
             return (uint64_t)(int64_t)-EACCES;
+        }
 
         /* LSM file_permission hook: security modules (Landlock/Smack)
          * can deny the open based on the requested access mask. */
