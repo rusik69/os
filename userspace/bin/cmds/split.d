@@ -1,8 +1,6 @@
-bin/cmds/split.o: bin/cmds/split.c libc/include/unistd.h \
- libc/include/stdio.h libc/include/unistd.h libc/include/string.h \
- libc/include/stdlib.h
-libc/include/unistd.h:
+bin/cmds/split.o: bin/cmds/split.c libc/include/stdio.h \
+ libc/include/unistd.h libc/include/stdlib.h libc/include/unistd.h
 libc/include/stdio.h:
 libc/include/unistd.h:
-libc/include/string.h:
 libc/include/stdlib.h:
+libc/include/unistd.h:
