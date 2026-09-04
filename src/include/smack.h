@@ -37,6 +37,19 @@ struct smack_rule {
     uint8_t access;                   /* bitmask of SMACK_MAY_* */
 };
 
+/* ── CIPSO (Common IP Security Option) label mapping ─────────────── */
+/* Maps a CIPSO tag (a small numeric category id) to a Smack label so
+ * labels can be carried on the wire.  A single default DOI is used, as
+ * in classic Smack networking.  Also maps a label back to its tag. */
+#define SMACK_CIPSO_MAX_TAGS 64
+
+struct smack_cipso_map {
+    int used;                    /* slot in use */
+    uint8_t tag;                 /* CIPSO category number (1..) */
+    int socket_matched;          /* informational */
+    char label[SMACK_LABEL_LEN]; /* Smack label bound to the tag */
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 /* Initialize the SMACK subsystem */
@@ -83,6 +96,22 @@ int smack_file_permission(const char *path, int mask);
 
 /* Check if a process can kill another process */
 int smack_task_kill(uint32_t target_pid, int sig);
+
+/* ── CIPSO / netlabel ───────────────────────────────────────────── */
+
+/* The default CIPSO DOI (Domain of Interpretation) used by Smack. */
+#define SMACK_CIPSO_DOI 3
+
+/* Bind a Smack label to a CIPSO tag (category) number.  Returns 0 on
+ * success, -EINVAL on a bad label/tag, -ENOSPC if the tag table is full. */
+int smack_cipso_map_label(const char *label, uint8_t tag);
+
+/* Return the CIPSO category tag bound to a label, or -1 if unmapped. */
+int smack_cipso_get_tag(const char *label);
+
+/* Resolve a CIPSO tag back to its Smack label.  Returns 0 with the label
+ * filled in (truncated to label_len), -ENOENT if the tag is unmapped. */
+int smack_cipso_tag_to_label(uint8_t tag, char *label, int label_len);
 
 /* ── Sysfs interface ────────────────────────────────────────────── */
 

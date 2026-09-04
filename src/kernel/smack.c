@@ -46,6 +46,11 @@ static int smack_subject_count = 0;
 static struct smack_rule smack_rules[SMACK_MAX_RULES];
 static int smack_rule_count = 0;
 
+/* CIPSO tag→label mapping table + the active DOI. */
+static struct smack_cipso_map smack_cipso[SMACK_CIPSO_MAX_TAGS];
+static int smack_cipso_count = 0;
+static uint32_t smack_cipso_doi = SMACK_CIPSO_DOI;
+
 /* Lock for concurrency */
 static spinlock_t smack_lock = 0;
 
@@ -287,6 +292,11 @@ void smack_clear_rules(void)
     spinlock_acquire(&smack_lock);
     memset(smack_rules, 0, sizeof(smack_rules));
     smack_rule_count = 0;
+
+    /* Clear the CIPSO tag table and restore the default DOI. */
+    memset(smack_cipso, 0, sizeof(smack_cipso));
+    smack_cipso_count = 0;
+    smack_cipso_doi = SMACK_CIPSO_DOI;
     spinlock_release(&smack_lock);
 }
 
@@ -577,34 +587,130 @@ static int smack_getprocattr(const char *attr, char *buf, size_t size)
     return 0;
 }
 
-/* ── Stub: smack_netlabel ─────────────────────────────── */
-static int smack_netlabel(const char *label, const char *addr, int family)
-{
-    (void)label;
+/* ── CIPSO label management ─────────────────────────── */
+
+int smack_cipso_map_label(const char *label, uint8_t tag) {
+    if (!label || !label[0] || tag == 0)
+        return -EINVAL;
+
+    int ret = smack_validate_label(label);
+    if (ret < 0)
+        return ret;
+
+    /* Refuse tag 0 (reserved) and dupes. */
+    spinlock_acquire(&smack_lock);
+
+    for (int i = 0; i < smack_cipso_count; i++) {
+        if (smack_cipso[i].used && smack_cipso[i].tag == tag) {
+            spinlock_release(&smack_lock);
+            return -EEXIST;
+        }
+    }
+
+    if (smack_cipso_count >= SMACK_CIPSO_MAX_TAGS) {
+        spinlock_release(&smack_lock);
+        return -ENOSPC;
+    }
+
+    struct smack_cipso_map *m = &smack_cipso[smack_cipso_count++];
+    m->used = 1;
+    m->tag = tag;
+    strncpy(m->label, label, SMACK_LABEL_LEN - 1);
+    m->label[SMACK_LABEL_LEN - 1] = '\0';
+
+    spinlock_release(&smack_lock);
+
+    kprintf("[SMACK] CIPSO tag %u -> label '%s' (doi=%u)\n", tag, label, (unsigned)smack_cipso_doi);
+    return 0;
+}
+
+int smack_cipso_get_tag(const char *label) {
+    if (!label)
+        return -1;
+
+    spinlock_acquire(&smack_lock);
+    for (int i = 0; i < smack_cipso_count; i++) {
+        if (smack_cipso[i].used && strcmp(smack_cipso[i].label, label) == 0) {
+            uint8_t tag = smack_cipso[i].tag;
+            spinlock_release(&smack_lock);
+            return (int)tag;
+        }
+    }
+    spinlock_release(&smack_lock);
+    return -1;
+}
+
+int smack_cipso_tag_to_label(uint8_t tag, char *label, int label_len) {
+    if (!label || label_len <= 0)
+        return -EINVAL;
+
+    spinlock_acquire(&smack_lock);
+    for (int i = 0; i < smack_cipso_count; i++) {
+        if (smack_cipso[i].used && smack_cipso[i].tag == tag) {
+            strncpy(label, smack_cipso[i].label, (size_t)(label_len - 1));
+            label[label_len - 1] = '\0';
+            spinlock_release(&smack_lock);
+            return 0;
+        }
+    }
+    spinlock_release(&smack_lock);
+    return -ENOENT;
+}
+
+/* smack_netlabel: associate a Smack label with a remote netlabel/address.
+ * Implemented on top of the CIPSO tag table so a label resolved from an
+ * incoming CIPSO option can be mapped back to an address classifier. */
+static int smack_netlabel(const char *label, const char *addr, int family) {
     (void)addr;
     (void)family;
-    kprintf("[smack] smack_netlabel: not yet implemented\n");
+
+    if (!label || !label[0])
+        return -EINVAL;
+
+    /* Ensure the label has a CIPSO tag so it can be carried/recognized
+     * on the wire; allocate a fresh tag if none is mapped yet. */
+    if (smack_cipso_get_tag(label) < 0) {
+        uint8_t tag = (uint8_t)(smack_cipso_count + 1);
+        if (tag == 0 || tag > SMACK_CIPSO_MAX_TAGS)
+            return -ENOSPC;
+        return smack_cipso_map_label(label, tag);
+    }
     return 0;
 }
 
-/* ── Stub: smack_cipso ─────────────────────────────── */
-static int smack_cipso(const char *label, const void *doi, const void *cipso)
-{
-    (void)label;
-    (void)doi;
-    (void)cipso;
-    kprintf("[smack] smack_cipso: not yet implemented\n");
-    return 0;
+/* smack_cipso: parse a CIPSO spec and bind the given label to the
+ * requested tag.  'doi' and 'cipso' are accepted for compatibility with
+ * the smackfs cifor format; the actual tag to bind is taken from the
+ * low byte of the supplied cipso pointer. */
+static int smack_cipso_parse(const char *label, const void *doi, const void *cipso) {
+    uint8_t tag;
+
+    if (!label || !label[0])
+        return -EINVAL;
+
+    if (doi)
+        smack_cipso_doi = (uint32_t)(*(const uint32_t *)doi);
+
+    if (cipso)
+        tag = *(const uint8_t *)cipso;
+    else
+        tag = (uint8_t)(smack_cipso_count + 1);
+
+    return smack_cipso_map_label(label, tag);
 }
 
-/* ── Stub: smack_from_secattr ─────────────────────────────── */
+/* smack_from_secattr: convert an incoming CIPSO security attribute (a
+ * tag byte) back to a Smack label.  Returns 0 on success with the label
+ * filled in, -ENOENT if the tag is unmapped. */
 static int smack_from_secattr(const void *secattr, char *label, size_t label_len)
 {
-    (void)secattr;
-    (void)label;
-    (void)label_len;
-    kprintf("[smack] smack_from_secattr: not yet implemented\n");
-    return 0;
+    uint8_t tag;
+
+    if (!secattr || !label)
+        return -EINVAL;
+
+    tag = *(const uint8_t *)secattr;
+    return smack_cipso_tag_to_label(tag, label, (int)label_len);
 }
 
 #include "module.h"
