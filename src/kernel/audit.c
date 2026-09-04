@@ -16,12 +16,14 @@
 
 #define KERNEL_INTERNAL
 #include "audit.h"
-#include "printf.h"
-#include "string.h"
-#include "timer.h"
-#include "process.h"
-#include "netlink.h"
+
 #include "heap.h"
+#include "netlink.h"
+#include "printf.h"
+#include "process.h"
+#include "string.h"
+#include "sysctl.h"
+#include "timer.h"
 
 int audit_enabled = 0;
 
@@ -158,6 +160,46 @@ int audit_netlink_send(int event_type, const char *payload, int payload_len) {
 
 /* ── Initialisation ──────────────────────────────────────────────── */
 
+static int sysctl_read_audit_rule(char *buf, int max) {
+    int pos = 0;
+    int i;
+
+    for (i = 0; i < audit_rule_count() && pos < max - 2; i++) {
+        struct audit_rule r;
+        if (!audit_rule_get(i, &r))
+            break;
+        int n = snprintf(buf + pos, (size_t)(max - pos - 2), "rule[%d] syscall=%ld match=%u\n", i,
+                         r.syscall, r.match);
+        if (n > 0)
+            pos += n;
+    }
+    buf[pos] = '\0';
+    return pos;
+}
+
+static int sysctl_write_audit_rule(const char *buf, int len) {
+    /* Accept "syscall=<N>" to install a syscall-filter rule. */
+    if (len > 8 && strncmp(buf, "syscall=", 8) == 0) {
+        long num = 0;
+        int i;
+        for (i = 8; i < len && buf[i] >= '0' && buf[i] <= '9'; i++)
+            num = num * 10 + (long)(buf[i] - '0');
+
+        struct audit_rule r;
+        memset(&r, 0, sizeof(r));
+        r.match = AUDIT_MATCH_SYSCALL;
+        r.syscall = num;
+        r.pid = 0;
+        return audit_rule_add(&r) >= 0 ? 0 : -1;
+    }
+    return -EINVAL;
+}
+
+/* Register the audit-rule sysctl interface. */
+void audit_sysctl_register(void) {
+    sysctl_register("audit.rule", sysctl_read_audit_rule, sysctl_write_audit_rule);
+}
+
 void __init audit_init(void) {
     if (audit_enabled) return;
 
@@ -180,9 +222,8 @@ void __init audit_init(void) {
     audit_nl_initialized = 1;
     kprintf("[OK] Audit subsystem initialized (NETLINK_AUDIT protocol %d, group %d)\n",
             NETLINK_AUDIT, AUDIT_NL_GROUP);
+    audit_sysctl_register();
 }
-
-/* ── Event logging (S105 enhanced) ───────────────────────────────── */
 
 /*
  * audit_log_formatted — Send a formatted audit event.
@@ -237,6 +278,15 @@ void audit_syscall_entry(uint64_t num, uint64_t a1, uint64_t a2,
         p->audit_syscall_args[1] = a2;
         p->audit_syscall_args[2] = a3;
         p->audit_syscall_args[3] = a4;
+    }
+
+    /* Syscall-filter rules: if any are installed, only emit a SYSCALL
+     * record for syscalls that match (by number and caller pid).  With no
+     * rules installed (default) everything is logged. */
+    if (audit_rules_filter_syscall()) {
+        uint32_t pid = p ? p->pid : 0;
+        if (!audit_rule_matches((long)num, pid, NULL))
+            return;
     }
 
     char buf[512];

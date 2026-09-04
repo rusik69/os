@@ -98,4 +98,48 @@ void audit_log(const char *msg);
 /* Log a USER_CMD record: a command (exec) executed by a user. */
 void audit_log_user_command(const char *cmdline);
 
+/* ── Audit rules ────────────────────────────────────────────────── */
+
+/* Maximum number of installed audit rules. */
+#define AUDIT_RULE_MAX 32
+
+/* Audit rule match fields (bitmask; OR of AUM_*). */
+#define AUDIT_MATCH_SYSCALL (1u << 0) /* match on syscall number */
+#define AUDIT_MATCH_PID (1u << 1)     /* match on process pid */
+#define AUDIT_MATCH_PATH (1u << 2)    /* match on a path prefix */
+
+/* A single audit rule: a set of match criteria and a log action. */
+struct audit_rule {
+    unsigned int match; /* OR of AUDIT_MATCH_* enabled criteria */
+    long syscall;       /* syscall number (-1 = any) */
+    uint32_t pid;       /* pid (0 = any) */
+    char path[128];     /* path prefix ("" = any) */
+};
+
+/* Install a rule (copy).  Returns the rule index or -1 on full table. */
+int audit_rule_add(const struct audit_rule *r);
+
+/* Remove the rule at index i.  Returns 0 on success, -ENOENT if unused. */
+int audit_rule_remove(int idx);
+
+/* Remove all rules. */
+void audit_rule_clear(void);
+
+/* True if any rule currently matches (syscall number, caller pid and
+ * path all match where enabled). */
+int audit_rule_matches(long syscall, uint32_t pid, const char *path);
+
+/* True if any installed rule filters on syscall number. */
+int audit_rules_filter_syscall(void);
+
+/* Return the rule at index i (0..audit_rule_count-1) into *out.
+ * Returns 1 if a rule exists, 0 if out of range. */
+int audit_rule_get(int idx, struct audit_rule *out);
+
+/* Current number of installed rules. */
+int audit_rule_count(void);
+
+/* Register the audit-rule sysctl interface. */
+void audit_sysctl_register(void);
+
 #endif /* AUDIT_H */

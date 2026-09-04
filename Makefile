@@ -413,6 +413,7 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/tracefs.c \
          src/ipc/semaphore.c \
          src/kernel/audit.c \
+         src/kernel/audit_rule.c \
          src/kernel/lsm.c \
          src/kernel/lsm_stack.c \
          src/kernel/yama.c \
