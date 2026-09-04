@@ -1291,13 +1291,14 @@ static const char *sh_builtins[] = {
     "cd",    "pwd",   "exit",     "help",   "echo",   "clear",  "exec",  "export", "unset", "local",
     "set",   "alias", "unalias",  "jobs",   "fg",     "bg",     "kill",  "source", ".",     "trap",
     "read",  "which", "ps",       "free",   "uptime", "uname",  "time",  "test",   "[",     "true",
-    "false", "break", "continue", "return", "type",   "ulimit", "umask", 0};
+    "false", "break", "continue", "return", "type",   "ulimit", "umask", "times",  0};
 static int cmd_uname(int argc, char **argv);
 static int cmd_time(int argc, char **argv);
 static int cmd_help(void);
 static int cmd_type(int argc, char **argv);
 static int cmd_ulimit(int argc, char **argv);
 static int cmd_umask(int argc, char **argv);
+static int cmd_times(int argc, char **argv);
 static int cmd_test(int argc, char **argv);
 
 static int run_builtin(int argc, char **argv) {
@@ -1606,6 +1607,8 @@ static int run_builtin(int argc, char **argv) {
         return cmd_ulimit(argc, argv);
     if (strcmp(cmd, "umask") == 0)
         return cmd_umask(argc, argv);
+    if (strcmp(cmd, "times") == 0)
+        return cmd_times(argc, argv);
     if (strcmp(cmd, "ps") == 0)
         return cmd_ps();
     if (strcmp(cmd, "free") == 0)
@@ -2913,6 +2916,23 @@ static int cmd_umask(int argc, char **argv) {
         p++;
     }
     umask((unsigned int)(newmask & 0777));
+    return 0;
+}
+
+/* ── times builtin: report shell process CPU time ─────────────── */
+#ifndef CLOCK_PROCESS_CPUTIME_ID
+#define CLOCK_PROCESS_CPUTIME_ID 2
+#endif
+static int cmd_times(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    struct timespec ts;
+    if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts) != 0) {
+        printf("0m0s\n");
+        return 1;
+    }
+    long long total_ms = (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    printf("%lldm%lld.%03llds\n", total_ms / 60000, (total_ms % 60000) / 1000, total_ms % 1000);
     return 0;
 }
 
