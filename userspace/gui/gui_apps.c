@@ -259,29 +259,222 @@ void gui_app_mandelbrot_run(void) {
     gui_window_draw_text(win, 120, 10, "Mandelbrot Set", GUI_WHITE, GUI_BLACK);
 }
 
-/* 2. Calculator */
-void gui_app_calc_run(void) {
-    gui_window_t *win = gui_window_create("Calculator", 300, 200, 200, 270, GUI_WINDOW_BG);
-    if (!win) return;
-    gui_add_window(win);
-    gui_window_draw_text(win, 10, 10, "Calc: click GUI items", GUI_TEXT_FG, GUI_WINDOW_BG);
-    int x = 10, y = 40, bw = 40, bh = 30, gap = 4;
-    const char *keys[][4] = {
-        {"7","8","9","+"}, {"4","5","6","-"},
-        {"1","2","3","*"}, {"C","0","=","/"}
-    };
-    for (int r = 0; r < 4; r++) {
-        for (int c = 0; c < 4; c++) {
-            gui_rect_t br = {x + c*(bw+gap), y + r*(bh+gap), bw, bh};
-            gui_window_draw_rect(win, br, GUI_BUTTON_BG);
-            gui_window_draw_rect_outline(win, br, GUI_DARK_GRAY, 1);
-            gui_window_draw_text(win, br.x + 12, br.y + 6, keys[r][c], GUI_TEXT_FG, GUI_BUTTON_BG);
+/* 2. Calculator — real interactive calculator.
+ *
+ * Expression entry (keyboard digits/operators/backspace/Enter or mouse clicks
+ * on the on-screen keypad), a display, and the four basic operations
+ * (+ - * / %) with standard precedence.  It is implemented as a single
+ * focusable widget that both draws itself and does its own keypad
+ * hit-testing — matching this framework's event model, where the focused
+ * widget receives every keyboard event and every mouse event within its
+ * bounds.
+ */
+typedef struct {
+    char expr[96];
+    int len;
+} calc_state_t;
+
+static calc_state_t s_calc;
+
+static void calc_clear(void) {
+    s_calc.expr[0] = '\0';
+    s_calc.len = 0;
+}
+
+static int calc_isdigit(char c) {
+    return c >= '0' && c <= '9';
+}
+static int calc_isop(char c) {
+    return c == '+' || c == '-' || c == '*' || c == '/' || c == '%';
+}
+
+/* Read an unsigned run of digits, advancing *pp past them. */
+static int calc_parse_num(const char *s, int *pp) {
+    int v = 0;
+    while (calc_isdigit(s[*pp])) {
+        v = v * 10 + (s[*pp] - '0');
+        (*pp)++;
+    }
+    return v;
+}
+
+static int calc_eval_unary(const char *s, int *pp, int *ok); /* fwd */
+
+/* term := number | ('+'|'-') term  (prefix sign for negative operands) */
+static int calc_eval_term(const char *s, int *pp, int *ok) {
+    if (s[*pp] == '-' || s[*pp] == '+') {
+        int neg = (s[*pp] == '-');
+        (*pp)++;
+        int v = calc_eval_unary(s, pp, ok);
+        return neg ? -v : v;
+    }
+    if (calc_isdigit(s[*pp]))
+        return calc_parse_num(s, pp);
+    *ok = 0;
+    return 0;
+}
+
+static int calc_eval_unary(const char *s, int *pp, int *ok) {
+    return calc_eval_term(s, pp, ok);
+}
+
+/* factor := term (('*'|'/'|'%') term)*   — left associative, high precedence */
+static int calc_eval_factor(const char *s, int *pp, int *ok) {
+    int v = calc_eval_term(s, pp, ok);
+    while (*ok) {
+        char op = s[*pp];
+        if (op != '*' && op != '/' && op != '%')
+            break;
+        (*pp)++;
+        int r = calc_eval_term(s, pp, ok);
+        if (!*ok)
+            return v;
+        if (op == '*')
+            v = v * r;
+        else if (op == '/') {
+            if (r == 0) {
+                *ok = 0;
+                return 0;
+            }
+            v = v / r;
+        } else {
+            if (r == 0) {
+                *ok = 0;
+                return 0;
+            }
+            v = v % r;
         }
     }
-    gui_rect_t dr = {10, y + 4*(bh+gap) + 5, 180, 20};
-    gui_window_draw_rect(win, dr, GUI_WHITE);
-    gui_window_draw_rect_outline(win, dr, GUI_GRAY, 1);
-    gui_window_draw_text(win, 14, y + 4*(bh+gap) + 7, "0", GUI_TEXT_FG, GUI_WHITE);
+    return v;
+}
+
+/* expr := factor (('+'|'-') factor)*   — left associative, low precedence */
+static int calc_eval_expr(const char *s, int *pp, int *ok) {
+    int v = calc_eval_factor(s, pp, ok);
+    while (*ok) {
+        char op = s[*pp];
+        if (op != '+' && op != '-')
+            break;
+        (*pp)++;
+        int r = calc_eval_factor(s, pp, ok);
+        if (!*ok)
+            return v;
+        v = (op == '+') ? v + r : v - r;
+    }
+    return v;
+}
+
+static void calc_compute(void) {
+    int ok = 1, p = 0;
+    int r = calc_eval_expr(s_calc.expr, &p, &ok);
+    if (ok && s_calc.expr[p] == '\0') {
+        snprintf(s_calc.expr, sizeof(s_calc.expr), "%d", r);
+    } else {
+        snprintf(s_calc.expr, sizeof(s_calc.expr), "ERR");
+    }
+    s_calc.len = (int)strlen(s_calc.expr);
+}
+
+static void calc_append(char c) {
+    if (s_calc.len < (int)sizeof(s_calc.expr) - 1) {
+        s_calc.expr[s_calc.len++] = c;
+        s_calc.expr[s_calc.len] = '\0';
+    }
+}
+
+static void calc_backspace(void) {
+    if (s_calc.len > 0)
+        s_calc.expr[--s_calc.len] = '\0';
+}
+
+static void calc_handle_key(char ch) {
+    if (calc_isdigit(ch) || calc_isop(ch))
+        calc_append(ch);
+    else if (ch == 8)
+        calc_backspace();
+    else if (ch == 13 || ch == '=')
+        calc_compute();
+    else if (ch == 'C' || ch == 'c')
+        calc_clear();
+}
+
+/* Layout constants (window-relative, absolute coords derived at draw time). */
+#define CALC_BW 52
+#define CALC_BH 42
+#define CALC_GAP 6
+#define CALC_COLS 4
+#define CALC_ROWS 4
+
+static const char *const g_calc_keys[CALC_ROWS][CALC_COLS] = {
+    {"7", "8", "9", "+"}, {"4", "5", "6", "-"}, {"1", "2", "3", "*"}, {"C", "0", "=", "/"}};
+
+static void calc_draw(gui_widget_t *w) {
+    int32_t ox = w->rect.x, oy = w->rect.y;
+    /* Display */
+    gui_rect_t disp = {ox, oy, CALC_COLS * CALC_BW + (CALC_COLS - 1) * CALC_GAP, 32};
+    gui_window_draw_rect(NULL, disp, GUI_WHITE);
+    gui_window_draw_rect_outline(NULL, disp, GUI_GRAY, 1);
+    gui_window_draw_text(NULL, ox + 6, oy + 8, s_calc.expr[0] ? s_calc.expr : "0", GUI_TEXT_FG,
+                         GUI_WHITE);
+    /* Keypad */
+    int pad_y = oy + 44;
+    for (int r = 0; r < CALC_ROWS; r++) {
+        for (int c = 0; c < CALC_COLS; c++) {
+            gui_rect_t cell = {ox + c * (CALC_BW + CALC_GAP), pad_y + r * (CALC_BH + CALC_GAP),
+                               CALC_BW, CALC_BH};
+            gui_window_draw_rect(NULL, cell, GUI_BUTTON_BG);
+            gui_window_draw_rect_outline(NULL, cell, GUI_DARK_GRAY, 1);
+            gui_window_draw_text(NULL, cell.x + 19, cell.y + 11, g_calc_keys[r][c], GUI_BUTTON_FG,
+                                 GUI_BUTTON_BG);
+        }
+    }
+}
+
+static void calc_dispatch(char key) {
+    if (key == '=')
+        calc_compute();
+    else if (key == 'C')
+        calc_clear();
+    else
+        calc_handle_key(key);
+}
+
+static void calc_event(gui_widget_t *w, gui_event_t *evt) {
+    if (evt->type == GUI_EVENT_CHAR) {
+        calc_handle_key(evt->ch);
+        return;
+    }
+    if (evt->type != GUI_EVENT_MOUSE_DOWN || evt->button != 1)
+        return;
+    int32_t lx = evt->x - w->rect.x;
+    int32_t ly = evt->y - w->rect.y;
+    int32_t pad_y = 44; /* keypad top matches calc_draw() */
+    if (ly < pad_y)
+        return;
+    int col = (lx + (CALC_GAP / 2)) / (CALC_BW + CALC_GAP);
+    int row = (ly - pad_y + (CALC_GAP / 2)) / (CALC_BH + CALC_GAP);
+    if (col < 0 || col >= CALC_COLS || row < 0 || row >= CALC_ROWS)
+        return;
+    calc_dispatch(g_calc_keys[row][col][0]);
+}
+
+void gui_app_calc_run(void) {
+    calc_clear();
+    gui_window_t *win = gui_window_create("Calculator", 300, 160, 240, 320, GUI_WINDOW_BG);
+    if (!win) return;
+    gui_add_window(win);
+    gui_window_bring_to_front(win);
+    gui_rect_t wr = gui_window_get_rect(win);
+    gui_rect_t wrect = {wr.x + 8, wr.y + 24 + 8, /* below 24px titlebar */
+                        CALC_COLS * CALC_BW + (CALC_COLS - 1) * CALC_GAP,
+                        44 + CALC_ROWS * CALC_BH + (CALC_ROWS - 1) * CALC_GAP};
+    gui_widget_t *cw = gui_widget_create(wrect);
+    if (!cw)
+        return;
+    cw->draw = calc_draw;
+    cw->on_event = calc_event;
+    gui_window_add_widget(win, cw);
+    gui_window_set_focused_widget(win, cw);
 }
 
 /* 3. RGB Color Mixer */
