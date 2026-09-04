@@ -1376,7 +1376,7 @@ static const char *sh_builtins[] = {
     "local", "set",   "alias",    "unalias", "jobs",    "fg",       "bg",     "kill",   "source",
     ".",     "trap",  "read",     "which",   "ps",      "free",     "uptime", "uname",  "time",
     "test",  "[",     "true",     "false",   "break",   "continue", "return", "type",   "ulimit",
-    "umask", "times", "readonly", "shift",   "getopts", 0};
+    "umask", "times", "readonly", "shift",   "getopts", "printf",   0};
 static int cmd_uname(int argc, char **argv);
 static int cmd_time(int argc, char **argv);
 static int cmd_help(void);
@@ -1387,6 +1387,7 @@ static int cmd_times(int argc, char **argv);
 static int cmd_readonly(int argc, char **argv);
 static int cmd_shift(int argc, char **argv);
 static int cmd_getopts(int argc, char **argv);
+static int cmd_printf(int argc, char **argv);
 static int cmd_test(int argc, char **argv);
 
 static int run_builtin(int argc, char **argv) {
@@ -1703,6 +1704,8 @@ static int run_builtin(int argc, char **argv) {
         return cmd_shift(argc, argv);
     if (strcmp(cmd, "getopts") == 0)
         return cmd_getopts(argc, argv);
+    if (strcmp(cmd, "printf") == 0)
+        return cmd_printf(argc, argv);
     if (strcmp(cmd, "ps") == 0)
         return cmd_ps();
     if (strcmp(cmd, "free") == 0)
@@ -3269,6 +3272,89 @@ static int cmd_getopts(int argc, char **argv) {
     /* no more options */
     sh_setenv(varname, "?");
     return 1;
+}
+
+/* ── printf builtin: formatted print (subset of POSIX printf) ─── */
+/* Supports %s %c %d %u %o %x %X %%, and escapes \n \t \r \a \b \\
+ * Arguments are consumed in order and recycled if the format has more
+ * conversions than arguments. */
+static int cmd_printf(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: printf <format> [arg...]\n");
+        return 1;
+    }
+    const char *fmt = argv[1];
+    char out[4096];
+    int oi = 0;
+    int argi = 2;
+    int nargs = argc - 2;
+    for (int i = 0; fmt[i] && oi < (int)sizeof(out) - 1; i++) {
+        if (fmt[i] == '\\' && fmt[i + 1]) {
+            int c = fmt[++i];
+            if (c == 'n')
+                out[oi++] = '\n';
+            else if (c == 't')
+                out[oi++] = '\t';
+            else if (c == 'r')
+                out[oi++] = '\r';
+            else if (c == 'a')
+                out[oi++] = '\a';
+            else if (c == 'b')
+                out[oi++] = '\b';
+            else if (c == '\\')
+                out[oi++] = '\\';
+            else
+                out[oi++] = c;
+            continue;
+        }
+        if (fmt[i] == '%' && fmt[i + 1]) {
+            if (fmt[i + 1] == '%') {
+                out[oi++] = '%';
+                i++;
+                continue;
+            }
+            const char *argval = (nargs > 0) ? argv[argi] : "";
+            char spec = fmt[i + 1];
+            char tmp[128];
+            if (spec == 's') {
+                for (int k = 0; argval[k] && oi < (int)sizeof(out) - 1; k++)
+                    out[oi++] = argval[k];
+            } else if (spec == 'c') {
+                out[oi++] = argval[0] ? argval[0] : '\0';
+            } else if (spec == 'd' || spec == 'i') {
+                int len = snprintf(tmp, sizeof tmp, "%d", atoi(argval));
+                for (int k = 0; k < len && oi < (int)sizeof(out) - 1; k++)
+                    out[oi++] = tmp[k];
+            } else if (spec == 'u') {
+                int len = snprintf(tmp, sizeof tmp, "%u", (unsigned)atoi(argval));
+                for (int k = 0; k < len && oi < (int)sizeof(out) - 1; k++)
+                    out[oi++] = tmp[k];
+            } else if (spec == 'o') {
+                int len = snprintf(tmp, sizeof tmp, "%o", (unsigned)atoi(argval));
+                for (int k = 0; k < len && oi < (int)sizeof(out) - 1; k++)
+                    out[oi++] = tmp[k];
+            } else if (spec == 'x' || spec == 'X') {
+                int len =
+                    snprintf(tmp, sizeof tmp, spec == 'x' ? "%x" : "%X", (unsigned)atoi(argval));
+                for (int k = 0; k < len && oi < (int)sizeof(out) - 1; k++)
+                    out[oi++] = tmp[k];
+            } else {
+                out[oi++] = fmt[i];
+                out[oi++] = spec;
+            }
+            i++;
+            if (nargs > 0) {
+                argi++;
+                if (argi > argc - 1)
+                    argi = 2;
+            }
+            continue;
+        }
+        out[oi++] = fmt[i];
+    }
+    out[oi] = '\0';
+    write(1, out, oi);
+    return 0;
 }
 
 /* ── ps / free / uptime / uname / time / help ────────────────── */
