@@ -49,6 +49,7 @@ LAUNCHER(terminal)
 LAUNCHER(file_manager)
 LAUNCHER(settings)
 LAUNCHER(image_viewer)
+LAUNCHER(music_player)
 LAUNCHER(minesweeper)
 LAUNCHER(snake)
 LAUNCHER(tetris)
@@ -201,14 +202,14 @@ static void draw_taskbar(int32_t mx, int32_t my) {
         {"EXIT", 1008, 44, exit_gui},
     };
     tb_btn_t btns_p3[] = {
-        {"CHRBAR", 2, 56, launch_chart_bar},   {"CHRLIN", 60, 56, launch_chart_line},
-        {"CHRPIE", 118, 56, launch_chart_pie}, {"TYPO", 176, 44, launch_typography},
-        {"FLOOD", 222, 48, launch_flood_fill}, {"INTERF", 272, 52, launch_wave_interference},
-        {"DCLK2", 326, 48, launch_clock_dual}, {"HEART", 376, 48, launch_heartbeat},
-        {"NOTE", 428, 60, launch_notepad},     {"<PAGE", 490, 44, page_prev},
-        {"TERM", 540, 44, launch_terminal},    {"FMGR", 586, 44, launch_file_manager},
-        {"SETS", 632, 44, launch_settings},    {"IMG", 682, 44, launch_image_viewer},
-        {"EXIT", 732, 44, exit_gui},
+        {"CHRBAR", 2, 56, launch_chart_bar},     {"CHRLIN", 60, 56, launch_chart_line},
+        {"CHRPIE", 118, 56, launch_chart_pie},   {"TYPO", 176, 44, launch_typography},
+        {"FLOOD", 222, 48, launch_flood_fill},   {"INTERF", 272, 52, launch_wave_interference},
+        {"DCLK2", 326, 48, launch_clock_dual},   {"HEART", 376, 48, launch_heartbeat},
+        {"NOTE", 428, 60, launch_notepad},       {"<PAGE", 490, 44, page_prev},
+        {"TERM", 540, 44, launch_terminal},      {"FMGR", 586, 44, launch_file_manager},
+        {"SETS", 632, 44, launch_settings},      {"IMG", 682, 44, launch_image_viewer},
+        {"MUSIC", 732, 48, launch_music_player}, {"EXIT", 786, 44, exit_gui},
     };
 
     tb_btn_t *btns;

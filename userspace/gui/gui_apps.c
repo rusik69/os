@@ -1894,6 +1894,292 @@ void gui_app_image_viewer_run(void) {
     gui_window_draw_text(win, x0, y0 + IVCH + 6, status, GUI_TEXT_FG, GUI_WINDOW_BG);
 }
 
+/* 8. Music Player — playlist & playback controls (D286)
+ *
+ * A desktop audio player with a scrolling playlist, transport controls
+ * (PREV / PLAY / STOP / NEXT) and a volume slider.  Playback is simulated:
+ * position advances in real time off the monotonic clock while "playing",
+ * the progress bar fills, and the player auto-advances to the next track
+ * when one completes.  No audio device is exposed to the shell, so this is
+ * a full controller + playlist rather than a codec.  Raw syscalls only.
+ */
+#define MP_W 360
+#define MP_H 396
+#define MPT_NTRACKS 8
+#define MPT_PVIS 5
+#define MPT_ROWH 22
+
+typedef struct {
+    int cur;     /* playlist index being played */
+    int playing; /* 1 = advancing on the clock */
+    int vol;     /* 0..100 */
+    unsigned long long pos_ms;
+    unsigned long long last_ms; /* last monotonic ms seen */
+    int scroll_y;               /* first playlist row shown */
+    int seq;                    /* nonzero after first launch */
+    char status[64];
+} music_state_t;
+
+static music_state_t s_music;
+
+static const char *const s_music_title[MPT_NTRACKS] = {
+    "Kernel Boot",      "System Call Waltz",  "Heap Allocator", "Scheduler Blues",
+    "Page Fault Samba", "Interrupt Rhapsody", "RAM Disk Reel",  "FAT32 Cha-Cha",
+};
+static const char *const s_music_artist[MPT_NTRACKS] = {
+    "rusik69",     "The TLB Trio",  "kmalloc Kid",       "The Scheduler",
+    "MMU Maniacs", "IRQ Orchestra", "Buffer Cache Band", "Filesystem Five",
+};
+/* track lengths in seconds */
+static const int s_music_dur[MPT_NTRACKS] = {187, 214, 168, 241, 198, 302, 156, 226};
+
+static unsigned long long music_now_ms(void) {
+    struct timespec ts;
+    if (clock_gettime(1 /* CLOCK_MONOTONIC */, &ts) != 0)
+        return 0;
+    return ts.tv_sec * 1000ULL + ts.tv_nsec / 1000000ULL;
+}
+
+static void music_mmss(char *buf, unsigned long long ms) {
+    unsigned long long s = ms / 1000;
+    snprintf(buf, 16, "%llu:%02llu", s / 60, s % 60);
+}
+
+static unsigned long long music_total_ms(void) {
+    return (unsigned long long)s_music_dur[s_music.cur] * 1000ULL;
+}
+
+/* Advance playback position one clock tick; auto-advance on completion. */
+static void music_tick(void) {
+    music_state_t *st = &s_music;
+    unsigned long long now = music_now_ms();
+    if (now == 0) {
+        st->last_ms = 0;
+        return;
+    }
+    if (st->last_ms == 0)
+        st->last_ms = now;
+    if (!st->playing) {
+        st->last_ms = now;
+        return;
+    }
+    unsigned long long dt = (now >= st->last_ms) ? now - st->last_ms : 0;
+    st->last_ms = now;
+    if (st->pos_ms + dt >= music_total_ms()) {
+        st->pos_ms = 0;
+        st->cur = (st->cur + 1) % MPT_NTRACKS;
+        st->seq++;
+        snprintf(st->status, sizeof st->status, "Now playing %d of %d", st->cur + 1, MPT_NTRACKS);
+    } else {
+        st->pos_ms += dt;
+    }
+}
+
+static void music_mbtn(gui_widget_t *w, int32_t x, int32_t y, int bw, const char *label,
+                       gui_color_t bg) {
+    gui_rect_t r = {x, y, (uint32_t)bw, 24};
+    gui_window_draw_rect(NULL, r, bg);
+    gui_window_draw_rect_outline(NULL, r, GUI_DARK_GRAY, 1);
+    gui_window_draw_text(NULL, x + 4, y + 6, label, GUI_BUTTON_FG, bg);
+    (void)w;
+}
+
+static void music_draw(gui_widget_t *w) {
+    music_state_t *st = &s_music;
+    int32_t ox = w->rect.x, oy = w->rect.y;
+    int32_t W = (int32_t)w->rect.w;
+    gui_window_draw_rect(NULL, w->rect, GUI_WINDOW_BG);
+
+    gui_window_draw_text(NULL, ox + 6, oy + 3, "Music Player", GUI_TITLE_BG, GUI_WINDOW_BG);
+    gui_window_draw_text(NULL, ox + 6, oy + 15, "desktop mini-player", GUI_GRAY, GUI_WINDOW_BG);
+
+    music_tick();
+
+    /* Now Playing box */
+    gui_rect_t box = {ox + 6, oy + 30, (uint32_t)(W - 12), 46};
+    gui_window_draw_rect(NULL, box, GUI_WHITE);
+    gui_window_draw_rect_outline(NULL, box, GUI_DARK_GRAY, 1);
+    gui_window_draw_text(NULL, box.x + 8, box.y + 6, s_music_title[st->cur], GUI_TEXT_FG,
+                         GUI_WHITE);
+    gui_window_draw_text(NULL, box.x + 8, box.y + 22, s_music_artist[st->cur], GUI_BLUE, GUI_WHITE);
+
+    /* Progress bar */
+    unsigned long long tot = music_total_ms();
+    int pct = (tot > 0) ? (int)(st->pos_ms * 100ULL / tot) : 0;
+    if (pct > 100)
+        pct = 100;
+    gui_rect_t track = {ox + 6, oy + 82, (uint32_t)(W - 12), 10};
+    gui_window_draw_rect(NULL, track, GUI_LIGHT_GRAY);
+    gui_window_draw_rect_outline(NULL, track, GUI_DARK_GRAY, 1);
+    if (pct > 2) {
+        gui_rect_t fill = {track.x + 1, track.y + 1, (uint32_t)((W - 14) * pct / 100), 8};
+        gui_window_draw_rect(NULL, fill, GUI_GREEN);
+    }
+    char tbuf[16];
+    music_mmss(tbuf, st->pos_ms);
+    gui_window_draw_text(NULL, ox + 6, oy + 94, tbuf, GUI_TEXT_FG, GUI_WINDOW_BG);
+    music_mmss(tbuf, tot);
+    gui_window_draw_text(NULL, ox + (W - 6) - (int32_t)strlen(tbuf) * 7, oy + 94, tbuf, GUI_TEXT_FG,
+                         GUI_WINDOW_BG);
+
+    /* Volume slider */
+    char vbuf[40];
+    snprintf(vbuf, sizeof vbuf, "Volume %d%%", st->vol);
+    gui_window_draw_text(NULL, ox + 6, oy + 108, vbuf, GUI_TEXT_FG, GUI_WINDOW_BG);
+    gui_rect_t vtr = {ox + 6, oy + 122, (uint32_t)(W - 12), 10};
+    gui_window_draw_rect(NULL, vtr, GUI_LIGHT_GRAY);
+    gui_window_draw_rect_outline(NULL, vtr, GUI_DARK_GRAY, 1);
+    int vfill = st->vol * (int)(W - 14) / 100;
+    if (vfill > 2) {
+        gui_rect_t vf = {vtr.x + 1, vtr.y + 1, (uint32_t)vfill, 8};
+        gui_window_draw_rect(NULL, vf, GUI_BLUE);
+    }
+
+    /* Transport buttons */
+    music_mbtn(w, ox + 6, oy + 136, 60, "PREV", GUI_BUTTON_BG);
+    music_mbtn(w, ox + 72, oy + 136, 84, st->playing ? "PAUSE" : "PLAY",
+               st->playing ? GUI_ORANGE : GUI_GREEN);
+    music_mbtn(w, ox + 162, oy + 136, 60, "STOP", GUI_BUTTON_BG);
+    music_mbtn(w, ox + 228, oy + 136, 60, "NEXT", GUI_BUTTON_BG);
+
+    /* Playlist header + scroll buttons */
+    gui_window_draw_text(NULL, ox + 6, oy + 166, "Playlist", GUI_TEXT_FG, GUI_WINDOW_BG);
+    gui_rect_t up = {ox + W - 64, oy + 160, 26, 16};
+    gui_window_draw_rect(NULL, up, GUI_BUTTON_BG);
+    gui_window_draw_rect_outline(NULL, up, GUI_DARK_GRAY, 1);
+    gui_window_draw_text(NULL, up.x + 9, up.y + 1, "^", GUI_BUTTON_FG, GUI_BUTTON_BG);
+    gui_rect_t dn = {ox + W - 32, oy + 160, 26, 16};
+    gui_window_draw_rect(NULL, dn, GUI_BUTTON_BG);
+    gui_window_draw_rect_outline(NULL, dn, GUI_DARK_GRAY, 1);
+    gui_window_draw_text(NULL, dn.x + 9, dn.y + 1, "v", GUI_BUTTON_FG, GUI_BUTTON_BG);
+
+    /* Playlist rows (windowed by scroll_y) */
+    int32_t ly = oy + 184;
+    for (int i = 0; i < MPT_PVIS; i++) {
+        int idx = st->scroll_y + i;
+        if (idx >= MPT_NTRACKS)
+            break;
+        gui_color_t bg = (idx == st->cur) ? GUI_BLUE : GUI_WHITE;
+        gui_color_t fg = (idx == st->cur) ? GUI_WHITE : GUI_TEXT_FG;
+        gui_rect_t row = {ox + 6, ly + i * MPT_ROWH, (uint32_t)(W - 12), (uint32_t)(MPT_ROWH - 2)};
+        gui_window_draw_rect(NULL, row, bg);
+        char line[64];
+        snprintf(line, sizeof line, "%d. %s", idx + 1, s_music_title[idx]);
+        gui_window_draw_text(NULL, row.x + 4, row.y + 3, line, fg, bg);
+    }
+
+    /* Status line */
+    if (!st->status[0]) {
+        if (st->playing)
+            snprintf(st->status, sizeof st->status, "Playing %d of %d", st->cur + 1, MPT_NTRACKS);
+        else
+            strcpy(st->status, "Stopped");
+    }
+    gui_window_draw_text(NULL, ox + 6, oy + (int32_t)w->rect.h - 16, st->status, GUI_TEXT_FG,
+                         GUI_WINDOW_BG);
+}
+
+static void music_event(gui_widget_t *w, gui_event_t *evt) {
+    music_state_t *st = &s_music;
+    if (evt->type != GUI_EVENT_MOUSE_DOWN || evt->button != 1)
+        return;
+    int32_t lx = evt->x - w->rect.x;
+    int32_t ly = evt->y - w->rect.y;
+    int32_t W = (int32_t)w->rect.w;
+
+    /* Volume slider */
+    if (ly >= 122 && ly <= 132 && lx >= 6 && lx <= W - 6) {
+        int pct = (lx - 6) * 100 / (int)(W - 12);
+        if (pct < 0)
+            pct = 0;
+        if (pct > 100)
+            pct = 100;
+        st->vol = pct;
+        return;
+    }
+
+    /* Transport buttons */
+    if (ly >= 136 && ly < 160) {
+        if (lx >= 6 && lx < 66) { /* PREV */
+            st->cur = (st->cur + MPT_NTRACKS - 1) % MPT_NTRACKS;
+            st->pos_ms = 0;
+            st->seq++;
+            snprintf(st->status, sizeof st->status, "Now playing %d of %d", st->cur + 1,
+                     MPT_NTRACKS);
+        } else if (lx >= 72 && lx < 156) { /* PLAY / PAUSE */
+            st->playing = !st->playing;
+            st->last_ms = 0;
+        } else if (lx >= 162 && lx < 222) { /* STOP */
+            st->playing = 0;
+            st->pos_ms = 0;
+            strcpy(st->status, "Stopped");
+        } else if (lx >= 228 && lx < 288) { /* NEXT */
+            st->cur = (st->cur + 1) % MPT_NTRACKS;
+            st->pos_ms = 0;
+            st->seq++;
+            snprintf(st->status, sizeof st->status, "Now playing %d of %d", st->cur + 1,
+                     MPT_NTRACKS);
+        }
+        return;
+    }
+
+    /* Playlist scroll buttons */
+    if (ly >= 160 && ly < 176) {
+        if (lx >= W - 64 && lx < W - 38) {
+            if (st->scroll_y > 0)
+                st->scroll_y--;
+            return;
+        }
+        if (lx >= W - 32 && lx < W - 6) {
+            if (st->scroll_y + MPT_PVIS < MPT_NTRACKS)
+                st->scroll_y++;
+            return;
+        }
+    }
+
+    /* Playlist row selection */
+    int32_t y0 = 184;
+    if (ly >= y0) {
+        int row = (ly - y0) / MPT_ROWH;
+        int idx = st->scroll_y + row;
+        if (row >= 0 && row < MPT_PVIS && idx >= 0 && idx < MPT_NTRACKS) {
+            st->cur = idx;
+            st->pos_ms = 0;
+            st->seq++;
+            snprintf(st->status, sizeof st->status, "Now playing %d of %d", st->cur + 1,
+                     MPT_NTRACKS);
+        }
+    }
+}
+
+void gui_app_music_player_run(void) {
+    music_state_t *st = &s_music;
+    if (st->seq == 0) { /* first launch — initialise, later launches resume */
+        st->cur = 0;
+        st->playing = 0;
+        st->vol = 70;
+        st->pos_ms = 0;
+        st->last_ms = 0;
+        st->scroll_y = 0;
+        st->status[0] = '\0';
+        st->seq = 1;
+    }
+    gui_window_t *win = gui_window_create("Music Player", 180, 90, MP_W, MP_H, GUI_WINDOW_BG);
+    if (!win)
+        return;
+    gui_add_window(win);
+    gui_window_bring_to_front(win);
+    gui_rect_t wr = gui_window_get_rect(win);
+    gui_rect_t wrect = {wr.x + 8, wr.y + 24 + 8, MP_W - 16, MP_H - 32};
+    gui_widget_t *cw = gui_widget_create(wrect);
+    if (!cw)
+        return;
+    cw->draw = music_draw;
+    cw->on_event = music_event;
+    gui_window_add_widget(win, cw);
+    gui_window_set_focused_widget(win, cw);
+}
+
 /* 7b. Minesweeper */
 void gui_app_minesweeper_run(void) {
     gui_window_t *win = gui_window_create("Minesweeper", 200, 150, 220, 260, GUI_LIGHT_GRAY);

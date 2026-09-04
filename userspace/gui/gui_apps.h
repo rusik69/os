@@ -100,5 +100,6 @@ void gui_app_buddha_run(void);
 void gui_app_notepad_run(void);
 void gui_app_settings_run(void);
 void gui_app_image_viewer_run(void);
+void gui_app_music_player_run(void);
 
 #endif /* GUI_APPS_H */
