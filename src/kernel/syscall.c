@@ -38,6 +38,7 @@
 #include "kexec.h"
 #include "keyboard.h"
 #include "kptr_restrict.h"
+#include "landlock.h"
 #include "lockdown.h"
 #include "lsm.h"
 #include "madvise_ext.h"
@@ -12838,6 +12839,27 @@ int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64
         return (uint64_t)sys_io_uring_enter((int)a1, (uint32_t)a2, (uint32_t)a3, (uint32_t)a4);
     case SYS_IO_URING_REGISTER:
         return (uint64_t)sys_io_uring_register((int)a1, (uint32_t)a2, (void *)a3, (uint32_t)a4);
+    /* ── Landlock (Item 9, D310) ───────────────────────── */
+    case SYS_LANDLOCK_CREATE_RULESET: {
+        /* landlock_create_ruleset(attr, size, flags) */
+        struct landlock_ruleset_attr attr;
+        if (!syscall_user_read_ok(a1, sizeof(attr)))
+            return (uint64_t)(int64_t)-EFAULT;
+        memcpy(&attr, (void *)a1, sizeof(attr));
+        int ret = landlock_create_ruleset(&attr, (size_t)a2, (uint32_t)a3);
+        return (uint64_t)(int64_t)ret;
+    }
+    case SYS_LANDLOCK_ADD_RULE: {
+        /* landlock_add_rule(fd, rule_type, attr, flags) */
+        struct landlock_path_beneath_attr rule;
+        if (!syscall_user_read_ok(a3, sizeof(rule)))
+            return (uint64_t)(int64_t)-EFAULT;
+        memcpy(&rule, (void *)a3, sizeof(rule));
+        int ret = landlock_add_rule((int)a1, (int)a2, &rule, (uint32_t)a4);
+        return (uint64_t)(int64_t)ret;
+    }
+    case SYS_LANDLOCK_RESTRICT_SELF:
+        return (uint64_t)(int64_t)landlock_restrict_self((int)a1, (uint32_t)a2);
     /* ── Inotify (Item 340) ─────────────────────────── */
     case SYS_INOTIFY_INIT1: {
         int ret = sys_inotify_init1((int)a1);

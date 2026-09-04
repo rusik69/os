@@ -17,7 +17,6 @@
  */
 
 #include "lsm.h"
-
 #include "printf.h"
 #include "string.h"
 
@@ -26,8 +25,7 @@ static const char *lsm_stack[LSM_STACK_MAX_MODULES];
 static int lsm_stack_nr;
 static int lsm_stack_initialized;
 
-void lsm_stack_init(void)
-{
+void lsm_stack_init(void) {
     int i;
 
     if (lsm_stack_initialized)
@@ -39,8 +37,7 @@ void lsm_stack_init(void)
     lsm_stack_initialized = 1;
 }
 
-int lsm_stack_register(const char *name)
-{
+int lsm_stack_register(const char *name) {
     if (!name || !name[0])
         return -1;
 
@@ -58,20 +55,17 @@ int lsm_stack_register(const char *name)
     return lsm_stack_nr - 1;
 }
 
-int lsm_stack_count(void)
-{
+int lsm_stack_count(void) {
     return lsm_stack_nr;
 }
 
-const char *lsm_stack_name(int i)
-{
+const char *lsm_stack_name(int i) {
     if (i < 0 || i >= lsm_stack_nr)
         return NULL;
     return lsm_stack[i];
 }
 
-int lsm_stack_has(const char *name)
-{
+int lsm_stack_has(const char *name) {
     int i;
 
     if (!name)

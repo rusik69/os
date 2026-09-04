@@ -1075,6 +1075,11 @@ struct linux_dirent64 {
 #define SYS_IO_URING_ENTER 426    /* io_uring_enter(fd, to_submit, min_complete, flags) */
 #define SYS_IO_URING_REGISTER 427 /* io_uring_register(fd, opcode, arg, nr_args) */
 
+/* ── Landlock (Linux: 444/445/446) ────────────────────────────────── */
+#define SYS_LANDLOCK_CREATE_RULESET 444 /* landlock_create_ruleset(attr, size, flags) → fd */
+#define SYS_LANDLOCK_ADD_RULE 445       /* landlock_add_rule(fd, rule_type, attr, flags) */
+#define SYS_LANDLOCK_RESTRICT_SELF 446  /* landlock_restrict_self(fd, flags) */
+
 /* ── Memory synchronization ─────────────────────────────────── */
 #define SYS_MSYNC 800 /* msync(addr, len, flags) → 0 or -errno */
 
