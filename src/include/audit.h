@@ -71,4 +71,27 @@ void audit_log_path(const char *pathname, uint32_t inode, uint32_t mode);
 void audit_log_denial(const char *subj, const char *obj,
                        const char *requested);
 
+/* ── Audit record builder (AUX records) ─────────────────────────── */
+
+/* Begin a new audit record of the given event type.  Any in-progress
+ * record is finalized first.  Returns 0 on success, -EINVAL on a bad
+ * event type. */
+int audit_log_start(int type);
+
+/* Append formatted fields to the in-progress record.  No-op if no record
+ * is active. */
+void audit_log_format(const char *fmt, ...);
+
+/* Append a trailing AUX record (e.g. a PATH or EXECVE follow-up) bound
+ * to the same audit sequence as the in-progress record.  Returns 0 on
+ * success, -ENOSPC if the record buffer is full. */
+int audit_log_add_aux(const char *aux_type, const char *fmt, ...);
+
+/* Finalize the in-progress record (emit it to ring buffer + netlink) and
+ * reset the builder. */
+void audit_log_end(void);
+
+/* Single-call generic audit log (starts + formats + ends). */
+void audit_log(const char *msg);
+
 #endif /* AUDIT_H */

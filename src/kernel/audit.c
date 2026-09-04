@@ -292,36 +292,154 @@ int audit_read_log(char *buf, int max) {
     return to_copy;
 }
 
-/* ── Stub: audit_log ───────────────────────────────────────────────── */
-void audit_log(const char *msg)
-{
-    (void)msg;
-    kprintf("[AUDIT] audit_log: not yet implemented\n");
+/* ── Audit record builder (AUX records) ───────────────────────────── */
+/* A single in-progress record is accumulated in a staging buffer, then
+ * flushed once on audit_log_end().  An optional trailing AUX record is
+ * appended and emitted together, sharing the same audit sequence so a
+ * user-space consumer can tie follow-up records (PATH, EXECVE, ...) to
+ * the main SYSCALL record. */
+
+#define AUDIT_RECORD_SIZE 512
+#define AUDIT_AUX_SIZE 256
+
+static char audit_record_buf[AUDIT_RECORD_SIZE];
+static int audit_record_pos;
+static int audit_record_active; /* event type, or -1 when idle */
+static char audit_record_aux[AUDIT_AUX_SIZE];
+static int audit_record_aux_active;
+
+/* Internal: reset the record builder to idle. */
+static void audit_record_reset(void) {
+    audit_record_pos = 0;
+    audit_record_active = -1;
+    audit_record_aux_active = 0;
+    audit_record_aux[0] = '\0';
 }
 
-/* ── Stub: audit_log_start ─────────────────────────────────────────── */
-static int audit_log_start(int type)
-{
-    (void)type;
-    kprintf("[AUDIT] audit_log_start: not yet implemented\n");
+int audit_log_start(int type) {
+    /* Event type must be within the defined audit message range. */
+    if (type < AUDIT_NLMSG_BASE || type > AUDIT_EVENT_USER)
+        return -EINVAL;
+
+    /* If a record is already in progress, finalize it first so a
+     * half-built record is never overwritten/lost. */
+    if (audit_record_active != -1)
+        audit_log_end();
+
+    audit_record_active = type;
+    audit_record_pos = 0;
+    audit_record_aux_active = 0;
+    audit_record_aux[0] = '\0';
+    audit_record_buf[0] = '\0';
     return 0;
 }
 
-/* ── Stub: audit_log_end ───────────────────────────────────────────── */
-static void audit_log_end(void)
-{
-    kprintf("[AUDIT] audit_log_end: not yet implemented\n");
+void audit_log_format(const char *fmt, ...) {
+    __builtin_va_list args;
+    int n;
+
+    if (audit_record_active == -1 || !fmt)
+        return;
+
+    __builtin_va_start(args, fmt);
+    n = vsnprintf(audit_record_buf + audit_record_pos, AUDIT_RECORD_SIZE - (size_t)audit_record_pos,
+                  fmt, args);
+    __builtin_va_end(args);
+
+    if (n > 0) {
+        int new_pos = audit_record_pos + n;
+        if (new_pos > AUDIT_RECORD_SIZE - 1)
+            new_pos = AUDIT_RECORD_SIZE - 1;
+        audit_record_pos = new_pos;
+    }
 }
 
-/* ── Stub: audit_log_format ────────────────────────────────────────── */
-__printf(1, 2)
-static void audit_log_format(const char *fmt, ...)
-{
-    (void)fmt;
-    kprintf("[AUDIT] audit_log_format: not yet implemented\n");
+int audit_log_add_aux(const char *aux_type, const char *fmt, ...) {
+    __builtin_va_list args;
+    char tmp[AUDIT_AUX_SIZE];
+    int n;
+
+    if (audit_record_active == -1 || !aux_type || !fmt)
+        return -EINVAL;
+
+    __builtin_va_start(args, fmt);
+    n = vsnprintf(tmp, sizeof(tmp), fmt, args);
+    __builtin_va_end(args);
+    if (n <= 0)
+        return 0;
+
+    /* Format: "type=<AUX> msg=audit(<seq>): <body>\n" */
+    char line[AUDIT_AUX_SIZE + 64];
+    int line_len = snprintf(line, sizeof(line), "type=%s msg=audit(%u): %s\n", aux_type,
+                            audit_sequence + 1, tmp);
+    if (line_len <= 0)
+        return -EINVAL;
+
+    /* Concatenate onto the aux stash (best-effort). */
+    size_t cur = strlen(audit_record_aux);
+    if (cur + (size_t)line_len >= sizeof(audit_record_aux))
+        return -ENOSPC;
+    memcpy(audit_record_aux + cur, line, (size_t)line_len);
+    audit_record_aux[cur + (size_t)line_len] = '\0';
+    audit_record_aux_active = 1;
+    return 0;
 }
 
-/* ── Stub: audit_send_reply ────────────────────────────────────────── */
+void audit_log_end(void) {
+    if (audit_record_active == -1)
+        return;
+
+    int type = audit_record_active;
+
+    /* Emit the main record, then any attached AUX records. */
+    if (audit_record_pos > 0) {
+        int i;
+        /* 1) Ring buffer */
+        for (i = 0; i < audit_record_pos && audit_pos < AUDIT_BUF_SIZE - 1; i++)
+            audit_buf[audit_pos++] = audit_record_buf[i];
+        if (audit_pos >= AUDIT_BUF_SIZE)
+            audit_pos = 0;
+        /* 2) Netlink multicast */
+        audit_sequence++;
+        audit_netlink_send(type, audit_record_buf, audit_record_pos);
+    }
+    if (audit_record_aux_active) {
+        int aux_len = (int)strlen(audit_record_aux);
+        int i;
+        for (i = 0; i < aux_len && audit_pos < AUDIT_BUF_SIZE - 1; i++)
+            audit_buf[audit_pos++] = audit_record_aux[i];
+        if (audit_pos >= AUDIT_BUF_SIZE)
+            audit_pos = 0;
+        /* Deliver AUX lines as individual LOG netlink messages so the
+         * sequence is preserved for correlation. */
+        char *p = audit_record_aux;
+        while (p && *p) {
+            char *nl = strchr(p, '\n');
+            if (!nl)
+                break;
+            *nl = '\0';
+            audit_sequence++;
+            audit_netlink_send(AUDIT_EVENT_LOG, p, (int)strlen(p));
+            p = nl + 1;
+        }
+    }
+
+    audit_record_reset();
+}
+
+/* Single-call generic audit log: start a LOG record, format the message,
+ * end and emit. */
+void audit_log(const char *msg) {
+    if (!audit_enabled || !msg)
+        return;
+
+    if (audit_log_start(AUDIT_EVENT_LOG) < 0)
+        return;
+    audit_log_format("msg='%s'", msg);
+    audit_log_end();
+}
+
+/* ── Stub: audit_send_reply ─────────────────────────────────────────── */
 static int audit_send_reply(void *skb, int type, int done, int seq, const void *data, int len)
 {
     (void)skb; (void)type; (void)done; (void)seq; (void)data; (void)len;
