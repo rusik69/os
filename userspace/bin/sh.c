@@ -1372,11 +1372,11 @@ static int cmd_uptime(void);
 /* Shared builtin-name table: used by `which` and Tab-completion
  * (D280 task 18).  Keep in sync with run_builtin(). */
 static const char *sh_builtins[] = {
-    "cd",    "pwd",    "exit",  "help",    "echo",     "clear", "exec",   "export",   "unset",
-    "local", "set",    "alias", "unalias", "jobs",     "fg",    "bg",     "kill",     "source",
-    ".",     "trap",   "read",  "which",   "ps",       "free",  "uptime", "uname",    "time",
-    "test",  "[",      "true",  "false",   "break",    "false", "break",  "continue", "return",
-    "type",  "ulimit", "umask", "times",   "readonly", "shift", 0};
+    "cd",    "pwd",   "exit",     "help",    "echo",    "clear",    "exec",   "export", "unset",
+    "local", "set",   "alias",    "unalias", "jobs",    "fg",       "bg",     "kill",   "source",
+    ".",     "trap",  "read",     "which",   "ps",      "free",     "uptime", "uname",  "time",
+    "test",  "[",     "true",     "false",   "break",   "continue", "return", "type",   "ulimit",
+    "umask", "times", "readonly", "shift",   "getopts", 0};
 static int cmd_uname(int argc, char **argv);
 static int cmd_time(int argc, char **argv);
 static int cmd_help(void);
@@ -1386,6 +1386,7 @@ static int cmd_umask(int argc, char **argv);
 static int cmd_times(int argc, char **argv);
 static int cmd_readonly(int argc, char **argv);
 static int cmd_shift(int argc, char **argv);
+static int cmd_getopts(int argc, char **argv);
 static int cmd_test(int argc, char **argv);
 
 static int run_builtin(int argc, char **argv) {
@@ -1700,6 +1701,8 @@ static int run_builtin(int argc, char **argv) {
         return cmd_readonly(argc, argv);
     if (strcmp(cmd, "shift") == 0)
         return cmd_shift(argc, argv);
+    if (strcmp(cmd, "getopts") == 0)
+        return cmd_getopts(argc, argv);
     if (strcmp(cmd, "ps") == 0)
         return cmd_ps();
     if (strcmp(cmd, "free") == 0)
@@ -3107,6 +3110,165 @@ static int cmd_shift(int argc, char **argv) {
     for (int i = g_pos_count; i < MAX_POS; i++)
         g_pos[i] = 0;
     return 0;
+}
+
+/* ── getopts builtin: parse options from positional parameters ── */
+/* Usage: getopts OPTSTRING VARNAME [ARGS...]
+ * Uses/updates OPTIND and OPTARG environment variables. */
+static int cmd_getopts(int argc, char **argv) {
+    if (argc < 3) {
+        printf("Usage: getopts optstring var\n");
+        return 2;
+    }
+    const char *optspec = argv[1];
+    const char *varname = argv[2];
+    static int saved_optind;
+    static int saved_optchar;
+    static int saved_argidx;
+    const char **pargs;
+    int pargc_start;
+    if (argc >= 4) {
+        pargs = (const char **)argv + 3;
+        pargc_start = argc - 3;
+    } else {
+        pargs = (const char **)g_pos;
+        pargc_start = g_pos_count;
+    }
+    int optind = saved_optind;
+    int optchar = saved_optchar;
+    int argidx = saved_argidx;
+    if (optind == 0) {
+        /* fresh start */
+        const char *envopt = sh_getenv("OPTIND");
+        optind = envopt ? atoi(envopt) : 1;
+        if (optind < 1)
+            optind = 1;
+        optchar = 0;
+        argidx = 0;
+    }
+    /* scan forward from current OPTIND for the next arg starting with '-' */
+    while (argidx < pargc_start) {
+        const char *cur = pargs[argidx];
+        int clen = 0;
+        while (cur[clen])
+            clen++;
+        /* if already mid-option-cluster, resume at optchar */
+        if (optchar > 0) {
+            /* we're inside cur; but cur may have advanced — handle below */
+        }
+        if (optchar == 0) {
+            if (cur[0] != '-' || cur[1] == '\0' || (cur[1] == '-' && cur[2] == '\0')) {
+                argidx++;
+                continue;
+            }
+            optchar = 1;
+        }
+        /* process one option char from cur[optchar] */
+        char oc = cur[optchar];
+        const char *in_spec = 0;
+        for (const char *s = optspec; *s; s++) {
+            if (*s == ':')
+                continue;
+            if (*s == oc) {
+                in_spec = s;
+                break;
+            }
+        }
+        if (oc == '-' && cur[optchar + 1] == '\0') {
+            argidx++;
+            optchar = 0;
+            continue;
+        }
+        if (!in_spec) {
+            /* unknown option */
+            if (optspec[0] == ':') {
+                sh_setenv(varname, "?");
+                char argbuf[8];
+                snprintf(argbuf, sizeof argbuf, "%c", oc);
+                sh_setenv("OPTARG", argbuf);
+            } else {
+                sh_setenv(varname, "?");
+                sh_setenv("OPTARG", "");
+            }
+            /* report the bad char in OPTIND position */
+            optind = argidx + 1;
+            optchar++;
+            if (cur[optchar] == '\0') {
+                optchar = 0;
+                argidx++;
+            }
+            saved_optind = optind;
+            saved_optchar = optchar;
+            saved_argidx = argidx;
+            char idbuf[32];
+            snprintf(idbuf, sizeof idbuf, "%d", optind);
+            sh_setenv("OPTIND", idbuf);
+            return 0;
+        }
+        /* valid option; needs arg if followed by ':' in spec */
+        if (in_spec[1] == ':') {
+            char *argval = 0;
+            if (cur[optchar + 1] != '\0') {
+                argval = (char *)cur + optchar + 1;
+            } else {
+                if (argidx + 1 < pargc_start)
+                    argval = (char *)pargs[argidx + 1];
+            }
+            if (argval) {
+                sh_setenv("OPTARG", argval);
+                char vbuf[2];
+                vbuf[0] = oc;
+                vbuf[1] = '\0';
+                sh_setenv(varname, vbuf);
+                /* advance past arg */
+                int consumed_arg = (cur[optchar + 1] == '\0');
+                optind = argidx + (consumed_arg ? 2 : 1);
+                argidx += consumed_arg ? 1 : 0;
+                optchar = 0;
+            } else {
+                /* missing argument */
+                if (optspec[0] == ':') {
+                    sh_setenv(varname, ":");
+                    char ab[2] = {oc, '\0'};
+                    sh_setenv("OPTARG", ab);
+                } else {
+                    sh_setenv(varname, "?");
+                    sh_setenv("OPTARG", "");
+                }
+                optind = argidx + 1;
+                saved_optind = optind;
+                saved_optchar = 0;
+                saved_argidx = argidx + 1;
+                char idbuf[32];
+                snprintf(idbuf, sizeof idbuf, "%d", optind);
+                sh_setenv("OPTIND", idbuf);
+                return 0;
+            }
+        } else {
+            /* no arg required */
+            char vbuf[2];
+            vbuf[0] = oc;
+            vbuf[1] = '\0';
+            sh_setenv(varname, vbuf);
+            sh_setenv("OPTARG", "");
+            optind = argidx + 1;
+            optchar++;
+            if (cur[optchar] == '\0') {
+                optchar = 0;
+                argidx++;
+            }
+        }
+        saved_optind = optind;
+        saved_optchar = optchar;
+        saved_argidx = argidx;
+        char idbuf[32];
+        snprintf(idbuf, sizeof idbuf, "%d", optind);
+        sh_setenv("OPTIND", idbuf);
+        return 0;
+    }
+    /* no more options */
+    sh_setenv(varname, "?");
+    return 1;
 }
 
 /* ── ps / free / uptime / uname / time / help ────────────────── */
