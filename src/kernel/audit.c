@@ -228,10 +228,16 @@ void audit_syscall_entry(uint64_t num, uint64_t a1, uint64_t a2,
     if (!audit_enabled) return;
     (void)a5;
 
-    /* Store the syscall number per-process for use by audit_syscall_exit */
+    /* Store the syscall number + entry args per-process so the exit
+     * record can reproduce a complete, correlated SYSCALL record. */
     struct process *p = process_get_current();
-    if (p)
+    if (p) {
         p->audit_syscall_num = (int)num;
+        p->audit_syscall_args[0] = a1;
+        p->audit_syscall_args[1] = a2;
+        p->audit_syscall_args[2] = a3;
+        p->audit_syscall_args[3] = a4;
+    }
 
     char buf[512];
     audit_format_syscall(buf, sizeof(buf), num, a1, a2, a3, a4, 0);
@@ -245,13 +251,27 @@ void audit_syscall_exit(uint64_t ret) {
     uint32_t pid = p ? p->pid : 0;
     int syscall_num = p ? p->audit_syscall_num : -1;
 
-    char buf[256];
+    char buf[512];
     int n;
     if (syscall_num >= 0) {
+        /* Correlated exit record: reuse the captured entry args so the
+         * pair forms one complete SYSCALL record. */
         n = snprintf(buf, sizeof(buf),
-            "type=SYSCALL_EXIT msg=audit(%u): syscall=%d exit=%lld pid=%u",
-            audit_sequence + 1, syscall_num, (long long)ret, pid);
-        if (p) p->audit_syscall_num = -1; /* reset */
+                     "type=SYSCALL_EXIT msg=audit(%u): "
+                     "syscall=%d exit=%lld pid=%u "
+                     "a1=%llx a2=%llx a3=%llx a4=%llx",
+                     audit_sequence + 1, syscall_num, (long long)ret, pid,
+                     (unsigned long long)(p ? p->audit_syscall_args[0] : 0),
+                     (unsigned long long)(p ? p->audit_syscall_args[1] : 0),
+                     (unsigned long long)(p ? p->audit_syscall_args[2] : 0),
+                     (unsigned long long)(p ? p->audit_syscall_args[3] : 0));
+        if (p) {
+            p->audit_syscall_num = -1; /* reset */
+            p->audit_syscall_args[0] = 0;
+            p->audit_syscall_args[1] = 0;
+            p->audit_syscall_args[2] = 0;
+            p->audit_syscall_args[3] = 0;
+        }
     } else {
         n = snprintf(buf, sizeof(buf),
             "type=SYSCALL_EXIT msg=audit(%u): exit=%lld pid=%u",

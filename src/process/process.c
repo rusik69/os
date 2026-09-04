@@ -627,6 +627,7 @@ void __init process_init(void) {
     process_table[0].landlock_ruleset_ids[3] = -1;
     process_table[0].landlock_handled_access_fs = 0;
     process_table[0].is_subreaper = 0;
+    process_table[0].audit_syscall_num = -1;
     current_process = &process_table[0];
 
     /* Allocate a guarded kernel stack for the idle process so that
@@ -767,6 +768,11 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->landlock_ruleset_ids[3] = -1;
     proc->landlock_handled_access_fs = 0;
     proc->is_subreaper = 0;
+    proc->audit_syscall_num = -1; /* no syscall in flight */
+    proc->audit_syscall_args[0] = 0;
+    proc->audit_syscall_args[1] = 0;
+    proc->audit_syscall_args[2] = 0;
+    proc->audit_syscall_args[3] = 0;
     proc->ptracer_pid = 0; /* YAMA: no tracer allowed by default */
     kcov_process_init(proc);
 
@@ -981,6 +987,11 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp, uint64_t 
     proc->landlock_ruleset_ids[3] = -1;
     proc->landlock_handled_access_fs = 0;
     proc->is_subreaper = 0;
+    proc->audit_syscall_num = -1; /* no syscall in flight */
+    proc->audit_syscall_args[0] = 0;
+    proc->audit_syscall_args[1] = 0;
+    proc->audit_syscall_args[2] = 0;
+    proc->audit_syscall_args[3] = 0;
     proc->ptracer_pid = 0; /* YAMA: no tracer allowed by default */
     kcov_process_init(proc);
 

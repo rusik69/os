@@ -237,6 +237,9 @@ struct process {
     struct seccomp_filter *seccomp_filter; /* NULL if no filter installed */
     /* Audit: syscall number for current syscall (set by audit_syscall_entry) */
     int audit_syscall_num; /* -1 if not in a syscall */
+    /* Audit: entry arguments captured at syscall entry so the exit record
+     * can reproduce a complete, correlated SYSCALL record. */
+    uint64_t audit_syscall_args[4];
     /* ── CPU time accounting ─────────────────────────────────── */
     uint64_t utime_ticks;           /* ticks spent in user mode */
     uint64_t stime_ticks;           /* ticks spent in kernel mode (syscalls + IRQs) */
