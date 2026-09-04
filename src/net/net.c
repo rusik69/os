@@ -197,6 +197,12 @@ int net_link_send(const void *data, uint16_t len) {
 /* ICMP ping state */
 static volatile int ping_reply_received = 0;
 
+/* mtr/traceroute probe state: while a probe is in flight we capture the
+ * source IP of the first ICMP response (echo reply for the target hop,
+ * time-exceeded for intermediate routers). */
+static volatile int trace_active = 0;
+static volatile uint32_t trace_reply_ip = 0;
+
 /* ── IP routing table ───────────────────────────────────────────── */
 
 int rt_add(uint32_t dst, uint32_t mask, uint32_t gw, int iface) {
@@ -675,8 +681,8 @@ void send_eth(const uint8_t *dst_mac, uint16_t type, const void *payload, uint16
     }
 }
 
-static void send_ip_fragmented(uint32_t dst_ip, uint8_t protocol, const void *payload,
-                               uint16_t len) {
+static void send_ip_fragmented(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t len,
+                               uint8_t ttl) {
     uint16_t ip_id = __sync_fetch_and_add(&net_ip_id_counter, 1);
     uint16_t max_payload = 1500 - (uint16_t)sizeof(struct ip_header);
     uint16_t off = 0;
@@ -691,7 +697,7 @@ static void send_ip_fragmented(uint32_t dst_ip, uint8_t protocol, const void *pa
         struct ip_header *ip = (struct ip_header *)buf;
         memset(ip, 0, sizeof(*ip));
         ip->version_ihl = 0x45;
-        ip->ttl = 64;
+        ip->ttl = ttl;
         ip->protocol = protocol;
         ip->src_ip = htonl(net_our_ip);
         ip->dst_ip = htonl(dst_ip);
@@ -721,15 +727,20 @@ static void send_ip_fragmented(uint32_t dst_ip, uint8_t protocol, const void *pa
 }
 
 void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t len) {
+    send_ip_with_ttl(dst_ip, protocol, payload, len, 64);
+}
+
+void send_ip_with_ttl(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t len,
+                      uint8_t ttl) {
     if (len > 1500 - sizeof(struct ip_header)) {
-        send_ip_fragmented(dst_ip, protocol, payload, len);
+        send_ip_fragmented(dst_ip, protocol, payload, len, ttl);
         return;
     }
     uint8_t buf[1500];
     struct ip_header *ip = (struct ip_header *)buf;
     memset(ip, 0, sizeof(*ip));
     ip->version_ihl = 0x45;
-    ip->ttl = 64;
+    ip->ttl = ttl;
     ip->protocol = protocol;
     ip->src_ip = htonl(net_our_ip);
     ip->dst_ip = htonl(dst_ip);
@@ -900,6 +911,13 @@ static void handle_icmp(struct ip_header *ip, const uint8_t *payload, uint16_t l
         send_ip(ntohl(ip->src_ip), IP_PROTO_ICMP, reply_buf, reply_len);
     } else if (icmp->type == ICMP_ECHOREPLY) {
         ping_reply_received = 1;
+        if (trace_active)
+            trace_reply_ip = ntohl(ip->src_ip);
+    } else if (icmp->type == ICMP_TIMXCEED) {
+        /* Time Exceeded — an intermediate router consumed the probe's TTL.
+         * Its source IP is the hop that answered for that TTL. */
+        if (trace_active)
+            trace_reply_ip = ntohl(ip->src_ip);
     }
 }
 
@@ -1251,6 +1269,40 @@ int net_ping(uint32_t target_ip) {
             return (int)(elapsed * 10);
         }
     }
+    return -1;
+}
+
+/* net_trace(ip, ttl) — send a single ICMP echo probe with the given IP
+ * hop-limit (TTL). For an intermediate router that consumes the TTL the
+ * ICMP Time-Exceeded reply reveals that hop; for the final hop the echo
+ * reply reveals the destination. Returns the reply source IP (the hop)
+ * or -1 on timeout. This is the per-hop primitive behind `mtr`. */
+int net_trace(uint32_t target_ip, uint8_t ttl) {
+    uint8_t buf[64];
+    struct icmp_header *icmp = (struct icmp_header *)buf;
+    icmp->type = 8; /* ICMP_ECHO */
+    icmp->code = 0;
+    icmp->id = htons(0x1234);
+    icmp->seq = htons(1);
+    icmp->checksum = 0;
+    for (int i = 0; i < 32; i++)
+        buf[sizeof(struct icmp_header) + i] = (uint8_t)i;
+    icmp->checksum = net_checksum(buf, sizeof(struct icmp_header) + 32);
+
+    trace_active = 1;
+    trace_reply_ip = 0;
+    send_ip_with_ttl(target_ip, IP_PROTO_ICMP, buf, sizeof(struct icmp_header) + 32, ttl);
+
+    uint64_t start = timer_get_ticks();
+    while (!trace_reply_ip) {
+        net_poll();
+        uint64_t now = timer_get_ticks();
+        if (now - start > 200)
+            break; /* 2 second per-probe timeout */
+    }
+    trace_active = 0;
+    if (trace_reply_ip)
+        return (int)trace_reply_ip;
     return -1;
 }
 

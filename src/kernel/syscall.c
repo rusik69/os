@@ -2890,6 +2890,10 @@ static int64_t sys_net_ping(uint64_t ip) {
     return (uint64_t)net_ping((uint32_t)ip);
 }
 
+static int64_t sys_net_trace(uint64_t ip, uint64_t ttl) {
+    return (uint64_t)net_trace((uint32_t)ip, (uint8_t)ttl);
+}
+
 static int64_t sys_net_udp_send(uint64_t dst_ip, uint64_t src_port, uint64_t dst_port,
                                 uint64_t data_addr, uint64_t len) {
     net_udp_send((uint32_t)dst_ip, (uint16_t)src_port, (uint16_t)dst_port, (const void *)data_addr,
@@ -12706,6 +12710,8 @@ int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64
         return sys_net_dns(a1);
     case SYS_NET_PING:
         return sys_net_ping(a1);
+    case SYS_NET_TRACE:
+        return sys_net_trace(a1, a2);
     case SYS_NET_UDP_SEND:
         return sys_net_udp_send(a1, a2, a3, a4, a5);
     case SYS_NET_HTTP_GET:

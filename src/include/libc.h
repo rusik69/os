@@ -185,6 +185,7 @@ uint32_t libc_net_get_gateway(void);
 uint32_t libc_net_get_mask(void);
 uint32_t libc_net_dns_resolve(const char *host);
 int libc_net_ping(uint32_t ip);
+int libc_net_trace(uint32_t ip, uint8_t ttl);
 void libc_net_udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
                        const void *data, uint16_t len);
 int libc_net_http_get_ex(const char *host, uint16_t port, const char *path,

@@ -632,6 +632,7 @@ static int syscall_new_is_builtin(int nr)
     case 280: case 281: case 282: case 283: case 284: case 285:
     case 286: case 287: case 288: case 289: case 290: case 291:
     case 292: case 293: case 294:
+    case 295:
     case 296: case 297: case 298: case 299: case 300: case 301:
     case 302: case 303: case 304: case 305: case 306: case 307:
     case 308: case 309: case 310: case 311: case 312: case 313:

@@ -475,6 +475,7 @@ static void process_caps_apply_user_default(struct process *proc) {
     process_caps_allow(proc, SYS_NET_GET_MASK);
     process_caps_allow(proc, SYS_NET_DNS);
     process_caps_allow(proc, SYS_NET_PING);
+    process_caps_allow(proc, SYS_NET_TRACE);
     process_caps_allow(proc, SYS_NET_UDP_SEND);
     process_caps_allow(proc, SYS_NET_HTTP_GET);
     process_caps_allow(proc, SYS_NET_ARP_LIST);

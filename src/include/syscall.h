@@ -164,6 +164,7 @@
 #define SYS_NET_GET_MASK 128
 #define SYS_NET_DNS 129
 #define SYS_NET_PING 130
+#define SYS_NET_TRACE 295 /* net_trace(ip, ttl) → per-hop reply IP (mtr primitive) */
 #define SYS_NET_UDP_SEND 131
 #define SYS_NET_HTTP_GET 132
 #define SYS_NET_ARP_LIST 133

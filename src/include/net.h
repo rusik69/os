@@ -386,6 +386,7 @@ uint32_t net_resolv_conf_read_first(void);
 void net_dhcp_discover(void);
 void net_dhcp_renew_if_needed(void);
 int net_ping(uint32_t target_ip);
+int net_trace(uint32_t target_ip, uint8_t ttl);
 void net_set_ip(uint32_t ip, uint32_t gw, uint32_t mask);
 
 /* IPv6 support */

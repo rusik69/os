@@ -306,6 +306,8 @@ extern int net_num_udp_bindings;
 /* Core send functions (net.c) */
 void send_eth(const uint8_t *dst_mac, uint16_t type, const void *payload, uint16_t len);
 void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t len);
+void send_ip_with_ttl(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t len,
+                      uint8_t ttl);
 
 /* Protocol handlers (called from net.c net_poll/handle_ip) */
 void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len);

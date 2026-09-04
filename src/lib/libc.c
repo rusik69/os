@@ -98,6 +98,10 @@ int libc_net_ping(uint32_t ip) {
     return (int)libc_syscall(SYS_NET_PING, ip, 0, 0, 0, 0);
 }
 
+int libc_net_trace(uint32_t ip, uint8_t ttl) {
+    return (int)libc_syscall(SYS_NET_TRACE, ip, ttl, 0, 0, 0);
+}
+
 void libc_net_udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
                        const void *data, uint16_t len) {
     (void)libc_syscall(SYS_NET_UDP_SEND, dst_ip, src_port, dst_port,

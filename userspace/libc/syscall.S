@@ -538,6 +538,16 @@ net_ping:
     ret
 .size net_ping, . - net_ping
 
+# net_trace(ip, ttl) — ICMP probe per hop, returns reply source IP or -1.
+# Args: rdi = ip (int), rsi = ttl (int) — SysV ABI already places them.
+.globl net_trace
+.type net_trace, @function
+net_trace:
+    movl    $295, %eax
+    syscall
+    ret
+.size net_trace, . - net_trace
+
 # net_udp_send(dst_ip, src_port, dst_port, data, len)
 .globl net_udp_send
 .type net_udp_send, @function

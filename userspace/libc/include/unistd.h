@@ -363,6 +363,7 @@ extern unsigned int net_get_gw(void);
 extern unsigned int net_get_mask(void);
 extern int net_dns(const char *host);
 extern int net_ping(unsigned int ip);
+extern int net_trace(unsigned int ip, int ttl);
 extern int net_udp_send(unsigned int dst_ip, unsigned short src_port, unsigned short dst_port, const void *data, unsigned int len);
 extern int net_http_get(const char *host, unsigned short port, const char *path, char *buf, unsigned int bufsz);
 extern int net_tcp_listen(unsigned short port);
