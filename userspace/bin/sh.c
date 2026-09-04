@@ -1291,10 +1291,11 @@ static const char *sh_builtins[] = {
     "cd",    "pwd",  "exit",  "help",    "echo",  "clear",    "exec",   "export", "unset",
     "local", "set",  "alias", "unalias", "jobs",  "fg",       "bg",     "kill",   "source",
     ".",     "trap", "read",  "which",   "ps",    "free",     "uptime", "uname",  "time",
-    "test",  "[",    "true",  "false",   "break", "continue", "return", 0};
+    "test",  "[",    "true",  "false",   "break", "continue", "return", "type",   0};
 static int cmd_uname(int argc, char **argv);
 static int cmd_time(int argc, char **argv);
 static int cmd_help(void);
+static int cmd_type(int argc, char **argv);
 static int cmd_test(int argc, char **argv);
 
 static int run_builtin(int argc, char **argv) {
@@ -1597,6 +1598,8 @@ static int run_builtin(int argc, char **argv) {
     }
     if (strcmp(cmd, "which") == 0)
         return cmd_which(argv);
+    if (strcmp(cmd, "type") == 0)
+        return cmd_type(argc, argv);
     if (strcmp(cmd, "ps") == 0)
         return cmd_ps();
     if (strcmp(cmd, "free") == 0)
@@ -2693,6 +2696,81 @@ static int cmd_which(char **argv) {
     }
     printf("which: %s: not found\n", name);
     return 1;
+}
+
+/* ── type builtin: display how a command would be interpreted ── */
+static int cmd_type(int argc, char **argv) {
+    if (argc < 2) {
+        printf("usage: type <command>...\n");
+        return 1;
+    }
+    int rc = 0;
+    for (int ai = 1; ai < argc; ai++) {
+        const char *name = argv[ai];
+        /* alias? */
+        int found = 0;
+        for (int i = 0; i < sh_alias_count; i++)
+            if (strcmp(shell_aliases[i].name, name) == 0) {
+                printf("%s is an alias for %s\n", name, shell_aliases[i].value);
+                found = 1;
+                break;
+            }
+        if (found)
+            continue;
+        /* function? */
+        if (func_find(name)) {
+            printf("%s is a function\n", name);
+            continue;
+        }
+        /* shell builtin? */
+        for (int i = 0; sh_builtins[i]; i++)
+            if (strcmp(name, sh_builtins[i]) == 0) {
+                printf("%s is a shell builtin\n", name);
+                found = 1;
+                break;
+            }
+        if (found)
+            continue;
+        /* executable on PATH? */
+        char *path = sh_getenv("PATH");
+        if (!path)
+            path = "/bin";
+        char path_copy[PATH_MAX];
+        strncpy(path_copy, path, PATH_MAX);
+        path_copy[PATH_MAX - 1] = '\0';
+        char *dir = path_copy;
+        while (dir) {
+            char *next = sh_strchr(dir, ':');
+            if (next)
+                *next++ = '\0';
+            char full[PATH_MAX];
+            unsigned long pos = 0;
+            while (dir[pos]) {
+                full[pos] = dir[pos];
+                pos++;
+            }
+            full[pos++] = '/';
+            unsigned long j = 0;
+            while (name[j]) {
+                full[pos] = name[j];
+                pos++;
+                j++;
+            }
+            full[pos] = '\0';
+            struct stat st;
+            if (stat(full, &st) == 0) {
+                printf("%s is %s\n", name, full);
+                found = 1;
+                break;
+            }
+            dir = next;
+        }
+        if (!found) {
+            printf("type: %s: not found\n", name);
+            rc = 1;
+        }
+    }
+    return rc;
 }
 
 /* ── ps / free / uptime / uname / time / help ────────────────── */
