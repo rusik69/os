@@ -764,22 +764,202 @@ void gui_app_digital_clock_run(void) {
 }
 
 /* 6. Paint Program */
+/* 2c. Paint — drawing canvas, brush, colors.
+ *
+ * A single focusable widget holding a persistent pixel canvas.  The toolbar
+ * offers 8 color swatches and a CLEAR button; keys 1-4 change the brush size
+ * and C clears.  Because the GUI run-loop delivers GUI_EVENT_MOUSE_DOWN every
+ * frame while the button is held (no distinct drag/up events), a stroke is
+ * drawn by chaining brush stamps from the previous point — but only while the
+ * pointer stays reasonably close, so a released/re-pressed click starts a new
+ * stroke.  Raw syscalls only — no FILE*.
+ */
+#define PAINT_CW 200
+#define PAINT_CH 200
+#define PAINT_TB_H 32
+#define PAINT_NCOLORS 8
+
+typedef struct {
+    int drawing;          /* currently in a stroke (button held) */
+    int last_cx, last_cy; /* last painted canvas point */
+    int brush;            /* brush radius 1..4 */
+    int color_idx;        /* index into s_paint_colors */
+    char status[64];
+} paint_state_t;
+
+static paint_state_t s_paint;
+static gui_color_t s_paint_canvas[PAINT_CH][PAINT_CW];
+
+static const gui_color_t s_paint_colors[PAINT_NCOLORS] = {
+    GUI_BLACK, GUI_RED, GUI_GREEN, GUI_BLUE, GUI_YELLOW, GUI_ORANGE, GUI_PURPLE, GUI_WHITE,
+};
+
+static const char *const s_paint_color_names[PAINT_NCOLORS] = {
+    "Black", "Red", "Green", "Blue", "Yellow", "Orange", "Purple", "White",
+};
+
+static void paint_clear(void) {
+    for (int y = 0; y < PAINT_CH; y++)
+        for (int x = 0; x < PAINT_CW; x++)
+            s_paint_canvas[y][x] = GUI_WHITE;
+}
+
+/* Stamp a filled brush dot at canvas point (cx,cy). */
+static void paint_stamp(int cx, int cy) {
+    gui_color_t c = s_paint_colors[s_paint.color_idx];
+    int r = s_paint.brush;
+    for (int dy = -r; dy <= r; dy++)
+        for (int dx = -r; dx <= r; dx++) {
+            int x = cx + dx, y = cy + dy;
+            if (dx * dx + dy * dy <= r * r && x >= 0 && y >= 0 && x < PAINT_CW && y < PAINT_CH)
+                s_paint_canvas[y][x] = c;
+        }
+}
+
+/* Bresenham line between two canvas points, stamping the current brush along it. */
+static void paint_line(int x0, int y0, int x1, int y1) {
+    int dx = x1 >= x0 ? x1 - x0 : x0 - x1;
+    int dy = y1 >= y0 ? y1 - y0 : y0 - y1;
+    int sx = x0 < x1 ? 1 : -1;
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx - dy;
+    while (1) {
+        paint_stamp(x0, y0);
+        if (x0 == x1 && y0 == y1)
+            break;
+        int e2 = 2 * err;
+        if (e2 > -dy) {
+            err -= dy;
+            x0 += sx;
+        }
+        if (e2 < dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+/* Handle a pointer-down inside the canvas area. */
+static void paint_handle_canvas(int cx, int cy) {
+    if (cx < 0 || cy < 0 || cx >= PAINT_CW || cy >= PAINT_CH) {
+        s_paint.drawing = 0;
+        return;
+    }
+    if (s_paint.drawing) {
+        int dlx = cx - s_paint.last_cx;
+        if (dlx < 0)
+            dlx = -dlx;
+        int dly = cy - s_paint.last_cy;
+        if (dly < 0)
+            dly = -dly;
+        if (dlx + dly <= 48)
+            paint_line(s_paint.last_cx, s_paint.last_cy, cx, cy);
+        else
+            paint_stamp(cx, cy); /* far jump: new stroke */
+    } else {
+        paint_stamp(cx, cy);
+    }
+    s_paint.last_cx = cx;
+    s_paint.last_cy = cy;
+    s_paint.drawing = 1;
+}
+
+static void paint_draw(gui_widget_t *w) {
+    int32_t ox = w->rect.x, oy = w->rect.y;
+    /* Toolbar */
+    gui_rect_t tb = {ox, oy, w->rect.w, PAINT_TB_H};
+    gui_window_draw_rect(NULL, tb, GUI_LIGHT_GRAY);
+    gui_window_draw_rect_outline(NULL, tb, GUI_GRAY, 1);
+    snprintf(s_paint.status, sizeof(s_paint.status), "Brush %dpx | %s | C clears", s_paint.brush,
+             s_paint_color_names[s_paint.color_idx]);
+    gui_window_draw_text(NULL, ox + 4, oy + 21, s_paint.status, GUI_TEXT_FG, GUI_LIGHT_GRAY);
+    /* Color swatches */
+    for (int i = 0; i < PAINT_NCOLORS; i++) {
+        gui_rect_t sr = {ox + 4 + i * 16, oy + 6, 14, 12};
+        gui_window_draw_rect(NULL, sr, s_paint_colors[i]);
+        if (i == s_paint.color_idx)
+            gui_window_draw_rect_outline(NULL, sr, GUI_BLACK, 2);
+        else
+            gui_window_draw_rect_outline(NULL, sr, GUI_DARK_GRAY, 1);
+    }
+    /* CLEAR button */
+    gui_rect_t cb = {ox + 152, oy + 6, 44, 14};
+    gui_window_draw_rect(NULL, cb, GUI_BUTTON_BG);
+    gui_window_draw_rect_outline(NULL, cb, GUI_DARK_GRAY, 1);
+    gui_window_draw_text(NULL, ox + 162, oy + 9, "CLEAR", GUI_BUTTON_FG, GUI_BUTTON_BG);
+    /* Canvas: white base, then blit the non-white painted pixels */
+    gui_rect_t cvs = {ox, oy + PAINT_TB_H, PAINT_CW, PAINT_CH};
+    gui_window_draw_rect(NULL, cvs, GUI_WHITE);
+    gui_window_draw_rect_outline(NULL, cvs, GUI_GRAY, 1);
+    for (int cy = 0; cy < PAINT_CH; cy++)
+        for (int cx = 0; cx < PAINT_CW; cx++) {
+            gui_color_t c = s_paint_canvas[cy][cx];
+            if (c != GUI_WHITE)
+                gui_window_draw_pixel(NULL, ox + cx, oy + PAINT_TB_H + cy, c);
+        }
+}
+
+static void paint_event(gui_widget_t *w, gui_event_t *evt) {
+    if (evt->type == GUI_EVENT_CHAR) {
+        char ch = evt->ch;
+        if (ch == 'c' || ch == 'C') {
+            paint_clear();
+            s_paint.drawing = 0;
+        } else if (ch >= '1' && ch <= '4') {
+            s_paint.brush = ch - '0';
+            s_paint.drawing = 0;
+        }
+        return;
+    }
+    if (evt->type != GUI_EVENT_MOUSE_DOWN || evt->button != 1)
+        return;
+    int32_t lx = evt->x - w->rect.x;
+    int32_t ly = evt->y - w->rect.y;
+    if (ly < PAINT_TB_H) {
+        /* Color swatches */
+        if (ly >= 6 && ly < 20) {
+            for (int i = 0; i < PAINT_NCOLORS; i++) {
+                if (lx >= 4 + i * 16 && lx < 4 + i * 16 + 14) {
+                    s_paint.color_idx = i;
+                    s_paint.drawing = 0;
+                    return;
+                }
+            }
+        }
+        /* CLEAR button */
+        if (lx >= 152 && lx < 196 && ly >= 6 && ly < 20) {
+            paint_clear();
+            s_paint.drawing = 0;
+            return;
+        }
+        s_paint.drawing = 0;
+        return;
+    }
+    paint_handle_canvas(lx, ly - PAINT_TB_H);
+}
+
 void gui_app_paint_run(void) {
-    gui_window_t *win = gui_window_create("Paint", 150, 100, 500, 420, GUI_WHITE);
+    paint_clear();
+    s_paint.drawing = 0;
+    s_paint.brush = 2;
+    s_paint.color_idx = 0;
+    s_paint.last_cx = 0;
+    s_paint.last_cy = 0;
+    s_paint.status[0] = '\0';
+    gui_window_t *win = gui_window_create("Paint", 150, 100, PAINT_CW + 16,
+                                          24 + PAINT_TB_H + PAINT_CH + 16, GUI_WINDOW_BG);
     if (!win) return;
     gui_add_window(win);
-    /* Toolbar */
-    gui_window_draw_rect(win, (gui_rect_t){0, 0, 500, 30}, GUI_LIGHT_GRAY);
-    gui_window_draw_rect_outline(win, (gui_rect_t){0, 0, 500, 30}, GUI_GRAY, 1);
-    gui_window_draw_text(win, 10, 8, "Paint - click & drag to draw (ESC to clear)", GUI_TEXT_FG, GUI_LIGHT_GRAY);
-    gui_color_t colors[] = {GUI_BLACK, GUI_RED, GUI_GREEN, GUI_BLUE, GUI_YELLOW, GUI_WHITE};
-    for (int i = 0; i < 6; i++) {
-        gui_rect_t sr = {400 + i*16, 5, 14, 20};
-        gui_window_draw_rect(win, sr, colors[i]);
-        gui_window_draw_rect_outline(win, sr, GUI_GRAY, 1);
-    }
-    /* Canvas area */
-    gui_window_draw_rect(win, (gui_rect_t){0, 30, 500, 390}, GUI_WHITE);
+    gui_window_bring_to_front(win);
+    gui_rect_t wr = gui_window_get_rect(win);
+    gui_rect_t wrect = {wr.x + 8, wr.y + 24 + 8, PAINT_CW, PAINT_TB_H + PAINT_CH};
+    gui_widget_t *cw = gui_widget_create(wrect);
+    if (!cw)
+        return;
+    cw->draw = paint_draw;
+    cw->on_event = paint_event;
+    gui_window_add_widget(win, cw);
+    gui_window_set_focused_widget(win, cw);
 }
 
 /* 7. Minesweeper */
