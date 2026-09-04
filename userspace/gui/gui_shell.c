@@ -35,6 +35,7 @@ LAUNCHER(checker)
 LAUNCHER(info)
 LAUNCHER(mandelbrot)
 LAUNCHER(calc)
+LAUNCHER(notepad)
 LAUNCHER(rgb_mixer)
 LAUNCHER(analog_clock)
 LAUNCHER(digital_clock)
@@ -170,16 +171,12 @@ static void draw_taskbar(int32_t mx, int32_t my) {
         {"EXIT",    1008, 44, exit_gui},
     };
     tb_btn_t btns_p3[] = {
-        {"CHRBAR",  2, 56, launch_chart_bar},
-        {"CHRLIN",  60, 56, launch_chart_line},
-        {"CHRPIE",  118, 56, launch_chart_pie},
-        {"TYPO",    176, 44, launch_typography},
-        {"FLOOD",   222, 48, launch_flood_fill},
-        {"INTERF",  272, 52, launch_wave_interference},
-        {"DCLK2",   326, 48, launch_clock_dual},
-        {"HEART",   376, 48, launch_heartbeat},
-        {"<PAGE",   426, 44, page_prev},
-        {"EXIT",    472, 44, exit_gui},
+        {"CHRBAR", 2, 56, launch_chart_bar},   {"CHRLIN", 60, 56, launch_chart_line},
+        {"CHRPIE", 118, 56, launch_chart_pie}, {"TYPO", 176, 44, launch_typography},
+        {"FLOOD", 222, 48, launch_flood_fill}, {"INTERF", 272, 52, launch_wave_interference},
+        {"DCLK2", 326, 48, launch_clock_dual}, {"HEART", 376, 48, launch_heartbeat},
+        {"NOTE", 428, 60, launch_notepad},     {"<PAGE", 490, 44, page_prev},
+        {"EXIT", 536, 44, exit_gui},
     };
 
     tb_btn_t *btns;
@@ -304,10 +301,12 @@ void gui_shell_run(void) {
                     {"", 964, 42, page_prev},{"", 1008, 44, exit_gui},
                 };
                 tb_btn_t btns_p3[] = {
-                    {"", 2, 56, launch_chart_bar},{"", 60, 56, launch_chart_line},{"", 118, 56, launch_chart_pie},
-                    {"", 176, 44, launch_typography},{"", 222, 48, launch_flood_fill},{"", 272, 52, launch_wave_interference},
-                    {"", 326, 48, launch_clock_dual},{"", 376, 48, launch_heartbeat},
-                    {"", 426, 44, page_prev},{"", 472, 44, exit_gui},
+                    {"", 2, 56, launch_chart_bar},    {"", 60, 56, launch_chart_line},
+                    {"", 118, 56, launch_chart_pie},  {"", 176, 44, launch_typography},
+                    {"", 222, 48, launch_flood_fill}, {"", 272, 52, launch_wave_interference},
+                    {"", 326, 48, launch_clock_dual}, {"", 376, 48, launch_heartbeat},
+                    {"", 428, 60, launch_notepad},    {"", 490, 44, page_prev},
+                    {"", 536, 44, exit_gui},
                 };
                 tb_btn_t *b;
                 int nb;

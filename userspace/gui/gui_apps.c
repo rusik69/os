@@ -59,11 +59,13 @@
  * __isqrt     — integer square root via Newton-Raphson
  */
 #include "gui_apps.h"
+
 #include "gui.h"
 #include "gui_draw.h"
-#include "string.h"
-#include "stdlib.h"
 #include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
+#include "unistd.h"
 
 /* ===== Existing Apps (unchanged) ===== */
 static int __icos(int deg);
@@ -473,6 +475,236 @@ void gui_app_calc_run(void) {
         return;
     cw->draw = calc_draw;
     cw->on_event = calc_event;
+    gui_window_add_widget(win, cw);
+    gui_window_set_focused_widget(win, cw);
+}
+
+/* 2b. Notepad — multi-line text editor with Save/Load.
+ *
+ * A single focusable widget (matching the framework's event model: the
+ * focused widget receives every keyboard char and every mouse-down inside
+ * its bounds). It does its own hit-testing for the on-screen Save/Load
+ * buttons and implements multi-line editing with a cursor and scrolling.
+ * Save writes the buffer to /notepad.txt (O_CREAT|O_TRUNC); Load reads it
+ * back.  Raw syscalls only — no FILE*.
+ */
+#define NOTEPAD_MAX 2048
+#define NOTEPAD_W 480
+#define NOTEPAD_H 400
+
+typedef struct {
+    char text[NOTEPAD_MAX];
+    int cursor;   /* byte offset of cursor within text */
+    int scroll_y; /* logical line rendered at top of text area */
+    char status[64];
+} notepad_state_t;
+
+static notepad_state_t s_notepad;
+
+static void notepad_set_status(const char *fmt, int v) {
+    if (fmt)
+        snprintf(s_notepad.status, sizeof(s_notepad.status), fmt, v);
+    else
+        s_notepad.status[0] = '\0';
+}
+
+static void notepad_insert(char ch) {
+    int n = (int)strlen(s_notepad.text);
+    if (n >= NOTEPAD_MAX - 1)
+        return;
+    for (int i = n; i >= s_notepad.cursor; i--)
+        s_notepad.text[i + 1] = s_notepad.text[i];
+    s_notepad.text[s_notepad.cursor++] = ch;
+}
+
+static void notepad_backspace(void) {
+    if (s_notepad.cursor <= 0)
+        return;
+    int n = (int)strlen(s_notepad.text);
+    for (int i = s_notepad.cursor - 1; i <= n; i++)
+        s_notepad.text[i] = s_notepad.text[i + 1];
+    s_notepad.cursor--;
+}
+
+/* Save buffer to /notepad.txt. */
+static void notepad_save(void) {
+    int fd = open("/notepad.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        notepad_set_status("Save FAILED", 0);
+        return;
+    }
+    int n = (int)strlen(s_notepad.text);
+    if (n > 0)
+        write(fd, s_notepad.text, (unsigned long)n);
+    close(fd);
+    notepad_set_status("Saved /notepad.txt (%d bytes)", n);
+}
+
+/* Load buffer from /notepad.txt. */
+static void notepad_load(void) {
+    int fd = open("/notepad.txt", O_RDONLY, 0);
+    if (fd < 0) {
+        notepad_set_status("No file yet", 0);
+        return;
+    }
+    int n = read(fd, s_notepad.text, NOTEPAD_MAX - 1);
+    close(fd);
+    if (n < 0) {
+        notepad_set_status("Load FAILED", 0);
+        return;
+    }
+    s_notepad.text[n] = '\0';
+    s_notepad.cursor = 0;
+    s_notepad.scroll_y = 0;
+    notepad_set_status("Loaded /notepad.txt (%d bytes)", n);
+}
+
+/* Max display chars per wrapped row, derived from widget width. */
+static int notepad_chars_per_row(int w) {
+    int cpl = (w - 16) / 7;
+    if (cpl < 4)
+        cpl = 4;
+    if (cpl > 79)
+        cpl = 79;
+    return cpl;
+}
+
+/* Number of wrapped rows (0-based row index of the char at byte_limit). */
+static int notepad_row_of(const char *s, int byte_limit, int cpl) {
+    int row = 0, col = 0, i = 0;
+    while (i < byte_limit && s[i]) {
+        if (s[i] == '\n') {
+            row++;
+            col = 0;
+        } else {
+            col++;
+            if (col >= cpl) {
+                col = 0;
+                row++;
+            }
+        }
+        i++;
+    }
+    return row;
+}
+
+/* Scroll so the cursor's wrapped row is on screen. */
+static void notepad_ensure_cursor_visible(int w) {
+    int cpl = notepad_chars_per_row(w);
+    int max_vis = (w - 52) / 14;
+    if (max_vis < 1)
+        max_vis = 1;
+    int cr = notepad_row_of(s_notepad.text, s_notepad.cursor, cpl);
+    if (cr < s_notepad.scroll_y)
+        s_notepad.scroll_y = cr;
+    else if (cr >= s_notepad.scroll_y + max_vis)
+        s_notepad.scroll_y = cr - max_vis + 1;
+}
+
+static void notepad_draw(gui_widget_t *w) {
+    notepad_state_t *st = &s_notepad;
+    int32_t ox = w->rect.x, oy = w->rect.y;
+    gui_window_draw_rect(NULL, w->rect, GUI_WINDOW_BG);
+
+    /* Status line */
+    gui_window_draw_text(NULL, ox + 4, oy + 2, st->status[0] ? st->status : "Notepad — untitled",
+                         GUI_TEXT_FG, GUI_WINDOW_BG);
+
+    /* Save / Load buttons */
+    gui_rect_t save = {ox + 4, oy + 18, 56, 24};
+    gui_window_draw_rect(NULL, save, GUI_BUTTON_BG);
+    gui_window_draw_rect_outline(NULL, save, GUI_DARK_GRAY, 1);
+    gui_window_draw_text(NULL, ox + 12, oy + 22, "SAVE", GUI_BUTTON_FG, GUI_BUTTON_BG);
+    gui_rect_t load = {ox + 66, oy + 18, 56, 24};
+    gui_window_draw_rect(NULL, load, GUI_BUTTON_BG);
+    gui_window_draw_rect_outline(NULL, load, GUI_DARK_GRAY, 1);
+    gui_window_draw_text(NULL, ox + 74, oy + 22, "LOAD", GUI_BUTTON_FG, GUI_BUTTON_BG);
+
+    /* Text area */
+    gui_rect_t ta = {ox + 4, oy + 48, w->rect.w - 8, w->rect.h - 52};
+    gui_window_draw_rect(NULL, ta, GUI_WHITE);
+    gui_window_draw_rect_outline(NULL, ta, GUI_GRAY, 1);
+
+    int line_h = 14;
+    int max_vis = ta.h / line_h;
+    if (max_vis < 1)
+        max_vis = 1;
+    int cpl = notepad_chars_per_row(w->rect.w);
+
+    /* Emit text as wrapped rows, honoring scroll_y (row offset). */
+    const char *p = st->text;
+    int row = 0;
+    int y = ta.y + 3;
+    while (*p && row - st->scroll_y < max_vis) {
+        if (row >= st->scroll_y) {
+            char buf[80];
+            int bi = 0;
+            while (bi < cpl && *p && *p != '\n')
+                buf[bi++] = *p++;
+            buf[bi] = '\0';
+            if (bi > 0)
+                gui_window_draw_text(NULL, ta.x + 4, y, buf, GUI_TEXT_FG, GUI_WHITE);
+            if (*p == '\n')
+                p++;
+            y += line_h;
+        } else {
+            /* skip this row so we land on the right starting char for the
+               visible region: walk chars until a row boundary */
+            int col = 0;
+            while (*p && *p != '\n') {
+                col++;
+                if (col >= cpl)
+                    break;
+                p++;
+            }
+            if (*p == '\n')
+                p++;
+        }
+        row++;
+    }
+}
+
+static void notepad_event(gui_widget_t *w, gui_event_t *evt) {
+    if (evt->type == GUI_EVENT_CHAR) {
+        char ch = evt->ch;
+        if (ch == 8)
+            notepad_backspace();
+        else if (ch == 13 || ch == 10)
+            notepad_insert('\n');
+        else if (ch >= 32)
+            notepad_insert(ch);
+        notepad_ensure_cursor_visible(w->rect.w);
+        return;
+    }
+    if (evt->type != GUI_EVENT_MOUSE_DOWN || evt->button != 1)
+        return;
+    int32_t lx = evt->x - w->rect.x;
+    int32_t ly = evt->y - w->rect.y;
+    if (ly >= 18 && ly < 42) {
+        if (lx >= 4 && lx < 60)
+            notepad_save();
+        else if (lx >= 66 && lx < 122)
+            notepad_load();
+    }
+}
+
+void gui_app_notepad_run(void) {
+    s_notepad.text[0] = '\0';
+    s_notepad.cursor = 0;
+    s_notepad.scroll_y = 0;
+    s_notepad.status[0] = '\0';
+    gui_window_t *win = gui_window_create("Notepad", 120, 90, NOTEPAD_W, NOTEPAD_H, GUI_WINDOW_BG);
+    if (!win)
+        return;
+    gui_add_window(win);
+    gui_window_bring_to_front(win);
+    gui_rect_t wr = gui_window_get_rect(win);
+    gui_rect_t wrect = {wr.x + 8, wr.y + 24 + 8, NOTEPAD_W - 16, NOTEPAD_H - 32};
+    gui_widget_t *cw = gui_widget_create(wrect);
+    if (!cw)
+        return;
+    cw->draw = notepad_draw;
+    cw->on_event = notepad_event;
     gui_window_add_widget(win, cw);
     gui_window_set_focused_widget(win, cw);
 }

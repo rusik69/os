@@ -94,4 +94,7 @@ void gui_app_softbody_run(void);
 void gui_app_convolution_run(void);
 void gui_app_buddha_run(void);
 
+/* === D286 new apps === */
+void gui_app_notepad_run(void);
+
 #endif /* GUI_APPS_H */
