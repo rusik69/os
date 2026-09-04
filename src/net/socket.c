@@ -5,6 +5,7 @@
 #include "can.h" /* AF_CAN SocketCAN protocol (Item 352) */
 #include "errno.h"
 #include "export.h"
+#include "lsm.h"
 #include "module.h" /* request_module() for protocol autoloading */
 #include "net.h"
 #include "net_internal.h"
@@ -250,6 +251,13 @@ void sock_free(int fd) {
 /* ── Socket syscall implementations ──────────────────────────── */
 
 int sys_socket_impl(int domain, int type, int protocol) {
+    /* LSM socket_create hook: security modules may deny creation of
+     * particular socket families/types/protocols up front. */
+    {
+        int lsm_ret = lsm_socket_create(domain, type, protocol);
+        if (lsm_ret < 0)
+            return lsm_ret;
+    }
     /* ── Network protocol module autoloading (M37) ─────────────────
      * When an unsupported address family is requested (e.g. AF_INET6),
      * attempt to autoload the corresponding protocol module before
@@ -596,6 +604,14 @@ int sys_connect_impl(int sockfd, const struct sockaddr_in *addr) {
     struct socket *s = sock_get(sockfd);
     if (!s)
         return -EBADF;
+
+    /* LSM socket_connect hook: security modules may restrict which
+     * sockets a subject is allowed to connect. */
+    {
+        int lsm_ret = lsm_socket_connect(s->domain, s->type, 0);
+        if (lsm_ret < 0)
+            return lsm_ret;
+    }
 
     int ret = 0;
 
