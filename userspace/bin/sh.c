@@ -1284,6 +1284,14 @@ static int cmd_which(char **argv);
 static int cmd_ps(void);
 static int cmd_free(void);
 static int cmd_uptime(void);
+
+/* Shared builtin-name table: used by `which` and Tab-completion
+ * (D280 task 18).  Keep in sync with run_builtin(). */
+static const char *sh_builtins[] = {
+    "cd",    "pwd",  "exit",  "help",    "echo",  "clear",    "exec",   "export", "unset",
+    "local", "set",  "alias", "unalias", "jobs",  "fg",       "bg",     "kill",   "source",
+    ".",     "trap", "read",  "which",   "ps",    "free",     "uptime", "uname",  "time",
+    "test",  "[",    "true",  "false",   "break", "continue", "return", 0};
 static int cmd_uname(int argc, char **argv);
 static int cmd_time(int argc, char **argv);
 static int cmd_help(void);
@@ -2503,6 +2511,116 @@ static int execute_line_raw(const char *line) {
 
 /* ── Line input ──────────────────────────────────────────────── */
 #ifndef SH_UNIT_TEST
+/* ── Tab completion (D280 task 18) ───────────────────────────── */
+#define COMPLETE_CANDS 128
+
+/*
+ * Fill `cands` with command names (builtins, aliases, or binaries under
+ * /bin) that have the non-empty `word` as a prefix.  Names are copied
+ * into `cands` so they outlive this call.  Returns the number of unique
+ * matches (0 when `word` is empty or nothing matches).
+ */
+static int sh_complete_fill(const char *word, char cands[][128], int maxcands) {
+    int ncand = 0;
+    int wlen = 0;
+    while (word[wlen])
+        wlen++;
+    if (wlen <= 0)
+        return 0;
+
+    /* builtins */
+    for (int i = 0; sh_builtins[i] && ncand < maxcands; i++) {
+        if (strncmp(sh_builtins[i], word, (unsigned long)wlen) == 0) {
+            int dup = 0;
+            for (int c = 0; c < ncand; c++)
+                if (strcmp(cands[c], sh_builtins[i]) == 0) {
+                    dup = 1;
+                    break;
+                }
+            if (!dup)
+                strncpy(cands[ncand++], sh_builtins[i], 127);
+        }
+    }
+    /* aliases */
+    for (int i = 0; i < sh_alias_count && ncand < maxcands; i++) {
+        if (shell_aliases[i].used &&
+            strncmp(shell_aliases[i].name, word, (unsigned long)wlen) == 0) {
+            int dup = 0;
+            for (int c = 0; c < ncand; c++)
+                if (strcmp(cands[c], shell_aliases[i].name) == 0) {
+                    dup = 1;
+                    break;
+                }
+            if (!dup)
+                strncpy(cands[ncand++], shell_aliases[i].name, 127);
+        }
+    }
+    /* binaries under /bin */
+    int fd = open("/bin", O_RDONLY, 0);
+    if (fd >= 0) {
+        char dbuf[2048];
+        int n = getdents64(fd, dbuf, sizeof dbuf);
+        close(fd);
+        int pos = 0;
+        while (pos < n && ncand < maxcands) {
+            struct dirent *d = (struct dirent *)(dbuf + pos);
+            if (d->d_name[0] && d->d_name[0] != '.' &&
+                strncmp(d->d_name, word, (unsigned long)wlen) == 0) {
+                int dup = 0;
+                for (int c = 0; c < ncand; c++)
+                    if (strcmp(cands[c], d->d_name) == 0) {
+                        dup = 1;
+                        break;
+                    }
+                if (!dup)
+                    strncpy(cands[ncand++], d->d_name, 127);
+            }
+            pos += d->d_reclen;
+        }
+    }
+    return ncand;
+}
+
+/*
+ * Complete the word under the cursor: on a unique match, append the
+ * completing suffix to `buf` and echo it; otherwise list the matches.
+ */
+static void sh_complete_word(char *buf, int *len, int max) {
+    int start = *len;
+    while (start > 0 && buf[start - 1] != ' ' && buf[start - 1] != '\t' && buf[start - 1] != '|' &&
+           buf[start - 1] != ';' && buf[start - 1] != '&' && buf[start - 1] != '<' &&
+           buf[start - 1] != '>')
+        start--;
+    int wlen = *len - start;
+    char word[128];
+    if (wlen >= (int)sizeof word)
+        wlen = sizeof word - 1;
+    for (int k = 0; k < wlen; k++)
+        word[k] = buf[start + k];
+    word[wlen] = '\0';
+
+    char cands[COMPLETE_CANDS][128];
+    int ncand = sh_complete_fill(word, cands, COMPLETE_CANDS);
+    if (ncand == 1) {
+        const char *full = cands[0];
+        int flen = 0;
+        while (full[flen])
+            flen++;
+        if (wlen < flen && *len + (flen - wlen) < max) {
+            for (int k = wlen; k < flen && *len < max - 1; k++)
+                buf[(*len)++] = full[k];
+            buf[*len] = '\0';
+            write(1, full + wlen, flen - wlen);
+        }
+    } else if (ncand > 1) {
+        write(1, "\n", 1);
+        for (int i = 0; i < ncand; i++)
+            printf("%s  ", cands[i]);
+        write(1, "\nsh$ ", 5);
+        write(1, buf, *len);
+    }
+}
+
 static int sh_getline(char *buf, int max) {
     int i = 0;
     while (i < max - 1) {
@@ -2514,14 +2632,15 @@ static int sh_getline(char *buf, int max) {
             buf[i] = '\0';
             return i;
         }
-        if (c == '\b' || c == 127) {
+        if (c == '\t')
+            sh_complete_word(buf, &i, max);
+        else if (c == '\b' || c == 127) {
             if (i > 0) {
                 i--;
                 write(1, "\b \b", 3);
             }
-            continue;
-        }
-        buf[i++] = c;
+        } else
+            buf[i++] = c;
     }
     buf[i] = '\0';
     return i;
@@ -2535,13 +2654,8 @@ static int cmd_which(char **argv) {
         return 1;
     }
     const char *name = argv[1];
-    static const char *builtins[] = {
-        "cd",    "pwd",  "exit",  "help",    "echo",  "clear",    "exec",   "export", "unset",
-        "local", "set",  "alias", "unalias", "jobs",  "fg",       "bg",     "kill",   "source",
-        ".",     "trap", "read",  "which",   "ps",    "free",     "uptime", "uname",  "time",
-        "test",  "[",    "true",  "false",   "break", "continue", "return", 0};
-    for (int i = 0; builtins[i]; i++)
-        if (strcmp(name, builtins[i]) == 0) {
+    for (int i = 0; sh_builtins[i]; i++)
+        if (strcmp(name, sh_builtins[i]) == 0) {
             printf("%s: shell built-in\n", name);
             return 0;
         }
