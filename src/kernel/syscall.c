@@ -8406,6 +8406,23 @@ static int64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3, uint64_t a4, uin
         /* Return 1 if keep capabilities flag is set, 0 otherwise. */
         return (uint64_t)((p->securebits & SECBIT_KEEP_CAPS) ? 1 : 0);
     }
+    case PR_SET_CHILD_SUBREAPER: {
+        /* arg2: non-zero marks this process as a child subreaper.
+         * Orphaned descendants are then reparented here instead of init. */
+        p->is_subreaper = ((int)a2 != 0) ? 1 : 0;
+        return 0;
+    }
+    case PR_GET_CHILD_SUBREAPER: {
+        /* arg2 points to an int that receives the subreaper status. */
+        if (!a2)
+            return (uint64_t)(int64_t)-EINVAL;
+        if (syscall_is_user_process() && !syscall_user_write_ok(a2, sizeof(int)))
+            return (uint64_t)(int64_t)-EFAULT;
+        int val = p->is_subreaper ? 1 : 0;
+        if (copy_to_user(a2, &val, sizeof(val)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+        return 0;
+    }
     default:
         return (uint64_t)(int64_t)-EINVAL;
     }

@@ -265,6 +265,9 @@ struct process {
     /* Accumulated union of handled_access_fs across all stacked Landlock
      * rulesets.  Access rights not in this set are never enforced. */
     uint64_t landlock_handled_access_fs;
+    /* Yama child subreaper: when set (PR_SET_CHILD_SUBREAPER), orphaned
+     * descendants are reparented to this process instead of init. */
+    int is_subreaper;
     /* Securebits flags */
     uint8_t securebits;
     /* Capability sets (Linux-style) */

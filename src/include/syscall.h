@@ -966,6 +966,8 @@ struct linux_dirent64 {
 #define PR_GET_DUMPABLE 3         /* get dumpable flag */
 #define PR_SET_PTRACER 0x59616d61 /* YAMA: allow PID to trace (0 = none, -1 = any) */
 #define PR_GET_PTRACER 0x59616d62 /* YAMA: get allowed tracer PID */
+#define PR_SET_CHILD_SUBREAPER 36 /* PR_SET_CHILD_SUBREAPER(arg2): make/clear a child subreaper */
+#define PR_GET_CHILD_SUBREAPER 37 /* PR_GET_CHILD_SUBREAPER(arg2=&int): read subreaper status */
 
 /* execveat flags */
 #define AT_EMPTY_PATH 0x1000

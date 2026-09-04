@@ -626,6 +626,7 @@ void __init process_init(void) {
     process_table[0].landlock_ruleset_ids[2] = -1;
     process_table[0].landlock_ruleset_ids[3] = -1;
     process_table[0].landlock_handled_access_fs = 0;
+    process_table[0].is_subreaper = 0;
     current_process = &process_table[0];
 
     /* Allocate a guarded kernel stack for the idle process so that
@@ -765,6 +766,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->landlock_ruleset_ids[2] = -1;
     proc->landlock_ruleset_ids[3] = -1;
     proc->landlock_handled_access_fs = 0;
+    proc->is_subreaper = 0;
     proc->ptracer_pid = 0; /* YAMA: no tracer allowed by default */
     kcov_process_init(proc);
 
@@ -978,6 +980,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp, uint64_t 
     proc->landlock_ruleset_ids[2] = -1;
     proc->landlock_ruleset_ids[3] = -1;
     proc->landlock_handled_access_fs = 0;
+    proc->is_subreaper = 0;
     proc->ptracer_pid = 0; /* YAMA: no tracer allowed by default */
     kcov_process_init(proc);
 
@@ -1113,13 +1116,32 @@ static void check_orphaned_process_groups(uint32_t sid) {
 }
 
 void process_exit_code(int code) {
-    /* Reparent orphans to init (PID 1) */
+    /* Reparent orphans.  POSIX/Linux semantics: an orphaned child is
+     * adopted by the nearest living ancestor (walking up the parent
+     * chain) that is marked as a child subreaper; if none exists, it is
+     * reparented to init (PID 1). */
     uint32_t my_pid = current_process->pid;
     uint32_t my_sid = current_process->sid;
+
+    /* Find the nearest subreaper ancestor of the dying process, if any. */
+    struct process *anc = process_get_by_pid(my_pid);
+    uint32_t subreaper_pid = 0;
+    for (int depth = 0; anc && depth < 64; depth++) {
+        if (anc->parent_pid == anc->pid)
+            break; /* reached an ancestor with no parent (init) */
+        anc = process_get_by_pid(anc->parent_pid);
+        if (anc && anc->pid != my_pid && anc->is_subreaper) {
+            subreaper_pid = anc->pid;
+            break;
+        }
+    }
+    if (subreaper_pid == 0)
+        subreaper_pid = 1; /* fall back to init */
+
     for (int i = 0; i < PROCESS_MAX; i++) {
         if (process_table[i].state != PROCESS_UNUSED && process_table[i].parent_pid == my_pid &&
             process_table[i].pid != my_pid) {
-            process_table[i].parent_pid = 1;
+            process_table[i].parent_pid = subreaper_pid;
         }
     }
     /* Check for orphaned process groups in our session now that some
