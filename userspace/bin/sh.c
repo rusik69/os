@@ -46,7 +46,7 @@
 #define S_IFREG 0x8000
 #define S_IFDIR 0x4000
 #endif
-#ifndef S_ISREG          /* system headers may already define these on host */
+#ifndef S_ISREG /* system headers may already define these on host */
 #define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
 #endif
 #ifndef S_ISDIR
@@ -135,7 +135,7 @@ static int opt_xtrace;
 #define MAX_LINE 4096
 #define MAX_ARGS 64
 #define MAX_ENV 128
-#ifndef PATH_MAX          /* system headers may already define it on host */
+#ifndef PATH_MAX /* system headers may already define it on host */
 #define PATH_MAX 256
 #endif
 #define MAX_NODES 256
@@ -525,8 +525,8 @@ static int tokenize(const char *src, struct token *toks, int maxtoks) {
                         depth--;
                     p++;
                 } while (*p && depth > 0);
-                if (*p == '\0' || *p == ' ' || *p == '\t' || *p == '|' ||
-                    *p == ';' || *p == '&' || *p == '<' || *p == '>')
+                if (*p == '\0' || *p == ' ' || *p == '\t' || *p == '|' || *p == ';' || *p == '&' ||
+                    *p == '<' || *p == '>')
                     break;
                 continue;
             }
@@ -1288,14 +1288,15 @@ static int cmd_uptime(void);
 /* Shared builtin-name table: used by `which` and Tab-completion
  * (D280 task 18).  Keep in sync with run_builtin(). */
 static const char *sh_builtins[] = {
-    "cd",    "pwd",  "exit",  "help",    "echo",  "clear",    "exec",   "export", "unset",
-    "local", "set",  "alias", "unalias", "jobs",  "fg",       "bg",     "kill",   "source",
-    ".",     "trap", "read",  "which",   "ps",    "free",     "uptime", "uname",  "time",
-    "test",  "[",    "true",  "false",   "break", "continue", "return", "type",   0};
+    "cd",    "pwd",   "exit",     "help",   "echo",   "clear",  "exec", "export", "unset", "local",
+    "set",   "alias", "unalias",  "jobs",   "fg",     "bg",     "kill", "source", ".",     "trap",
+    "read",  "which", "ps",       "free",   "uptime", "uname",  "time", "test",   "[",     "true",
+    "false", "break", "continue", "return", "type",   "ulimit", 0};
 static int cmd_uname(int argc, char **argv);
 static int cmd_time(int argc, char **argv);
 static int cmd_help(void);
 static int cmd_type(int argc, char **argv);
+static int cmd_ulimit(int argc, char **argv);
 static int cmd_test(int argc, char **argv);
 
 static int run_builtin(int argc, char **argv) {
@@ -1600,6 +1601,8 @@ static int run_builtin(int argc, char **argv) {
         return cmd_which(argv);
     if (strcmp(cmd, "type") == 0)
         return cmd_type(argc, argv);
+    if (strcmp(cmd, "ulimit") == 0)
+        return cmd_ulimit(argc, argv);
     if (strcmp(cmd, "ps") == 0)
         return cmd_ps();
     if (strcmp(cmd, "free") == 0)
@@ -2771,6 +2774,116 @@ static int cmd_type(int argc, char **argv) {
         }
     }
     return rc;
+}
+
+/* ── ulimit builtin: get/set resource limits via prlimit64 ────── */
+/* Kernel RLIMIT_* indices (src/include/syscall.h, custom ABI) */
+#define UL_AS 0
+#define UL_CORE 1
+#define UL_CPU 2
+#define UL_DATA 3
+#define UL_FSIZE 4
+#define UL_NOFILE 5
+#define UL_STACK 6
+#define UL_NPROC 7
+#define UL_MEMLOCK 8
+#define UL_LOCKS 9
+#define UL_NLIMITS 10
+
+struct ul_rlimit {
+    unsigned long rlim_cur;
+    unsigned long rlim_max;
+};
+
+static int ul_limit_get_set(int resource, struct ul_rlimit *rlim, int do_set) {
+    long res;
+    long pid_self = 0;
+    long new_arg = do_set ? (unsigned long)rlim : 0;
+    long old_arg = do_set ? 0 : (unsigned long)rlim;
+    asm volatile("mov $302, %%rax\n\t"
+                 "mov %1, %%rdi\n\t" /* pid=0 (self) */
+                 "mov %2, %%rsi\n\t" /* resource */
+                 "mov %3, %%rdx\n\t" /* new (or 0) */
+                 "mov %4, %%r10\n\t" /* old (or 0) */
+                 "syscall"
+                 : "=a"(res)
+                 : "r"(pid_self), "r"((long)resource), "r"(new_arg), "r"(old_arg)
+                 : "rcx", "r11", "memory");
+    return (int)res;
+}
+
+static const char *ul_soft_names[] = {"address space (bytes)", "core file size (bytes)",
+                                      "cpu time (sec)",        "data seg size (bytes)",
+                                      "file size (bytes)",     "open files",
+                                      "stack size (bytes)",    "max processes",
+                                      "locked memory (bytes)", "file locks"};
+#define UL_SOFT_COUNT (sizeof ul_soft_names / sizeof ul_soft_names[0])
+
+static int cmd_ulimit(int argc, char **argv) {
+    int opt = UL_FSIZE; /* default: file size */
+    int hard = 0;
+    int show_all = 0;
+    int ai = 1;
+    if (argc > 1 && argv[1][0] == '-') {
+        const char *o = argv[1];
+        if (o[1] == 'H' || o[1] == 'S') {
+            hard = (o[1] == 'H');
+            o += 2;
+        }
+        if (o[1] == 'a') {
+            show_all = 1;
+            ai = 2;
+        } else {
+            if (o[1] == 'c')
+                opt = UL_CORE;
+            else if (o[1] == 'd')
+                opt = UL_DATA;
+            else if (o[1] == 'f')
+                opt = UL_FSIZE;
+            else if (o[1] == 'l')
+                opt = UL_MEMLOCK;
+            else if (o[1] == 'n')
+                opt = UL_NOFILE;
+            else if (o[1] == 's')
+                opt = UL_STACK;
+            else if (o[1] == 't')
+                opt = UL_CPU;
+            else if (o[1] == 'u')
+                opt = UL_NPROC;
+            else if (o[1] == 'v')
+                opt = UL_AS;
+            ai = 2;
+        }
+    }
+    struct ul_rlimit rlim;
+
+    if (show_all) {
+        for (int i = 0; i < (int)UL_SOFT_COUNT; i++) {
+            if (ul_limit_get_set(i, &rlim, 0) == 0)
+                printf("%-28s %slimit %lu\n", ul_soft_names[i], hard ? "hard " : "soft ",
+                       hard ? rlim.rlim_max : rlim.rlim_cur);
+        }
+        return 0;
+    }
+
+    /* with a value argument -> set */
+    if (ai < argc) {
+        long val = atoi(argv[ai]);
+        rlim.rlim_cur = (unsigned long)val;
+        rlim.rlim_max = (unsigned long)val;
+        if (ul_limit_get_set(opt, &rlim, 1) != 0) {
+            printf("ulimit: cannot set limit\n");
+            return 1;
+        }
+        return 0;
+    }
+    /* no argument -> query */
+    if (ul_limit_get_set(opt, &rlim, 0) != 0) {
+        printf("ulimit: no limit available\n");
+        return 1;
+    }
+    printf("%lu\n", hard ? rlim.rlim_max : rlim.rlim_cur);
+    return 0;
 }
 
 /* ── ps / free / uptime / uname / time / help ────────────────── */
