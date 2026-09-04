@@ -8432,6 +8432,14 @@ static int64_t sys_mount(uint64_t src_addr, uint64_t target_addr, uint64_t fstyp
         fstype[0] = '\0';
     }
 
+    /* LSM sb_mount hook: security modules may restrict which mounts a
+     * subject may perform. */
+    {
+        int lsm_ret = lsm_mount(src, target);
+        if (lsm_ret < 0)
+            return (uint64_t)(int64_t)lsm_ret;
+    }
+
     /* Handle bind mounts (mount --bind) */
     if (flags & MS_BIND) {
         int ret = vfs_bind_mount(src, target);
@@ -8507,6 +8515,14 @@ static int64_t sys_umount(uint64_t target_addr) {
     struct vfs_mount *m = vfs_resolve_mount(target);
     if (!m)
         return (uint64_t)(int64_t)-EINVAL;
+
+    /* LSM sb_umount hook: security modules may prevent unmounting
+     * particular mount points. */
+    {
+        int lsm_ret = lsm_umount(target);
+        if (lsm_ret < 0)
+            return (uint64_t)(int64_t)lsm_ret;
+    }
 
     /* Check if mount is busy (has open file descriptors) */
     int busy = vfs_umount_check_busy(target);
