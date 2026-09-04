@@ -30,6 +30,7 @@ extern int audit_enabled;
 #define AUDIT_EVENT_LOG     (AUDIT_NLMSG_BASE + 2)  /* Generic log message */
 #define AUDIT_EVENT_DENIAL  (AUDIT_NLMSG_BASE + 3)  /* Security denial */
 #define AUDIT_EVENT_USER    (AUDIT_NLMSG_BASE + 4)  /* Userspace-generated event */
+#define AUDIT_EVENT_USER_CMD (AUDIT_NLMSG_BASE + 5) /* User command (exec) */
 
 /* ── Audit message header (after netlink nlmsghdr) ───────────────── */
 struct audit_msg_hdr {
@@ -93,5 +94,8 @@ void audit_log_end(void);
 
 /* Single-call generic audit log (starts + formats + ends). */
 void audit_log(const char *msg);
+
+/* Log a USER_CMD record: a command (exec) executed by a user. */
+void audit_log_user_command(const char *cmdline);
 
 #endif /* AUDIT_H */

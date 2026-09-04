@@ -14,6 +14,7 @@
  *   - Clear child TID on exec (as per CLONE_CHILD_CLEARTID semantics)
  */
 
+#include "audit.h"
 #include "caps.h"
 #include "elf.h"
 #include "err.h"
@@ -278,6 +279,9 @@ int do_execve(const char *filename, const char **argv, const char **envp)
     /* ── Open the binary ────────────────────────────────────────────── */
     struct vfs_node *binary = vfs_open(filename, 0);
     if (unlikely(!binary)) return -ENOENT;
+
+    /* Audit the user command being executed. */
+    audit_log_user_command(filename);
 
     /* ── Check security of the binary ───────────────────────────────── */
     int has_setuid = (binary->mode & S_ISUID) ? 1 : 0;

@@ -111,7 +111,7 @@ int audit_netlink_send(int event_type, const char *payload, int payload_len) {
         return -ENOMEM;
 
     /* Validate event type is within the defined audit message range */
-    if (event_type < AUDIT_NLMSG_BASE || event_type > AUDIT_EVENT_USER)
+    if (event_type < AUDIT_NLMSG_BASE || event_type > AUDIT_EVENT_USER_CMD)
         return -EINVAL;
 
     if (!payload) payload = "";
@@ -194,7 +194,7 @@ static void __printf(2, 3) audit_log_formatted(int event_type, const char *fmt, 
     if (!audit_enabled || !fmt) return;
 
     /* Validate event type before formatting and sending */
-    if (event_type < AUDIT_NLMSG_BASE || event_type > AUDIT_EVENT_USER)
+    if (event_type < AUDIT_NLMSG_BASE || event_type > AUDIT_EVENT_USER_CMD)
         return;
 
     char tmp[512];
@@ -493,6 +493,33 @@ void audit_log(const char *msg) {
     if (audit_log_start(AUDIT_EVENT_LOG) < 0)
         return;
     audit_log_format("msg='%s'", msg);
+    audit_log_end();
+}
+
+/* USER_CMD record: log a command executed by a user (via exec). */
+void audit_log_user_command(const char *cmdline) {
+    struct process *p;
+    char buf[512];
+    int n;
+
+    if (!audit_enabled || !cmdline)
+        return;
+
+    /* Sanitize: replace CR/LF so the record stays a single line. */
+    n = 0;
+    while (cmdline[n] && n < (int)sizeof(buf) - 16) {
+        char c = cmdline[n];
+        if (c == '\n' || c == '\r')
+            c = ' ';
+        buf[n++] = c;
+    }
+    buf[n] = '\0';
+
+    if (audit_log_start(AUDIT_EVENT_USER_CMD) < 0)
+        return;
+
+    p = process_get_current();
+    audit_log_format("cmd='%s' pid=%u uid=%u", buf, p ? p->pid : 0, p ? p->uid : 0);
     audit_log_end();
 }
 
