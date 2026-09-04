@@ -3,10 +3,12 @@
 
 #include "types.h"
 
-/* YAMA ptrace scope values */
-#define YAMA_PTRACE_SCOPE_DISABLED   0  /* allow any process to trace */
-#define YAMA_PTRACE_SCOPE_RESTRICTED 1  /* only descendants can trace */
-#define YAMA_PTRACE_SCOPE_ADMIN      2  /* admin-controlled: CAP_SYS_PTRACE + target opt-in */
+/* YAMA ptrace scope values (scope 0 = disabled/allow-all). */
+#define YAMA_PTRACE_SCOPE_DISABLED 0         /* allow any process to trace */
+#define YAMA_PTRACE_SCOPE_RESTRICTED 1       /* only descendants can trace */
+#define YAMA_PTRACE_SCOPE_ADMIN 2            /* CAP_SYS_PTRACE + target opt-in */
+#define YAMA_PTRACE_SCOPE_NO_ATTACH 3        /* only a direct descendant may attach */
+#define YAMA_PTRACE_SCOPE_NO_ATTACH_UNPRIV 4 /* scope 3; CAP_SYS_PTRACE ignored */
 
 /* PR_SET_PTRACER values */
 #define PR_SET_PTRACER_PID_ANY      (-1)  /* allow any tracer */

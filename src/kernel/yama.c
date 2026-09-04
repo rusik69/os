@@ -84,6 +84,17 @@ int yama_ptrace_allowed(uint32_t caller_pid, uint32_t target_pid) {
         return 0;
     }
 
+    /* Scopes 3 and 4 ("no attach"): beyond the descendant relationship
+     * already granted above, only a privileged (CAP_SYS_PTRACE) caller
+     * may attach.  scope 4 is identical but is exposed so the sysadmin
+     * can select the strictest policy explicitly. */
+    if (yama_ptrace_scope == YAMA_PTRACE_SCOPE_NO_ATTACH ||
+        yama_ptrace_scope == YAMA_PTRACE_SCOPE_NO_ATTACH_UNPRIV) {
+        if (process_caps_has(caller, CAP_SYS_PTRACE))
+            return 1;
+        return 0;
+    }
+
     /* Unknown scope — deny to be safe */
     return 0;
 }
@@ -99,7 +110,7 @@ static int sysctl_read_ptrace_scope(char *buf, int max) {
 }
 
 static int sysctl_write_ptrace_scope(const char *buf, int len) {
-    if (len > 0 && buf[0] >= '0' && buf[0] <= '2')
+    if (len > 0 && buf[0] >= '0' && buf[0] <= '4')
         yama_ptrace_scope = buf[0] - '0';
     return 0;
 }
