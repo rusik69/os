@@ -17,14 +17,16 @@
 
 #define KERNEL_INTERNAL
 #include "smack.h"
-#include "types.h"
-#include "printf.h"
-#include "string.h"
-#include "sysfs.h"
+
 #include "errno.h"
-#include "xattr.h"
+#include "lsm.h"
+#include "printf.h"
 #include "process.h"
 #include "spinlock.h"
+#include "string.h"
+#include "sysfs.h"
+#include "types.h"
+#include "xattr.h"
 
 /* ── State ──────────────────────────────────────────────────────────── */
 
@@ -150,6 +152,12 @@ void smack_init(void)
     smack_add_rule(SMACK_LABEL_STAR, SMACK_LABEL_FLOOR, "rwx");
 
     smack_sysfs_init();
+
+    /* Register LSM hook callbacks so the framework can dispatch to SMACK
+     * for inode/file/exec checks. Registration order = LSM stacking order. */
+    lsm_register_hook(LSM_HOOK_INODE_PERMISSION, (void *)smack_inode_permission);
+    lsm_register_hook(LSM_HOOK_FILE_PERMISSION, (void *)smack_file_permission);
+    lsm_register_hook(LSM_HOOK_BPRM_CHECK_SECURITY, (void *)smack_bprm_set_creds);
 
     smack_initialized = 1;
     kprintf("[OK] SMACK initialized (floor=_, star=*, hat=^)\n");

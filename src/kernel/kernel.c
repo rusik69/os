@@ -94,6 +94,7 @@ extern int usb_hub_init(void);
 #include "ghes.h"
 #include "httpd.h"
 #include "hugetlb.h"
+#include "hung_task.h"
 #include "i3c.h"
 #include "initcall.h"
 #include "intel_gpu.h"
@@ -110,6 +111,7 @@ extern int usb_hub_init(void);
 #include "kunit.h"
 #include "landlock.h"
 #include "lockdep.h"
+#include "lsm.h"
 #include "madvise_ext.h"
 #include "mce.h"
 #include "mdadm.h"
@@ -124,7 +126,6 @@ extern int usb_hub_init(void);
 #include "net_igmp.h"
 #include "net_lldp.h"
 #include "net_rps.h"
-#include "hung_task.h"
 #include "nmi_watchdog.h"
 #include "nohz.h"
 #include "nvme.h"
@@ -163,9 +164,9 @@ extern int usb_hub_init(void);
 #include "string.h"
 #include "swap.h"
 #include "sysctl.h"
-#include "tasklet.h"
 #include "sysfs.h"
 #include "sysrq.h"
+#include "tasklet.h"
 #include "thp.h"
 #include "timers.h"
 #include "tmpfs.h"
@@ -603,6 +604,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Landlock sandbox (path-based access control) */
     landlock_init();
+
+    /* LSM hook framework (modules register hooks after this) */
+    lsm_init();
 
     /* Seccomp BPF filter support */
     seccomp_bpf_init();
