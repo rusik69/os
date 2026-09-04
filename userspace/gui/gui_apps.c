@@ -1378,6 +1378,287 @@ void gui_app_terminal_run(void) {
     gui_window_set_focused_widget(win, cw);
 }
 
+/* 5. File Manager — directory tree and file operations.
+ *
+ * A single focusable widget lists the current working directory (dirs
+ * first, in blue with a trailing '/', then files with their byte size).
+ * Clicking a directory enters it; clicking a file selects it. A toolbar
+ * provides UP (parent dir), REFRESH (re-read cwd) and DELETE (unlink the
+ * selected file). Clicking a file also refreshes its details in the
+ * status bar. Raw syscalls only — no FILE*.
+ */
+#define FM_MAX_ENTRIES 128
+#define FM_PATH_MAX 256
+#define FM_BUF 8192
+#define FM_W 520
+#define FM_H 360
+
+typedef struct {
+    char cwd[FM_PATH_MAX];
+    char names[FM_MAX_ENTRIES][64];
+    int is_dir[FM_MAX_ENTRIES];
+    unsigned long long size[FM_MAX_ENTRIES];
+    int n;        /* number of entries */
+    int scroll;   /* first visible row */
+    int selected; /* selected entry index, or -1 */
+    char status[64];
+} fm_state_t;
+
+static fm_state_t s_fm;
+
+/* Join dir + name into out (handles root "/"). */
+static void fm_fullpath(const char *dir, const char *name, char *out, int cap) {
+    if (dir[0] == '/' && dir[1] == 0)
+        snprintf(out, cap, "/%s", name);
+    else
+        snprintf(out, cap, "%s/%s", dir, name);
+}
+
+/* Re-read s_fm.cwd into the entry table, dirs first. */
+static void fm_read_dir(void) {
+    s_fm.n = 0;
+    s_fm.scroll = 0;
+    s_fm.selected = -1;
+    int fd = open(s_fm.cwd, O_RDONLY, 0);
+    if (fd < 0) {
+        snprintf(s_fm.status, sizeof(s_fm.status), "cannot open %s", s_fm.cwd);
+        return;
+    }
+    char buf[FM_BUF];
+    int n = getdents64(fd, buf, sizeof(buf));
+    close(fd);
+    if (n < 0) {
+        snprintf(s_fm.status, sizeof(s_fm.status), "readdir failed");
+        return;
+    }
+    int pos = 0;
+    while (pos < n && s_fm.n < FM_MAX_ENTRIES) {
+        struct dirent *d = (struct dirent *)(buf + pos);
+        const char *name = d->d_name;
+        if (strcmp(name, ".") != 0 && strcmp(name, "..") != 0) {
+            char fp[512];
+            fm_fullpath(s_fm.cwd, name, fp, sizeof(fp));
+            int is_dir = 0;
+            unsigned long long sz = 0;
+            struct stat st;
+            if (stat(fp, &st) == 0) {
+                if ((st.st_mode & 0170000) == 0040000)
+                    is_dir = 1;
+                sz = (unsigned long long)st.st_size;
+            } else if (d->d_type == 4) {
+                is_dir = 1;
+            }
+            snprintf(s_fm.names[s_fm.n], 64, "%s", name);
+            s_fm.is_dir[s_fm.n] = is_dir;
+            s_fm.size[s_fm.n] = sz;
+            s_fm.n++;
+        }
+        pos += d->d_reclen;
+    }
+    /* Stable sort: directories before files. */
+    for (int i = 0; i < s_fm.n; i++) {
+        if (s_fm.is_dir[i])
+            continue;
+        for (int j = i + 1; j < s_fm.n; j++) {
+            if (s_fm.is_dir[j]) {
+                char tn[64];
+                memcpy(tn, s_fm.names[i], 64);
+                memcpy(s_fm.names[i], s_fm.names[j], 64);
+                memcpy(s_fm.names[j], tn, 64);
+                int td = s_fm.is_dir[i];
+                s_fm.is_dir[i] = s_fm.is_dir[j];
+                s_fm.is_dir[j] = td;
+                unsigned long long tz = s_fm.size[i];
+                s_fm.size[i] = s_fm.size[j];
+                s_fm.size[j] = tz;
+                break;
+            }
+        }
+    }
+    snprintf(s_fm.status, sizeof(s_fm.status), "%d entries", s_fm.n);
+}
+
+/* Enter the selected directory. */
+static void fm_chdir_entry(int idx) {
+    if (idx < 0 || idx >= s_fm.n || !s_fm.is_dir[idx])
+        return;
+    char fp[512];
+    fm_fullpath(s_fm.cwd, s_fm.names[idx], fp, sizeof(fp));
+    snprintf(s_fm.cwd, sizeof(s_fm.cwd), "%s", fp);
+    fm_read_dir();
+}
+
+/* Navigate to the parent directory. */
+static void fm_go_up(void) {
+    int len = (int)strlen(s_fm.cwd);
+    if (len <= 1)
+        return; /* already at root */
+    while (len > 1 && s_fm.cwd[len - 1] == '/')
+        s_fm.cwd[--len] = '\0';
+    char *slash = NULL;
+    for (char *p = s_fm.cwd; *p; p++)
+        if (*p == '/')
+            slash = p;
+    if (slash == s_fm.cwd) {
+        s_fm.cwd[1] = '\0'; /* back to root */
+    } else if (slash) {
+        *slash = '\0';
+    }
+    fm_read_dir();
+}
+
+/* Delete the selected file. */
+static void fm_delete_selected(void) {
+    if (s_fm.selected < 0 || s_fm.selected >= s_fm.n) {
+        snprintf(s_fm.status, sizeof(s_fm.status), "nothing selected");
+        return;
+    }
+    char fp[512];
+    fm_fullpath(s_fm.cwd, s_fm.names[s_fm.selected], fp, sizeof(fp));
+    if (unlink(fp) == 0) {
+        snprintf(s_fm.status, sizeof(s_fm.status), "deleted %s", s_fm.names[s_fm.selected]);
+        fm_read_dir();
+    } else {
+        snprintf(s_fm.status, sizeof(s_fm.status), "delete %s failed", s_fm.names[s_fm.selected]);
+    }
+}
+
+static void fm_draw(gui_widget_t *w) {
+    fm_state_t *st = &s_fm;
+    int32_t ox = w->rect.x, oy = w->rect.y;
+    gui_window_draw_rect(NULL, w->rect, GUI_WINDOW_BG);
+
+    /* Path header. */
+    gui_window_draw_text(NULL, ox + 4, oy + 2, st->cwd, GUI_BLUE, GUI_WINDOW_BG);
+
+    /* Toolbar: UP / REFRESH / DELETE. */
+    gui_rect_t up = {ox + 4, oy + 18, 44, 22};
+    gui_window_draw_rect(NULL, up, GUI_BUTTON_BG);
+    gui_window_draw_rect_outline(NULL, up, GUI_DARK_GRAY, 1);
+    gui_window_draw_text(NULL, ox + 12, oy + 22, "UP", GUI_BUTTON_FG, GUI_BUTTON_BG);
+    gui_rect_t ref = {ox + 50, oy + 18, 56, 22};
+    gui_window_draw_rect(NULL, ref, GUI_BUTTON_BG);
+    gui_window_draw_rect_outline(NULL, ref, GUI_DARK_GRAY, 1);
+    gui_window_draw_text(NULL, ox + 54, oy + 22, "REFRESH", GUI_BUTTON_FG, GUI_BUTTON_BG);
+    gui_rect_t del = {ox + 108, oy + 18, 56, 22};
+    gui_window_draw_rect(NULL, del, GUI_BUTTON_BG);
+    gui_window_draw_rect_outline(NULL, del, GUI_DARK_GRAY, 1);
+    gui_window_draw_text(NULL, ox + 112, oy + 22, "DELETE", GUI_BUTTON_FG, GUI_BUTTON_BG);
+
+    /* Entry list area. */
+    gui_rect_t la = {ox + 4, oy + 46, w->rect.w - 8, w->rect.h - 52};
+    gui_window_draw_rect(NULL, la, GUI_WHITE);
+    gui_window_draw_rect_outline(NULL, la, GUI_GRAY, 1);
+
+    int line_h = 14;
+    int max_vis = la.h / line_h;
+    if (max_vis < 1)
+        max_vis = 1;
+
+    for (int i = st->scroll; i < st->n && (i - st->scroll) < max_vis; i++) {
+        int ry = la.y + 2 + (i - st->scroll) * line_h;
+        if (i == st->selected) {
+            gui_rect_t hl = {la.x, la.y + (i - st->scroll) * line_h, la.w, line_h};
+            gui_window_draw_rect(NULL, hl, GUI_LIGHT_GRAY);
+        }
+        gui_color_t fc = st->is_dir[i] ? GUI_BLUE : GUI_TEXT_FG;
+        char row[88];
+        if (st->is_dir[i]) {
+            snprintf(row, sizeof(row), "%s/", st->names[i]);
+        } else {
+            char sz[20];
+            unsigned long long v = st->size[i];
+            int szp = 19;
+            sz[19] = '\0';
+            if (v == 0) {
+                sz[--szp] = '0';
+            } else {
+                while (v > 0 && szp > 0) {
+                    sz[--szp] = '0' + (v % 10);
+                    v /= 10;
+                }
+            }
+            snprintf(row, sizeof(row), "%s  [%s]", st->names[i], sz + szp);
+        }
+        gui_window_draw_text(NULL, la.x + 4, ry, row, fc,
+                             i == st->selected ? GUI_LIGHT_GRAY : GUI_WHITE);
+    }
+
+    /* Status bar. */
+    gui_window_draw_text(NULL, ox + 4, oy + w->rect.h - 14,
+                         st->status[0] ? st->status : "File Manager", GUI_TEXT_FG, GUI_WINDOW_BG);
+}
+
+static void fm_event(gui_widget_t *w, gui_event_t *evt) {
+    int32_t lx;
+    int32_t ly;
+    if (evt->type == GUI_EVENT_CHAR) {
+        if (evt->ch == 'u' || evt->ch == 'U')
+            fm_go_up();
+        else if (evt->ch == 'd' || evt->ch == 'D')
+            fm_delete_selected();
+        return;
+    }
+    if (evt->type != GUI_EVENT_MOUSE_DOWN || evt->button != 1)
+        return;
+    lx = evt->x - w->rect.x;
+    ly = evt->y - w->rect.y;
+
+    /* Toolbar hit-test. */
+    if (ly >= 18 && ly < 40) {
+        if (lx >= 4 && lx < 48)
+            fm_go_up();
+        else if (lx >= 50 && lx < 106)
+            fm_read_dir();
+        else if (lx >= 108 && lx < 164)
+            fm_delete_selected();
+        return;
+    }
+
+    /* Entry list hit-test. */
+    if (ly >= 46) {
+        int line_h = 14;
+        int list_h = w->rect.h - 52;
+        if (list_h < line_h)
+            return;
+        int rel = ly - 46;
+        if (rel >= list_h)
+            return;
+        int row = rel / line_h;
+        int idx = s_fm.scroll + row;
+        if (idx < 0 || idx >= s_fm.n)
+            return;
+        if (s_fm.is_dir[idx]) {
+            s_fm.selected = idx;
+            fm_chdir_entry(idx);
+        } else {
+            s_fm.selected = idx;
+            snprintf(s_fm.status, sizeof(s_fm.status), "%s (%llu bytes)", s_fm.names[idx],
+                     s_fm.size[idx]);
+        }
+    }
+}
+
+void gui_app_file_manager_run(void) {
+    snprintf(s_fm.cwd, sizeof(s_fm.cwd), "/");
+    s_fm.status[0] = '\0';
+    fm_read_dir();
+    gui_window_t *win = gui_window_create("File Manager", 220, 90, FM_W, FM_H, GUI_WINDOW_BG);
+    if (!win)
+        return;
+    gui_add_window(win);
+    gui_window_bring_to_front(win);
+    gui_rect_t wr = gui_window_get_rect(win);
+    gui_rect_t wrect = {wr.x + 8, wr.y + 24 + 8, FM_W - 16, FM_H - 32};
+    gui_widget_t *cw = gui_widget_create(wrect);
+    if (!cw)
+        return;
+    cw->draw = fm_draw;
+    cw->on_event = fm_event;
+    gui_window_add_widget(win, cw);
+    gui_window_set_focused_widget(win, cw);
+}
+
 /* 7. Minesweeper */
 void gui_app_minesweeper_run(void) {
     gui_window_t *win = gui_window_create("Minesweeper", 200, 150, 220, 260, GUI_LIGHT_GRAY);
