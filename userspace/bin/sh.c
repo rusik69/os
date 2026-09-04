@@ -163,6 +163,8 @@ static void sh_init_env(void) {
     sh_env_count = 4;
 }
 
+static char *sh_getenv(const char *name);
+static int var_is_readonly(const char *name);
 static char *sh_getenv(const char *name) {
     unsigned long nlen = strlen(name);
     for (int i = 0; i < sh_env_count && sh_env[i]; i++) {
@@ -171,10 +173,11 @@ static char *sh_getenv(const char *name) {
     }
     return 0;
 }
-
 static int sh_setenv(const char *var, const char *val) {
     unsigned long vlen = strlen(var);
     if (vlen == 0)
+        return -1;
+    if (var_is_readonly(var))
         return -1;
     for (int i = 0; i < sh_env_count && sh_env[i]; i++) {
         if (strncmp(sh_env[i], var, vlen) == 0 && sh_env[i][vlen] == '=') {
@@ -212,6 +215,8 @@ static int sh_setenv(const char *var, const char *val) {
 
 static int sh_unsetenv(const char *var) {
     unsigned long vlen = strlen(var);
+    if (var_is_readonly(var))
+        return -1;
     for (int i = 0; i < sh_env_count; i++) {
         if (sh_env[i] && strncmp(sh_env[i], var, vlen) == 0 && sh_env[i][vlen] == '=') {
             free(sh_env[i]);
@@ -223,6 +228,26 @@ static int sh_unsetenv(const char *var) {
         }
     }
     return -1;
+}
+
+/* ── Readonly variables ───────────────────────────────────────── */
+#define MAX_READONLY 64
+static char readonly_names[MAX_READONLY][32];
+static int readonly_count;
+
+static int var_is_readonly(const char *name) {
+    for (int i = 0; i < readonly_count; i++)
+        if (strcmp(readonly_names[i], name) == 0)
+            return 1;
+    return 0;
+}
+
+static void var_mark_readonly(const char *name) {
+    if (var_is_readonly(name) || readonly_count >= MAX_READONLY)
+        return;
+    strncpy(readonly_names[readonly_count], name, 31);
+    readonly_names[readonly_count][31] = '\0';
+    readonly_count++;
 }
 
 /* ── Shell arrays ────────────────────────────────────────────── */
@@ -1288,10 +1313,11 @@ static int cmd_uptime(void);
 /* Shared builtin-name table: used by `which` and Tab-completion
  * (D280 task 18).  Keep in sync with run_builtin(). */
 static const char *sh_builtins[] = {
-    "cd",    "pwd",   "exit",     "help",   "echo",   "clear",  "exec",  "export", "unset", "local",
-    "set",   "alias", "unalias",  "jobs",   "fg",     "bg",     "kill",  "source", ".",     "trap",
-    "read",  "which", "ps",       "free",   "uptime", "uname",  "time",  "test",   "[",     "true",
-    "false", "break", "continue", "return", "type",   "ulimit", "umask", "times",  0};
+    "cd",       "pwd",    "exit", "help",   "echo",    "clear", "exec",     "export",
+    "unset",    "local",  "set",  "alias",  "unalias", "jobs",  "fg",       "bg",
+    "kill",     "source", ".",    "trap",   "read",    "which", "ps",       "free",
+    "uptime",   "uname",  "time", "test",   "[",       "true",  "false",    "break",
+    "continue", "return", "type", "ulimit", "umask",   "times", "readonly", 0};
 static int cmd_uname(int argc, char **argv);
 static int cmd_time(int argc, char **argv);
 static int cmd_help(void);
@@ -1299,6 +1325,7 @@ static int cmd_type(int argc, char **argv);
 static int cmd_ulimit(int argc, char **argv);
 static int cmd_umask(int argc, char **argv);
 static int cmd_times(int argc, char **argv);
+static int cmd_readonly(int argc, char **argv);
 static int cmd_test(int argc, char **argv);
 
 static int run_builtin(int argc, char **argv) {
@@ -1609,6 +1636,8 @@ static int run_builtin(int argc, char **argv) {
         return cmd_umask(argc, argv);
     if (strcmp(cmd, "times") == 0)
         return cmd_times(argc, argv);
+    if (strcmp(cmd, "readonly") == 0)
+        return cmd_readonly(argc, argv);
     if (strcmp(cmd, "ps") == 0)
         return cmd_ps();
     if (strcmp(cmd, "free") == 0)
@@ -2934,6 +2963,37 @@ static int cmd_times(int argc, char **argv) {
     long long total_ms = (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
     printf("%lldm%lld.%03llds\n", total_ms / 60000, (total_ms % 60000) / 1000, total_ms % 1000);
     return 0;
+}
+
+/* ── readonly builtin: mark variables readonly / list them ────── */
+static int cmd_readonly(int argc, char **argv) {
+    if (argc < 2) {
+        /* list readonly variables with values */
+        for (int i = 0; i < readonly_count; i++) {
+            const char *val = sh_getenv(readonly_names[i]);
+            printf("readonly %s=%s\n", readonly_names[i], val ? val : "");
+        }
+        return 0;
+    }
+    int rc = 0;
+    for (int i = 1; i < argc; i++) {
+        char namebuf[64];
+        const char *name = argv[i];
+        const char *eq = sh_strchr(name, '=');
+        if (eq) {
+            unsigned long nlen = (unsigned long)(eq - name);
+            if (nlen >= sizeof namebuf)
+                nlen = sizeof namebuf - 1;
+            memcpy(namebuf, name, nlen);
+            namebuf[nlen] = '\0';
+            if (!var_is_readonly(namebuf))
+                sh_setenv(namebuf, eq + 1);
+            var_mark_readonly(namebuf);
+        } else {
+            var_mark_readonly(name);
+        }
+    }
+    return rc;
 }
 
 /* ── ps / free / uptime / uname / time / help ────────────────── */
