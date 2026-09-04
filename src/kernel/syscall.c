@@ -1783,6 +1783,15 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
             if (lsm_ret < 0)
                 return (uint64_t)(int64_t)lsm_ret;
         }
+
+        /* Audit filesystem watch: emit a PATH record for any access to a
+         * path matched by an installed path-prefix watch rule. */
+        if (audit_path_watched() && audit_rule_matches(-1, p->pid, path)) {
+            struct vfs_stat wst;
+            if (vfs_stat(path, &wst) < 0)
+                memset(&wst, 0, sizeof(wst));
+            audit_log_path(path, wst.ino, wst.mode);
+        }
     }
 
     /* Handle O_TMPFILE */

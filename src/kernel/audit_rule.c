@@ -90,3 +90,14 @@ int audit_rule_get(int idx, struct audit_rule *out) {
 int audit_rule_count(void) {
     return audit_rules_used;
 }
+
+/* True if any filesystem-watch (path prefix) rule is installed. */
+int audit_path_watched(void) {
+    int i;
+
+    for (i = 0; i < audit_rules_used; i++) {
+        if (audit_rules[i].match & AUDIT_MATCH_PATH)
+            return 1;
+    }
+    return 0;
+}

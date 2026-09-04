@@ -139,6 +139,9 @@ int audit_rule_get(int idx, struct audit_rule *out);
 /* Current number of installed rules. */
 int audit_rule_count(void);
 
+/* True if any filesystem-watch (path prefix) rule is installed. */
+int audit_path_watched(void);
+
 /* Register the audit-rule sysctl interface. */
 void audit_sysctl_register(void);
 

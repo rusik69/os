@@ -208,6 +208,23 @@ static int sysctl_write_audit_rule(const char *buf, int len) {
         r.pid = val;
         return audit_rule_add(&r) >= 0 ? 0 : -1;
     }
+
+    /* Accept "path=<prefix>" to install a filesystem-watch rule: audit
+     * any file access whose path starts with <prefix>. */
+    if (len > 5 && strncmp(buf, "path=", 5) == 0) {
+        int plen = (int)len - 5;
+        if (plen >= 1 && plen < (int)sizeof(((struct audit_rule *)0)->path)) {
+            struct audit_rule r;
+            memset(&r, 0, sizeof(r));
+            r.match = AUDIT_MATCH_PATH;
+            r.syscall = -1;
+            r.pid = 0;
+            memcpy(r.path, buf + 5, (size_t)plen);
+            r.path[plen] = '\0';
+            return audit_rule_add(&r) >= 0 ? 0 : -1;
+        }
+        return -EINVAL;
+    }
     return -EINVAL;
 }
 
