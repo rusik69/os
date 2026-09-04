@@ -49,7 +49,7 @@ int audit_rule_remove(int idx) {
     return 0;
 }
 
-int audit_rule_matches(long syscall, uint32_t pid, const char *path) {
+int audit_rule_matches(long syscall, uint32_t pid, uint32_t uid, const char *path) {
     int i;
 
     for (i = 0; i < audit_rules_used; i++) {
@@ -60,6 +60,8 @@ int audit_rule_matches(long syscall, uint32_t pid, const char *path) {
         if ((r->match & AUDIT_MATCH_SYSCALL) && r->syscall >= 0 && r->syscall != syscall)
             continue;
         if ((r->match & AUDIT_MATCH_PID) && r->pid != 0 && r->pid != pid)
+            continue;
+        if ((r->match & AUDIT_MATCH_UID) && r->uid != AUDIT_UID_ANY && r->uid != uid)
             continue;
         if ((r->match & AUDIT_MATCH_PATH) && r->path[0] != '\0') {
             if (!path || strncmp(path, r->path, strlen(r->path)) != 0)

@@ -169,7 +169,8 @@ static int sysctl_read_audit_rule(char *buf, int max) {
         if (!audit_rule_get(i, &r))
             break;
         int n = snprintf(buf + pos, (size_t)(max - pos - 2),
-                         "rule[%d] syscall=%ld pid=%u match=%u\n", i, r.syscall, r.pid, r.match);
+                         "rule[%d] syscall=%ld pid=%u uid=%u match=%u\n", i, r.syscall, r.pid,
+                         r.uid, r.match);
         if (n > 0)
             pos += n;
     }
@@ -206,6 +207,23 @@ static int sysctl_write_audit_rule(const char *buf, int len) {
         r.match = AUDIT_MATCH_PID;
         r.syscall = -1;
         r.pid = val;
+        return audit_rule_add(&r) >= 0 ? 0 : -1;
+    }
+
+    /* Accept "uid=<N>" to install a user-filter rule: audit syscalls
+     * issued by the given user id. */
+    if (len > 4 && strncmp(buf, "uid=", 4) == 0) {
+        uint32_t val = 0;
+        int i;
+        for (i = 4; i < len && buf[i] >= '0' && buf[i] <= '9'; i++)
+            val = val * 10 + (uint32_t)(buf[i] - '0');
+
+        struct audit_rule r;
+        memset(&r, 0, sizeof(r));
+        r.match = AUDIT_MATCH_UID;
+        r.syscall = -1;
+        r.pid = 0;
+        r.uid = val;
         return audit_rule_add(&r) >= 0 ? 0 : -1;
     }
 
@@ -318,7 +336,8 @@ void audit_syscall_entry(uint64_t num, uint64_t a1, uint64_t a2,
      * With no rules installed (default) everything is logged. */
     if (audit_rule_count() > 0) {
         uint32_t pid = p ? p->pid : 0;
-        if (!audit_rule_matches((long)num, pid, NULL))
+        uint32_t uid = p ? p->uid : 0;
+        if (!audit_rule_matches((long)num, pid, uid, NULL))
             return;
     }
 

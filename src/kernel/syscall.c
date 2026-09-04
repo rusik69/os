@@ -1786,7 +1786,7 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
 
         /* Audit filesystem watch: emit a PATH record for any access to a
          * path matched by an installed path-prefix watch rule. */
-        if (audit_path_watched() && audit_rule_matches(-1, p->pid, path)) {
+        if (audit_path_watched() && audit_rule_matches(-1, p->pid, p->uid, path)) {
             struct vfs_stat wst;
             if (vfs_stat(path, &wst) < 0)
                 memset(&wst, 0, sizeof(wst));

@@ -107,12 +107,17 @@ void audit_log_user_command(const char *cmdline);
 #define AUDIT_MATCH_SYSCALL (1u << 0) /* match on syscall number */
 #define AUDIT_MATCH_PID (1u << 1)     /* match on process pid */
 #define AUDIT_MATCH_PATH (1u << 2)    /* match on a path prefix */
+#define AUDIT_MATCH_UID (1u << 3)     /* match on the calling user id */
+
+/* Sentinel marking "no uid criterion" (a uid filter on root would be 0). */
+#define AUDIT_UID_ANY 0xFFFFFFFFu
 
 /* A single audit rule: a set of match criteria and a log action. */
 struct audit_rule {
     unsigned int match; /* OR of AUDIT_MATCH_* enabled criteria */
     long syscall;       /* syscall number (-1 = any) */
     uint32_t pid;       /* pid (0 = any) */
+    uint32_t uid;       /* uid (AUDIT_UID_ANY = any) */
     char path[128];     /* path prefix ("" = any) */
 };
 
@@ -127,7 +132,7 @@ void audit_rule_clear(void);
 
 /* True if any rule currently matches (syscall number, caller pid and
  * path all match where enabled). */
-int audit_rule_matches(long syscall, uint32_t pid, const char *path);
+int audit_rule_matches(long syscall, uint32_t pid, uint32_t uid, const char *path);
 
 /* True if any installed rule filters on syscall number. */
 int audit_rules_filter_syscall(void);
