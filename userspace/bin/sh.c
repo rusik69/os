@@ -1372,11 +1372,11 @@ static int cmd_uptime(void);
 /* Shared builtin-name table: used by `which` and Tab-completion
  * (D280 task 18).  Keep in sync with run_builtin(). */
 static const char *sh_builtins[] = {
-    "cd",    "pwd",   "exit",     "help",    "echo",    "clear",    "exec",   "export", "unset",
-    "local", "set",   "alias",    "unalias", "jobs",    "fg",       "bg",     "kill",   "source",
-    ".",     "trap",  "read",     "which",   "ps",      "free",     "uptime", "uname",  "time",
-    "test",  "[",     "true",     "false",   "break",   "continue", "return", "type",   "ulimit",
-    "umask", "times", "readonly", "shift",   "getopts", "printf",   0};
+    "cd",    "pwd",   "exit",     "help",    "echo",    "clear",    "exec",    "export", "unset",
+    "local", "set",   "alias",    "unalias", "jobs",    "fg",       "bg",      "kill",   "source",
+    ".",     "trap",  "read",     "which",   "ps",      "free",     "uptime",  "uname",  "time",
+    "test",  "[",     "true",     "false",   "break",   "continue", "return",  "type",   "ulimit",
+    "umask", "times", "readonly", "shift",   "getopts", "printf",   "mapfile", 0};
 static int cmd_uname(int argc, char **argv);
 static int cmd_time(int argc, char **argv);
 static int cmd_help(void);
@@ -1388,6 +1388,7 @@ static int cmd_readonly(int argc, char **argv);
 static int cmd_shift(int argc, char **argv);
 static int cmd_getopts(int argc, char **argv);
 static int cmd_printf(int argc, char **argv);
+static int cmd_mapfile(int argc, char **argv);
 static int cmd_test(int argc, char **argv);
 
 static int run_builtin(int argc, char **argv) {
@@ -1706,6 +1707,8 @@ static int run_builtin(int argc, char **argv) {
         return cmd_getopts(argc, argv);
     if (strcmp(cmd, "printf") == 0)
         return cmd_printf(argc, argv);
+    if (strcmp(cmd, "mapfile") == 0)
+        return cmd_mapfile(argc, argv);
     if (strcmp(cmd, "ps") == 0)
         return cmd_ps();
     if (strcmp(cmd, "free") == 0)
@@ -3354,6 +3357,54 @@ static int cmd_printf(int argc, char **argv) {
     }
     out[oi] = '\0';
     write(1, out, oi);
+    return 0;
+}
+
+/* ── mapfile builtin: read a file into an array, one line/elem ── */
+/* Usage: mapfile [-t] ARRAY < file   (reads from stdin by default) */
+static int cmd_mapfile(int argc, char **argv) {
+    const char *name = 0;
+    int ai = 1;
+    if (argc > 1 && argv[1][0] == '-') {
+        if (argv[1][1] == 't') /* strip trailing newlines */
+            ai = 2;
+    }
+    if (ai >= argc) {
+        printf("mapfile: missing array name\n");
+        return 1;
+    }
+    name = argv[ai];
+    struct shell_array *a = array_get_or_create(name);
+    if (!a) {
+        printf("mapfile: too many arrays\n");
+        return 1;
+    }
+    a->count = 0;
+    char ch;
+    int idx = 0;
+    char line[MAX_ARRAY_ELEM_LEN];
+    while (read(0, &ch, 1) == 1) {
+        if (ch == '\n') {
+            line[idx] = '\0';
+            if (a->count < MAX_ARRAY_ELEMS) {
+                strncpy(a->elems[a->count], line, MAX_ARRAY_ELEM_LEN - 1);
+                a->elems[a->count][MAX_ARRAY_ELEM_LEN - 1] = '\0';
+                a->count++;
+            }
+            idx = 0;
+        } else {
+            if (idx < MAX_ARRAY_ELEM_LEN - 1)
+                line[idx++] = ch;
+        }
+    }
+    if (idx > 0) { /* last line without trailing newline */
+        line[idx] = '\0';
+        if (a->count < MAX_ARRAY_ELEMS) {
+            strncpy(a->elems[a->count], line, MAX_ARRAY_ELEM_LEN - 1);
+            a->elems[a->count][MAX_ARRAY_ELEM_LEN - 1] = '\0';
+            a->count++;
+        }
+    }
     return 0;
 }
 
