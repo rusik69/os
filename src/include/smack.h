@@ -50,6 +50,14 @@ struct smack_cipso_map {
     char label[SMACK_LABEL_LEN]; /* Smack label bound to the tag */
 };
 
+/* ── Tracked object labels ───────────────────────────────────────── */
+/* A small cache of path → Smack-label bindings so the same object's
+ * label is resolved consistently across repeated accesses. */
+struct smack_object {
+    char path[SMACK_LABEL_LEN];  /* object identifier (path) */
+    char label[SMACK_LABEL_LEN]; /* resolved Smack label */
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 /* Initialize the SMACK subsystem */
@@ -96,6 +104,20 @@ int smack_file_permission(const char *path, int mask);
 
 /* Check if a process can kill another process */
 int smack_task_kill(uint32_t target_pid, int sig);
+
+/* ── Subject / object label matching ─────────────────────────────── */
+
+/* Resolve (and cache) the Smack label bound to an object path.  Falls
+ * back to the default label when the object has no smack64 xattr.
+ * Returns 0 and fills 'label' (<= label_len) on success. */
+int smack_resolve_object_label(const char *path, char *label, int label_len);
+
+/* Subject/object label matching: is the current process allowed the
+ * requested 'access' mask on the given object path?  Resolves both the
+ * subject (current process) and object labels, then consults the rule
+ * table and the special star/floor/hat semantics.  Returns 1 (allow) or
+ * 0 (deny). */
+int smack_may_access(const char *path, uint8_t access);
 
 /* ── CIPSO / netlabel ───────────────────────────────────────────── */
 

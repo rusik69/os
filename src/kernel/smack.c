@@ -46,6 +46,10 @@ static int smack_subject_count = 0;
 static struct smack_rule smack_rules[SMACK_MAX_RULES];
 static int smack_rule_count = 0;
 
+/* Tracked object (path → label) cache. */
+static struct smack_object smack_objects[SMACK_MAX_OBJECTS];
+static int smack_object_count = 0;
+
 /* CIPSO tag→label mapping table + the active DOI. */
 static struct smack_cipso_map smack_cipso[SMACK_CIPSO_MAX_TAGS];
 static int smack_cipso_count = 0;
@@ -293,6 +297,10 @@ void smack_clear_rules(void)
     memset(smack_rules, 0, sizeof(smack_rules));
     smack_rule_count = 0;
 
+    /* Clear the object-label cache and the CIPSO tables. */
+    memset(smack_objects, 0, sizeof(smack_objects));
+    smack_object_count = 0;
+
     /* Clear the CIPSO tag table and restore the default DOI. */
     memset(smack_cipso, 0, sizeof(smack_cipso));
     smack_cipso_count = 0;
@@ -340,6 +348,61 @@ int smack_check_access(const char *subject, const char *object, uint8_t access)
     spinlock_release(&smack_lock);
 
     return 0;
+}
+
+/* ── Subject / object label matching ─────────────────────────────── */
+
+int smack_resolve_object_label(const char *path, char *label, int label_len) {
+    if (!path || !label || label_len <= 0)
+        return -EINVAL;
+
+    /* Cache hit first. */
+    spinlock_acquire(&smack_lock);
+    for (int i = 0; i < smack_object_count; i++) {
+        if (strcmp(smack_objects[i].path, path) == 0) {
+            strncpy(label, smack_objects[i].label, (size_t)(label_len - 1));
+            label[label_len - 1] = '\0';
+            spinlock_release(&smack_lock);
+            return 0;
+        }
+    }
+    spinlock_release(&smack_lock);
+
+    /* Resolve from the object's smack64 xattr, falling back to default. */
+    char resolved[SMACK_LABEL_LEN];
+    int ret = smack_get_file_label(path, resolved, sizeof(resolved));
+    if (ret < 0) {
+        strncpy(resolved, default_label, SMACK_LABEL_LEN - 1);
+        resolved[SMACK_LABEL_LEN - 1] = '\0';
+    }
+
+    /* Cache the resolution (best-effort; full cache is not an error). */
+    if (smack_object_count < SMACK_MAX_OBJECTS) {
+        struct smack_object *obj = &smack_objects[smack_object_count++];
+        strncpy(obj->path, path, SMACK_LABEL_LEN - 1);
+        obj->path[SMACK_LABEL_LEN - 1] = '\0';
+        strncpy(obj->label, resolved, SMACK_LABEL_LEN - 1);
+        obj->label[SMACK_LABEL_LEN - 1] = '\0';
+    }
+
+    strncpy(label, resolved, (size_t)(label_len - 1));
+    label[label_len - 1] = '\0';
+    return 0;
+}
+
+int smack_may_access(const char *path, uint8_t access) {
+    const char *proc_label;
+    char object_label[SMACK_LABEL_LEN];
+
+    if (!path)
+        return 0;
+
+    proc_label = smack_get_process_label();
+
+    if (smack_resolve_object_label(path, object_label, sizeof(object_label)) < 0)
+        return 0;
+
+    return smack_check_access(proc_label, object_label, access);
 }
 
 /* ── LSM hook implementations ──────────────────────────────────────── */
@@ -413,19 +476,15 @@ int smack_inode_permission(const char *path, int mask)
     /* Get the process label */
     const char *proc_label = smack_get_process_label();
 
-    /* Get the file's SMACK label */
-    char file_label[SMACK_LABEL_LEN];
-    int ret = smack_get_file_label(path, file_label, sizeof(file_label));
-    if (ret < 0) {
-        /* No label on file: use default label */
-        strncpy(file_label, default_label, SMACK_LABEL_LEN - 1);
-        file_label[SMACK_LABEL_LEN - 1] = '\0';
-    }
-
-    /* Check access */
-    if (!smack_check_access(proc_label, file_label, smack_access)) {
-        kprintf("[SMACK] inode_permission DENIED: '%s' -> '%s' (path=%s, mask=%d)\n",
-                proc_label, file_label, path, mask);
+    /* Resolve the object label via the tracked subject/object matching
+     * layer, then enforce. */
+    if (!smack_may_access(path, smack_access)) {
+        char obj_label[SMACK_LABEL_LEN];
+        if (smack_resolve_object_label(path, obj_label, sizeof(obj_label)) < 0)
+            strncpy(obj_label, "?", sizeof(obj_label) - 1);
+        obj_label[SMACK_LABEL_LEN - 1] = '\0';
+        kprintf("[SMACK] inode_permission DENIED: '%s' -> '%s' (path=%s, mask=%d)\n", proc_label,
+                obj_label, path, mask);
         return -EACCES;
     }
 
