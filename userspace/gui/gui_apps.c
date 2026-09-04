@@ -62,6 +62,7 @@
 
 #include "gui.h"
 #include "gui_draw.h"
+#include "gui_image.h"
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
@@ -1837,7 +1838,63 @@ void gui_app_settings_run(void) {
     gui_window_set_focused_widget(win, cw);
 }
 
-/* 7. Minesweeper */
+/* 7. Image Viewer — PNG/BMP display (D286)
+ *
+ * Loads /image.bmp or /image.png from the root filesystem, decodes it and
+ * displays it scaled-to-fit inside the window (see gui_image.c).  If no
+ * image is present it falls back to a generated demo "test card" so the
+ * window is never blank.  Raw syscalls only — no FILE*.
+ */
+#define IVCW 440
+#define IVCH 272
+static gui_color_t s_iv_fb[IVCW * IVCH];
+
+void gui_app_image_viewer_run(void) {
+    static unsigned char img[262144];
+    char status[80];
+    unsigned long n = 0;
+    int loaded = 0;
+
+    gui_window_t *win = gui_window_create("Image Viewer", 60, 50, 480, 340, GUI_WINDOW_BG);
+    if (!win)
+        return;
+    gui_add_window(win);
+    gui_window_bring_to_front(win);
+
+    int fd = open("/image.bmp", O_RDONLY, 0);
+    if (fd >= 0) {
+        int r = read(fd, img, (unsigned long)sizeof img);
+        close(fd);
+        if (r > 0) {
+            n = (unsigned long)r;
+            loaded = gui_img_decode(img, n, s_iv_fb, IVCW, IVCH, status, sizeof status);
+        }
+    }
+    if (!loaded) {
+        fd = open("/image.png", O_RDONLY, 0);
+        if (fd >= 0) {
+            int r = read(fd, img, (unsigned long)sizeof img);
+            close(fd);
+            if (r > 0) {
+                n = (unsigned long)r;
+                loaded = gui_img_decode(img, n, s_iv_fb, IVCW, IVCH, status, sizeof status);
+            }
+        }
+    }
+    if (!loaded) {
+        gui_img_demo(s_iv_fb, IVCW, IVCH);
+        snprintf(status, sizeof status,
+                 "Demo preview — place an image at /image.bmp or /image.png");
+    }
+
+    gui_rect_t wr = gui_window_get_rect(win);
+    int x0 = wr.x + ((480 - IVCW) / 2);
+    int y0 = wr.y + 24 + 8;
+    gui_draw_image_raw(x0, y0, IVCW, IVCH, s_iv_fb);
+    gui_window_draw_text(win, x0, y0 + IVCH + 6, status, GUI_TEXT_FG, GUI_WINDOW_BG);
+}
+
+/* 7b. Minesweeper */
 void gui_app_minesweeper_run(void) {
     gui_window_t *win = gui_window_create("Minesweeper", 200, 150, 220, 260, GUI_LIGHT_GRAY);
     if (!win)
