@@ -17,6 +17,7 @@ void gui_app_rgb_mixer_run(void);
 void gui_app_analog_clock_run(void);
 void gui_app_digital_clock_run(void);
 void gui_app_paint_run(void);
+void gui_app_terminal_run(void);
 void gui_app_minesweeper_run(void);
 void gui_app_snake_run(void);
 void gui_app_tetris_run(void);

@@ -76,7 +76,8 @@ static int __isqrt(int n);
 
 void gui_app_draw_run(void) {
     gui_window_t *win = gui_window_create("Drawing Demo", 50, 50, 500, 400, GUI_WHITE);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
 
     gui_rect_t r = {70, 30, 100, 80};
@@ -90,7 +91,7 @@ void gui_app_draw_run(void) {
     gui_draw_circle_filled(250, 200, 35, GUI_YELLOW);
 
     gui_draw_triangle(400, 30, 370, 110, 430, 110, GUI_RED);
-    gui_draw_triangle_filled(400, 140, 370, 220, 430, 220, GUI_COLOR(0,200,100));
+    gui_draw_triangle_filled(400, 140, 370, 220, 430, 220, GUI_COLOR(0, 200, 100));
 
     gui_draw_progress_bar(70, 290, 260, 20, 67, GUI_GREEN, GUI_LIGHT_GRAY);
     gui_draw_progress_bar(70, 320, 260, 20, 33, GUI_RED, GUI_LIGHT_GRAY);
@@ -103,47 +104,69 @@ void gui_app_draw_run(void) {
 
 void gui_app_widgets_run(void) {
     gui_window_t *win = gui_window_create("Widget Demo", 150, 100, 400, 350, GUI_WINDOW_BG);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
 
     gui_rect_t lr = {20, 10, 200, 16};
     gui_widget_t *lbl = gui_label_create(lr, "Widget Gallery");
-    if (lbl) { lbl->fg = GUI_BLUE; lbl->bg = GUI_WINDOW_BG; gui_window_add_widget(win, lbl); }
+    if (lbl) {
+        lbl->fg = GUI_BLUE;
+        lbl->bg = GUI_WINDOW_BG;
+        gui_window_add_widget(win, lbl);
+    }
 
     gui_rect_t c1r = {20, 35, 200, 20};
     gui_widget_t *c1 = gui_checkbox_create(c1r, "Option A", 0);
-    if (c1) gui_window_add_widget(win, c1);
+    if (c1)
+        gui_window_add_widget(win, c1);
 
     gui_rect_t c2r = {20, 60, 200, 20};
     gui_widget_t *c2 = gui_checkbox_create(c2r, "Option B", 1);
-    if (c2) gui_window_add_widget(win, c2);
+    if (c2)
+        gui_window_add_widget(win, c2);
 
     gui_rect_t sr = {20, 95, 300, 24};
     gui_widget_t *sl = gui_slider_create(sr, 0, 100, 50);
-    if (sl) gui_window_add_widget(win, sl);
+    if (sl)
+        gui_window_add_widget(win, sl);
 
     gui_rect_t lbr = {20, 130, 200, 120};
     gui_widget_t *lb = gui_listbox_create(lbr);
     if (lb) {
-        gui_listbox_add_item(lb, "Red"); gui_listbox_add_item(lb, "Green");
-        gui_listbox_add_item(lb, "Blue"); gui_listbox_add_item(lb, "Cyan");
-        gui_listbox_add_item(lb, "Yellow"); gui_listbox_add_item(lb, "Magenta");
+        gui_listbox_add_item(lb, "Red");
+        gui_listbox_add_item(lb, "Green");
+        gui_listbox_add_item(lb, "Blue");
+        gui_listbox_add_item(lb, "Cyan");
+        gui_listbox_add_item(lb, "Yellow");
+        gui_listbox_add_item(lb, "Magenta");
         gui_window_add_widget(win, lb);
     }
 }
 
 void gui_app_colors_run(void) {
     gui_window_t *win = gui_window_create("Color Palette", 250, 200, 400, 300, GUI_WHITE);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
 
     int sw = 30, sh = 20, gap = 4, cols = 6;
     gui_color_t colors[] = {
-        GUI_BLACK, GUI_WHITE, GUI_RED, GUI_GREEN, GUI_BLUE, GUI_CYAN,
-        GUI_YELLOW, GUI_COLOR(255,128,0), GUI_COLOR(128,0,255), GUI_COLOR(0,255,128),
-        GUI_GRAY, GUI_LIGHT_GRAY, GUI_DARK_GRAY,
+        GUI_BLACK,
+        GUI_WHITE,
+        GUI_RED,
+        GUI_GREEN,
+        GUI_BLUE,
+        GUI_CYAN,
+        GUI_YELLOW,
+        GUI_COLOR(255, 128, 0),
+        GUI_COLOR(128, 0, 255),
+        GUI_COLOR(0, 255, 128),
+        GUI_GRAY,
+        GUI_LIGHT_GRAY,
+        GUI_DARK_GRAY,
     };
-    int n = sizeof(colors)/sizeof(colors[0]);
+    int n = sizeof(colors) / sizeof(colors[0]);
     for (int i = 0; i < n; i++) {
         int cx = 20 + (i % cols) * (sw + gap);
         int cy = 20 + (i / cols) * (sh + gap);
@@ -151,13 +174,14 @@ void gui_app_colors_run(void) {
         gui_window_draw_rect(win, r, colors[i]);
         gui_window_draw_rect_outline(win, r, GUI_DARK_GRAY, 1);
     }
-    gui_window_draw_text(win, 20, 20 + ((n+cols-1)/cols)*(sh+gap) + 5,
+    gui_window_draw_text(win, 20, 20 + ((n + cols - 1) / cols) * (sh + gap) + 5,
                          "GUI Color Palette", GUI_TEXT_FG, GUI_WHITE);
 }
 
 void gui_app_gradient_run(void) {
     gui_window_t *win = gui_window_create("Gradients", 50, 50, 400, 350, GUI_WHITE);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
 
     gui_draw_gradient_v(50, 40, 100, 260, GUI_RED, GUI_BLUE);
@@ -166,15 +190,16 @@ void gui_app_gradient_run(void) {
     gui_draw_gradient_h(180, 40, 180, 120, GUI_GREEN, GUI_YELLOW);
     gui_window_draw_text(win, 180, 20, "Horizontal", GUI_TEXT_FG, GUI_WHITE);
 
-    gui_draw_gradient_v(180, 180, 80, 120, GUI_CYAN, GUI_COLOR(255,0,255));
-    gui_draw_gradient_h(270, 180, 90, 120, GUI_COLOR(255,128,0), GUI_COLOR(0,128,255));
+    gui_draw_gradient_v(180, 180, 80, 120, GUI_CYAN, GUI_COLOR(255, 0, 255));
+    gui_draw_gradient_h(270, 180, 90, 120, GUI_COLOR(255, 128, 0), GUI_COLOR(0, 128, 255));
 
     gui_draw_gradient_radial(80, 220, 60, GUI_WHITE, GUI_BLUE);
 }
 
 void gui_app_shapes_run(void) {
     gui_window_t *win = gui_window_create("Shapes", 200, 100, 500, 380, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
 
     gui_draw_line(50, 30, 150, 80, GUI_RED);
@@ -183,29 +208,32 @@ void gui_app_shapes_run(void) {
     gui_draw_line(100, 150, 150, 80, GUI_YELLOW);
 
     gui_draw_circle(100, 240, 45, GUI_CYAN);
-    gui_draw_circle_filled(250, 90, 35, GUI_COLOR(255,100,100));
+    gui_draw_circle_filled(250, 90, 35, GUI_COLOR(255, 100, 100));
     gui_draw_circle(250, 240, 55, GUI_YELLOW);
 
     gui_draw_triangle(400, 30, 350, 100, 480, 90, GUI_GREEN);
-    gui_draw_triangle_filled(380, 150, 330, 260, 480, 190, GUI_COLOR(0,100,200));
+    gui_draw_triangle_filled(380, 150, 330, 260, 480, 190, GUI_COLOR(0, 100, 200));
 
     gui_draw_star(420, 300, 45, 18, GUI_YELLOW);
     gui_draw_ellipse(70, 330, 50, 20, GUI_CYAN);
     gui_draw_heart(200, 330, 40, GUI_RED);
 
-    gui_window_draw_text(win, 10, 10, "Lines, Circles, Triangles, Star, Ellipse, Heart", GUI_WHITE, GUI_BLACK);
+    gui_window_draw_text(win, 10, 10, "Lines, Circles, Triangles, Star, Ellipse, Heart", GUI_WHITE,
+                         GUI_BLACK);
 }
 
 void gui_app_checker_run(void) {
     gui_window_t *win = gui_window_create("Checkerboard", 100, 100, 400, 300, GUI_WHITE);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     gui_draw_checkerboard(20, 20, 360, 260, 16);
 }
 
 void gui_app_info_run(void) {
     gui_window_t *win = gui_window_create("System Info", 200, 150, 350, 200, GUI_WINDOW_BG);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
 
     char line[64];
@@ -214,22 +242,28 @@ void gui_app_info_run(void) {
     gui_window_draw_text(win, 120, 10, "System Information", GUI_BLUE, GUI_WINDOW_BG);
 
     snprintf(line, sizeof(line), "Resolution: 1024x768");
-    gui_window_draw_text(win, 20, y, line, GUI_TEXT_FG, GUI_WINDOW_BG); y += 20;
+    gui_window_draw_text(win, 20, y, line, GUI_TEXT_FG, GUI_WINDOW_BG);
+    y += 20;
 
     snprintf(line, sizeof(line), "GUI Library: v2.0 (100 improvements)");
-    gui_window_draw_text(win, 20, y, line, GUI_TEXT_FG, GUI_WINDOW_BG); y += 20;
+    gui_window_draw_text(win, 20, y, line, GUI_TEXT_FG, GUI_WINDOW_BG);
+    y += 20;
 
     snprintf(line, sizeof(line), "Widget Types: 15+");
-    gui_window_draw_text(win, 20, y, line, GUI_TEXT_FG, GUI_WINDOW_BG); y += 20;
+    gui_window_draw_text(win, 20, y, line, GUI_TEXT_FG, GUI_WINDOW_BG);
+    y += 20;
 
     snprintf(line, sizeof(line), "Drawing Primitives: 28");
-    gui_window_draw_text(win, 20, y, line, GUI_TEXT_FG, GUI_WINDOW_BG); y += 20;
+    gui_window_draw_text(win, 20, y, line, GUI_TEXT_FG, GUI_WINDOW_BG);
+    y += 20;
 
     snprintf(line, sizeof(line), "GUI Applications: 47");
-    gui_window_draw_text(win, 20, y, line, GUI_TEXT_FG, GUI_WINDOW_BG); y += 20;
+    gui_window_draw_text(win, 20, y, line, GUI_TEXT_FG, GUI_WINDOW_BG);
+    y += 20;
 
     snprintf(line, sizeof(line), "Color Utilities: 15+");
-    gui_window_draw_text(win, 20, y, line, GUI_TEXT_FG, GUI_WINDOW_BG); y += 20;
+    gui_window_draw_text(win, 20, y, line, GUI_TEXT_FG, GUI_WINDOW_BG);
+    y += 20;
 }
 
 /* ===================================================================
@@ -239,7 +273,8 @@ void gui_app_info_run(void) {
 /* 1. Mandelbrot Fractal */
 void gui_app_mandelbrot_run(void) {
     gui_window_t *win = gui_window_create("Mandelbrot", 50, 50, 400, 350, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int w = 380, h = 310;
     for (int py = 0; py < h; py++) {
@@ -463,7 +498,8 @@ static void calc_event(gui_widget_t *w, gui_event_t *evt) {
 void gui_app_calc_run(void) {
     calc_clear();
     gui_window_t *win = gui_window_create("Calculator", 300, 160, 240, 320, GUI_WINDOW_BG);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     gui_window_bring_to_front(win);
     gui_rect_t wr = gui_window_get_rect(win);
@@ -712,35 +748,41 @@ void gui_app_notepad_run(void) {
 /* 3. RGB Color Mixer */
 void gui_app_rgb_mixer_run(void) {
     gui_window_t *win = gui_window_create("RGB Mixer", 100, 100, 300, 260, GUI_WHITE);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int r_val = 128, g_val = 64, b_val = 192;
     gui_color_t swatch = GUI_COLOR(r_val, g_val, b_val);
     gui_window_draw_rect(win, (gui_rect_t){20, 20, 260, 50}, swatch);
     gui_window_draw_rect_outline(win, (gui_rect_t){20, 20, 260, 50}, GUI_DARK_GRAY, 2);
     int y = 90;
-    gui_window_draw_text(win, 20, y, "R", GUI_RED, GUI_WHITE); y += 20;
-    gui_draw_gradient_h(50, y-16, 200, 12, GUI_BLACK, GUI_RED);
-    gui_window_draw_text(win, 20, y+8, "G", GUI_GREEN, GUI_WHITE); y += 20;
-    gui_draw_gradient_h(50, y-16, 200, 12, GUI_BLACK, GUI_GREEN);
-    gui_window_draw_text(win, 20, y+8, "B", GUI_BLUE, GUI_WHITE); y += 20;
-    gui_draw_gradient_h(50, y-16, 200, 12, GUI_BLACK, GUI_BLUE);
-    char buf[32]; snprintf(buf, sizeof(buf), "RGB(%d,%d,%d)", r_val, g_val, b_val);
+    gui_window_draw_text(win, 20, y, "R", GUI_RED, GUI_WHITE);
+    y += 20;
+    gui_draw_gradient_h(50, y - 16, 200, 12, GUI_BLACK, GUI_RED);
+    gui_window_draw_text(win, 20, y + 8, "G", GUI_GREEN, GUI_WHITE);
+    y += 20;
+    gui_draw_gradient_h(50, y - 16, 200, 12, GUI_BLACK, GUI_GREEN);
+    gui_window_draw_text(win, 20, y + 8, "B", GUI_BLUE, GUI_WHITE);
+    y += 20;
+    gui_draw_gradient_h(50, y - 16, 200, 12, GUI_BLACK, GUI_BLUE);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "RGB(%d,%d,%d)", r_val, g_val, b_val);
     gui_window_draw_text(win, 20, 220, buf, GUI_TEXT_FG, GUI_WHITE);
 }
 
 /* 4. Analog Clock */
 void gui_app_analog_clock_run(void) {
     gui_window_t *win = gui_window_create("Analog Clock", 400, 300, 200, 220, GUI_WHITE);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cx = 100, cy = 110, r = 80;
     gui_draw_circle(cx, cy, r, GUI_DARK_GRAY);
-    gui_draw_circle_filled(cx, cy, r-2, GUI_COLOR(240,240,255));
+    gui_draw_circle_filled(cx, cy, r - 2, GUI_COLOR(240, 240, 255));
     for (int i = 0; i < 12; i++) {
         int ang = i * 30;
-        int ex = cx + (r-12) * __icos(ang) / 100;
-        int ey = cy + (r-12) * __isin(ang) / 100;
+        int ex = cx + (r - 12) * __icos(ang) / 100;
+        int ey = cy + (r - 12) * __isin(ang) / 100;
         gui_draw_circle_filled(ex, ey, 3, GUI_DARK_GRAY);
     }
     /* Hour hand at ~10:10 */
@@ -751,15 +793,16 @@ void gui_app_analog_clock_run(void) {
     int my = cy + 50 * __isin(120) / 100;
     gui_draw_thick_line(cx, cy, mx, my, 2, GUI_BLACK);
     gui_draw_circle_filled(cx, cy, 4, GUI_RED);
-    gui_window_draw_text(win, 60, 195, "10:10", GUI_TEXT_FG, GUI_COLOR(240,240,255));
+    gui_window_draw_text(win, 60, 195, "10:10", GUI_TEXT_FG, GUI_COLOR(240, 240, 255));
 }
 
 /* 5. Digital Clock */
 void gui_app_digital_clock_run(void) {
     gui_window_t *win = gui_window_create("Digital Clock", 300, 150, 250, 100, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
-    gui_window_draw_text(win, 30, 30, "00:00:00", GUI_COLOR(0,255,0), GUI_BLACK);
+    gui_window_draw_text(win, 30, 30, "00:00:00", GUI_COLOR(0, 255, 0), GUI_BLACK);
     gui_window_draw_text(win, 30, 60, "HH:MM:SS", GUI_DARK_GRAY, GUI_BLACK);
 }
 
@@ -948,7 +991,8 @@ void gui_app_paint_run(void) {
     s_paint.status[0] = '\0';
     gui_window_t *win = gui_window_create("Paint", 150, 100, PAINT_CW + 16,
                                           24 + PAINT_TB_H + PAINT_CH + 16, GUI_WINDOW_BG);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     gui_window_bring_to_front(win);
     gui_rect_t wr = gui_window_get_rect(win);
@@ -962,16 +1006,389 @@ void gui_app_paint_run(void) {
     gui_window_set_focused_widget(win, cw);
 }
 
+/* 6b. Terminal — ANSI terminal emulator widget.
+ *
+ * A character-cell grid with per-cell fg/bg colours.  Text is fed through an
+ * ANSI ESC/CSI parser so the widget behaves like a real terminal: printable
+ * chars write at the cursor, control chars move it, and CSI sequences do
+ * cursor addressing, erase, line-wrap, scroll-up and SGR colouring.  Input
+ * comes from GUI_EVENT_CHAR (the terminal echoes what is typed); an ANSI
+ * demo banner is shown on launch.  Raw cell grid — no FILE*.
+ */
+#define TERM_COLS 40
+#define TERM_ROWS 18
+#define TERM_CW 7   /* glyph advance, px */
+#define TERM_CH 14  /* glyph line-height, px */
+#define TERM_MAXP 8 /* max CSI parameters */
+
+typedef struct {
+    unsigned char ch;
+    gui_color_t fg;
+    gui_color_t bg;
+} term_cell_t;
+
+typedef struct {
+    term_cell_t grid[TERM_ROWS][TERM_COLS];
+    int r, c;           /* cursor row, col */
+    gui_color_t fg, bg; /* current SGR colours */
+    int bold;
+    int esc; /* 0 text, 1 after ESC, 2 in CSI */
+    int fin; /* final CSI byte */
+    int params[TERM_MAXP];
+    int nparams;
+    int cur; /* current param accumulator */
+} term_state_t;
+
+static term_state_t s_term;
+
+/* Standard SGR palette index -> colour; brightened when bold. */
+static gui_color_t term_color(int idx, int bold) {
+    if (bold) {
+        switch (idx) {
+        case 0:
+            return GUI_DARK_GRAY;
+        case 1:
+            return GUI_COLOR(255, 130, 130);
+        case 2:
+            return GUI_COLOR(140, 255, 140);
+        case 3:
+            return GUI_COLOR(255, 255, 140);
+        case 4:
+            return GUI_COLOR(140, 160, 255);
+        case 5:
+            return GUI_COLOR(255, 140, 255);
+        case 6:
+            return GUI_COLOR(140, 255, 255);
+        default:
+            return GUI_WHITE;
+        }
+    }
+    switch (idx) {
+    case 0:
+        return GUI_BLACK;
+    case 1:
+        return GUI_RED;
+    case 2:
+        return GUI_GREEN;
+    case 3:
+        return GUI_YELLOW;
+    case 4:
+        return GUI_BLUE;
+    case 5:
+        return GUI_MAGENTA;
+    case 6:
+        return GUI_CYAN;
+    default:
+        return GUI_WHITE;
+    }
+}
+
+static void term_clear_cell(term_cell_t *cell) {
+    cell->ch = 0;
+    cell->fg = GUI_WHITE;
+    cell->bg = GUI_BLACK;
+}
+
+static void term_clear_at(int r, int c) {
+    term_clear_cell(&s_term.grid[r][c]);
+}
+
+static void term_scroll_up(int n) {
+    for (int k = 0; k < n; k++) {
+        for (int r = 1; r < TERM_ROWS; r++)
+            for (int c = 0; c < TERM_COLS; c++)
+                s_term.grid[r - 1][c] = s_term.grid[r][c];
+        for (int c = 0; c < TERM_COLS; c++)
+            term_clear_at(TERM_ROWS - 1, c);
+    }
+    if (s_term.r >= TERM_ROWS)
+        s_term.r = TERM_ROWS - 1;
+}
+
+/* Advance the cursor; wrap and scroll as needed. */
+static void term_linefeed(void) {
+    s_term.r++;
+    if (s_term.r >= TERM_ROWS)
+        term_scroll_up(s_term.r - (TERM_ROWS - 1));
+}
+
+static void term_newline(void) {
+    s_term.c = 0;
+    term_linefeed();
+}
+
+static void term_sgr(int p) {
+    if (p >= 30 && p <= 37) {
+        s_term.fg = term_color(p - 30, s_term.bold);
+    } else if (p >= 40 && p <= 47) {
+        s_term.bg = term_color(p - 40, 0);
+    } else if (p == 0) {
+        s_term.fg = GUI_WHITE;
+        s_term.bg = GUI_BLACK;
+        s_term.bold = 0;
+    } else if (p == 1) {
+        s_term.bold = 1;
+        s_term.fg = term_color(7, 1);
+    } else if (p == 22) {
+        s_term.bold = 0;
+        s_term.fg = GUI_WHITE;
+    } else if (p == 39) {
+        s_term.fg = GUI_WHITE;
+    } else if (p == 49) {
+        s_term.bg = GUI_BLACK;
+    }
+}
+
+static void term_exec_csi(void) {
+    int i, n;
+    switch (s_term.nparams) {
+    case 0:
+        s_term.nparams = 1;
+        s_term.params[0] = 0;
+        break;
+    case 1:
+        break;
+    default:
+        if (s_term.nparams > TERM_MAXP)
+            s_term.nparams = TERM_MAXP;
+        break;
+    }
+    int fin = (s_term.nparams >= 1) ? s_term.params[0] : 0;
+    if (fin == 0)
+        fin = 1;
+    switch (s_term.fin) {
+    case 'A': /* cursor up */
+        s_term.r -= fin;
+        if (s_term.r < 0)
+            s_term.r = 0;
+        break;
+    case 'B': /* cursor down */
+        s_term.r += fin;
+        if (s_term.r >= TERM_ROWS)
+            term_scroll_up(s_term.r - (TERM_ROWS - 1));
+        break;
+    case 'C': /* cursor forward */
+        s_term.c += fin;
+        if (s_term.c >= TERM_COLS)
+            s_term.c = TERM_COLS - 1;
+        break;
+    case 'D': /* cursor back */
+        s_term.c -= fin;
+        if (s_term.c < 0)
+            s_term.c = 0;
+        break;
+    case 'H': /* cursor home / position (row;col), 1-based */
+    case 'f':
+        n = (s_term.nparams >= 2) ? s_term.params[1] : 1;
+        if (fin < 1)
+            fin = 1;
+        if (n < 1)
+            n = 1;
+        s_term.r = fin - 1;
+        s_term.c = n - 1;
+        if (s_term.r >= TERM_ROWS)
+            s_term.r = TERM_ROWS - 1;
+        if (s_term.c >= TERM_COLS)
+            s_term.c = TERM_COLS - 1;
+        break;
+    case 'J': /* erase in display */
+        n = (s_term.nparams >= 1) ? s_term.params[0] : 0;
+        if (n == 2 || n == 3) {
+            for (i = 0; i < TERM_ROWS; i++)
+                for (int cc = 0; cc < TERM_COLS; cc++)
+                    term_clear_at(i, cc);
+            s_term.r = 0;
+            s_term.c = 0;
+        } else if (n == 0) {
+            for (int cc = s_term.c; cc < TERM_COLS; cc++)
+                term_clear_at(s_term.r, cc);
+            for (i = s_term.r + 1; i < TERM_ROWS; i++)
+                for (int cc = 0; cc < TERM_COLS; cc++)
+                    term_clear_at(i, cc);
+        } else if (n == 1) {
+            for (int cc = 0; cc <= s_term.c; cc++)
+                term_clear_at(s_term.r, cc);
+            for (i = 0; i < s_term.r; i++)
+                for (int cc = 0; cc < TERM_COLS; cc++)
+                    term_clear_at(i, cc);
+        }
+        break;
+    case 'K': /* erase in line */
+        n = (s_term.nparams >= 1) ? s_term.params[0] : 0;
+        if (n == 0) {
+            for (int cc = s_term.c; cc < TERM_COLS; cc++)
+                term_clear_at(s_term.r, cc);
+        } else if (n == 1) {
+            for (int cc = 0; cc <= s_term.c; cc++)
+                term_clear_at(s_term.r, cc);
+        } else {
+            for (int cc = 0; cc < TERM_COLS; cc++)
+                term_clear_at(s_term.r, cc);
+        }
+        break;
+    case 'm': /* SGR */
+        for (i = 0; i < s_term.nparams; i++)
+            term_sgr(s_term.params[i]);
+        break;
+    default: /* unknown sequence: ignore */
+        break;
+    }
+}
+
+/* Feed one byte through the ANSI state machine. */
+static void term_putc(unsigned char ch) {
+    if (s_term.esc == 2) {
+        if (ch >= '0' && ch <= '9') {
+            s_term.cur = s_term.cur * 10 + (ch - '0');
+            return;
+        }
+        if (ch == ';') {
+            if (s_term.nparams < TERM_MAXP)
+                s_term.params[s_term.nparams++] = s_term.cur;
+            s_term.cur = 0;
+            return;
+        }
+        if (ch == '?') /* private-mode prefix: skip */
+            return;
+        /* final byte */
+        if (s_term.nparams < TERM_MAXP)
+            s_term.params[s_term.nparams++] = s_term.cur;
+        s_term.fin = ch;
+        term_exec_csi();
+        s_term.esc = 0;
+        return;
+    }
+    if (s_term.esc == 1) {
+        if (ch == '[')
+            s_term.esc = 2;
+        else
+            s_term.esc = 0;
+        s_term.nparams = 0;
+        s_term.cur = 0;
+        return;
+    }
+    if (ch == 0x1b) {
+        s_term.esc = 1;
+        return;
+    }
+    switch (ch) {
+    case '\n':
+        term_newline();
+        return;
+    case '\r':
+        s_term.c = 0;
+        return;
+    case '\b':
+        if (s_term.c > 0)
+            s_term.c--;
+        return;
+    case '\t':
+        s_term.c = ((s_term.c / 8) + 1) * 8;
+        if (s_term.c >= TERM_COLS)
+            s_term.c = TERM_COLS - 1;
+        return;
+    }
+    if (ch < 32)
+        return; /* other control chars: ignore */
+    if (s_term.c >= TERM_COLS) {
+        s_term.c = 0;
+        term_linefeed();
+    }
+    term_cell_t *cell = &s_term.grid[s_term.r][s_term.c];
+    cell->ch = ch;
+    cell->fg = s_term.fg;
+    cell->bg = s_term.bg;
+    s_term.c++;
+}
+
+static void term_write(const char *s) {
+    while (*s)
+        term_putc((unsigned char)*s++);
+}
+
+static void term_reset(void) {
+    for (int r = 0; r < TERM_ROWS; r++)
+        for (int c = 0; c < TERM_COLS; c++)
+            term_clear_at(r, c);
+    s_term.r = 0;
+    s_term.c = 0;
+    s_term.fg = GUI_WHITE;
+    s_term.bg = GUI_BLACK;
+    s_term.bold = 0;
+    s_term.esc = 0;
+    s_term.nparams = 0;
+    s_term.cur = 0;
+}
+
+static void term_draw(gui_widget_t *w) {
+    int32_t ox = w->rect.x, oy = w->rect.y;
+    gui_window_draw_rect(NULL, w->rect, GUI_BLACK);
+    gui_window_draw_rect_outline(NULL, w->rect, GUI_DARK_GRAY, 1);
+    for (int r = 0; r < TERM_ROWS; r++) {
+        for (int c = 0; c < TERM_COLS; c++) {
+            term_cell_t *cell = &s_term.grid[r][c];
+            gui_rect_t cr = {ox + c * TERM_CW, oy + r * TERM_CH, TERM_CW, TERM_CH};
+            gui_window_draw_rect(NULL, cr, cell->bg);
+            if (cell->ch) {
+                char s[2] = {(char)cell->ch, 0};
+                gui_window_draw_text(NULL, ox + c * TERM_CW, oy + r * TERM_CH, s, cell->fg,
+                                     cell->bg);
+            }
+        }
+    }
+    /* block cursor (underline) at the cursor cell */
+    gui_rect_t cur = {ox + s_term.c * TERM_CW, oy + (s_term.r + 1) * TERM_CH - 2, TERM_CW, 2};
+    gui_window_draw_rect(NULL, cur, GUI_WHITE);
+}
+
+static void term_event(gui_widget_t *w, gui_event_t *evt) {
+    (void)w;
+    if (evt->type != GUI_EVENT_CHAR)
+        return;
+    unsigned char ch = (unsigned char)evt->ch;
+    if (ch == 8) /* Backspace: erase char before cursor */
+        term_putc('\b');
+    else if (ch == 27) /* ESC key typed raw */
+        return;
+    else
+        term_putc(ch);
+}
+
+void gui_app_terminal_run(void) {
+    term_reset();
+    term_write("\x1b[1;36mRusikOS ANSI Terminal\x1b[0m\r\n"
+               "\x1b[32mgreen\x1b[0m \x1b[31mred\x1b[0m \x1b[33myellow\x1b[0m "
+               "\x1b[34mblue\x1b[0m \x1b[35mmagenta\x1b[0m \x1b[36mcyan\x1b[0m\r\n"
+               "\x1b[1mbold text\x1b[0m\r\n\r\n"
+               "Type here \x1b[7m(reverse)\x1b[0m. Enter, Tab and Backspace work.\r\n");
+    gui_window_t *win = gui_window_create("Terminal", 320, 40, TERM_COLS * TERM_CW + 16,
+                                          24 + TERM_ROWS * TERM_CH + 16, GUI_WINDOW_BG);
+    if (!win)
+        return;
+    gui_add_window(win);
+    gui_window_bring_to_front(win);
+    gui_rect_t wr = gui_window_get_rect(win);
+    gui_rect_t wrect = {wr.x + 8, wr.y + 24 + 8, TERM_COLS * TERM_CW, TERM_ROWS * TERM_CH};
+    gui_widget_t *cw = gui_widget_create(wrect);
+    if (!cw)
+        return;
+    cw->draw = term_draw;
+    cw->on_event = term_event;
+    gui_window_add_widget(win, cw);
+    gui_window_set_focused_widget(win, cw);
+}
+
 /* 7. Minesweeper */
 void gui_app_minesweeper_run(void) {
     gui_window_t *win = gui_window_create("Minesweeper", 200, 150, 220, 260, GUI_LIGHT_GRAY);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int rows = 8, cols = 8, cell = 24;
     gui_window_draw_text(win, 15, 10, "Minesweeper (click)", GUI_TEXT_FG, GUI_LIGHT_GRAY);
     for (int r = 0; r < rows; r++) {
         for (int c = 0; c < cols; c++) {
-            gui_rect_t cr = {15 + c*cell, 30 + r*cell, cell, cell};
+            gui_rect_t cr = {15 + c * cell, 30 + r * cell, cell, cell};
             gui_window_draw_rect(win, cr, GUI_BUTTON_BG);
             gui_window_draw_rect_outline(win, cr, GUI_DARK_GRAY, 1);
         }
@@ -981,20 +1398,21 @@ void gui_app_minesweeper_run(void) {
 /* 8. Snake Game */
 void gui_app_snake_run(void) {
     gui_window_t *win = gui_window_create("Snake", 250, 100, 260, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cell = 12, cols = 20, rows = 22;
     /* Draw grid */
     for (int r = 0; r < rows; r++) {
         for (int c = 0; c < cols; c++) {
-            gui_rect_t cr = {10 + c*cell, 20 + r*cell, cell-1, cell-1};
-            gui_window_draw_rect(win, cr, GUI_COLOR(0,20,0));
+            gui_rect_t cr = {10 + c * cell, 20 + r * cell, cell - 1, cell - 1};
+            gui_window_draw_rect(win, cr, GUI_COLOR(0, 20, 0));
         }
     }
     /* Draw snake */
-    int segs[][2] = {{5,10},{4,10},{3,10}};
+    int segs[][2] = {{5, 10}, {4, 10}, {3, 10}};
     for (int i = 0; i < 3; i++) {
-        gui_rect_t sr = {10 + segs[i][0]*cell, 20 + segs[i][1]*cell, cell-1, cell-1};
+        gui_rect_t sr = {10 + segs[i][0] * cell, 20 + segs[i][1] * cell, cell - 1, cell - 1};
         gui_window_draw_rect(win, sr, GUI_GREEN);
     }
     gui_window_draw_text(win, 30, 10, "Snake (3 pts)", GUI_GREEN, GUI_BLACK);
@@ -1003,29 +1421,31 @@ void gui_app_snake_run(void) {
 /* 9. Tetris */
 void gui_app_tetris_run(void) {
     gui_window_t *win = gui_window_create("Tetris", 300, 100, 200, 380, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cell = 18, cols = 10, rows = 18;
     for (int r = 0; r < rows; r++) {
         for (int c = 0; c < cols; c++) {
-            gui_rect_t cr = {10 + c*cell, 10 + r*cell, cell-1, cell-1};
-            gui_window_draw_rect(win, cr, GUI_COLOR(10,10,20));
-            gui_window_draw_rect_outline(win, cr, GUI_COLOR(30,30,40), 1);
+            gui_rect_t cr = {10 + c * cell, 10 + r * cell, cell - 1, cell - 1};
+            gui_window_draw_rect(win, cr, GUI_COLOR(10, 10, 20));
+            gui_window_draw_rect_outline(win, cr, GUI_COLOR(30, 30, 40), 1);
         }
     }
     /* Draw a T-piece falling */
-    int tp[4][2] = {{4,0},{5,0},{6,0},{5,1}};
+    int tp[4][2] = {{4, 0}, {5, 0}, {6, 0}, {5, 1}};
     for (int i = 0; i < 4; i++) {
-        gui_rect_t tr = {10 + tp[i][0]*cell, 10 + tp[i][1]*cell, cell-1, cell-1};
-        gui_window_draw_rect(win, tr, GUI_COLOR(200,0,200));
+        gui_rect_t tr = {10 + tp[i][0] * cell, 10 + tp[i][1] * cell, cell - 1, cell - 1};
+        gui_window_draw_rect(win, tr, GUI_COLOR(200, 0, 200));
     }
-    gui_window_draw_text(win, 10, 360, "Tetris", GUI_COLOR(200,0,200), GUI_BLACK);
+    gui_window_draw_text(win, 10, 360, "Tetris", GUI_COLOR(200, 0, 200), GUI_BLACK);
 }
 
 /* 10. Lissajous Curves */
 void gui_app_lissajous_run(void) {
     gui_window_t *win = gui_window_create("Lissajous", 200, 100, 400, 400, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cx = 200, cy = 200, a = 80, b = 80;
     int hz_a = 3, hz_b = 4;
@@ -1041,7 +1461,8 @@ void gui_app_lissajous_run(void) {
 /* 11. Starfield */
 void gui_app_starfield_run(void) {
     gui_window_t *win = gui_window_create("Starfield", 50, 50, 400, 320, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     /* Precomputed stars */
     int stars[50][3];
@@ -1061,15 +1482,18 @@ void gui_app_starfield_run(void) {
 /* 12. Fire Effect */
 void gui_app_fire_run(void) {
     gui_window_t *win = gui_window_create("Fire Effect", 150, 100, 320, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int w = 300, h = 260;
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             int heat = (h - y) * 255 / h;
-            if (heat > 255) heat = 255;
+            if (heat > 255)
+                heat = 255;
             int r = heat, g = (heat * 3 / 4), b = (heat / 3);
-            if (g > 255) g = 255;
+            if (g > 255)
+                g = 255;
             vga_put_pixel(10 + x, 30 + y, GUI_COLOR(r < 255 ? r : 255, g, b > 255 ? 255 : b));
         }
     }
@@ -1079,7 +1503,8 @@ void gui_app_fire_run(void) {
 /* 13. Plasma Effect */
 void gui_app_plasma_run(void) {
     gui_window_t *win = gui_window_create("Plasma", 100, 100, 400, 320, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int w = 380, h = 280, t = 0;
     for (int y = 0; y < h; y++) {
@@ -1098,14 +1523,15 @@ void gui_app_plasma_run(void) {
 /* 14. Particle System */
 void gui_app_particles_run(void) {
     gui_window_t *win = gui_window_create("Particles", 100, 100, 300, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int pts[30][4];
     for (int i = 0; i < 30; i++) {
-        pts[i][0] = 150 + (i * 23 % 100) - 50;   /* x */
-        pts[i][1] = 140 + (i * 17 % 100) - 50;   /* y */
-        pts[i][2] = (i * 7) % 6 - 3;             /* vx */
-        pts[i][3] = (i * 11) % 6 - 3;            /* vy */
+        pts[i][0] = 150 + (i * 23 % 100) - 50; /* x */
+        pts[i][1] = 140 + (i * 17 % 100) - 50; /* y */
+        pts[i][2] = (i * 7) % 6 - 3;           /* vx */
+        pts[i][3] = (i * 11) % 6 - 3;          /* vy */
     }
     for (int i = 0; i < 30; i++) {
         gui_draw_circle_filled(pts[i][0], pts[i][1], 3, gui_color_random());
@@ -1116,16 +1542,18 @@ void gui_app_particles_run(void) {
 /* 15. Sort Visualization */
 void gui_app_sort_viz_run(void) {
     gui_window_t *win = gui_window_create("Sort Viz", 150, 100, 400, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int w = 380, n = 40, bar_w = w / n;
     int vals[40];
-    for (int i = 0; i < n; i++) vals[i] = (i * 17 + 5) % 200;
+    for (int i = 0; i < n; i++)
+        vals[i] = (i * 17 + 5) % 200;
     /* Draw bars */
     for (int i = 0; i < n; i++) {
         int bh = vals[i];
         gui_color_t c = gui_color_from_hsv(i * 9, 200, 150 + bh / 4);
-        gui_rect_t bar = {10 + i*bar_w, 270 - bh, bar_w - 1, (uint32_t)bh};
+        gui_rect_t bar = {10 + i * bar_w, 270 - bh, bar_w - 1, (uint32_t)bh};
         gui_window_draw_rect(win, bar, c);
     }
     gui_window_draw_text(win, 100, 10, "Sorting Visualization (unsorted)", GUI_WHITE, GUI_BLACK);
@@ -1134,13 +1562,15 @@ void gui_app_sort_viz_run(void) {
 /* 16. Wave Visualizer */
 void gui_app_wave_run(void) {
     gui_window_t *win = gui_window_create("Wave", 100, 100, 420, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int prev_y = 0;
     for (int x = 0; x < 400; x++) {
         int deg = x * 360 / 100;
         int y = 140 + (100 * __isin(deg) / 100) + (50 * __isin(deg * 3 + 30) / 100);
-        if (x > 0) gui_draw_line(10 + x - 1, 30 + prev_y, 10 + x, 30 + y, GUI_CYAN);
+        if (x > 0)
+            gui_draw_line(10 + x - 1, 30 + prev_y, 10 + x, 30 + y, GUI_CYAN);
         prev_y = y;
     }
     gui_window_draw_text(win, 100, 10, "Wave (composite sine)", GUI_CYAN, GUI_BLACK);
@@ -1149,7 +1579,8 @@ void gui_app_wave_run(void) {
 /* 17. Value Noise */
 void gui_app_noise_run(void) {
     gui_window_t *win = gui_window_create("Value Noise", 100, 100, 300, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int ns = 42;
     for (int y = 0; y < 256; y++) {
@@ -1166,20 +1597,24 @@ void gui_app_noise_run(void) {
 /* 18. Heatmap */
 void gui_app_heatmap_run(void) {
     gui_window_t *win = gui_window_create("Heatmap", 200, 100, 400, 320, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int w = 360, h = 280;
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
-            float dx = (float)(x - w/2) / (float)(w/3);
-            float dy = (float)(y - h/2) / (float)(h/3);
-            float v = 1.0f / (1.0f + dx*dx + dy*dy);
+            float dx = (float)(x - w / 2) / (float)(w / 3);
+            float dy = (float)(y - h / 2) / (float)(h / 3);
+            float v = 1.0f / (1.0f + dx * dx + dy * dy);
             int r = (int)(v * 255.0f);
             int g2 = (int)(v * 200.0f);
             int b = (int)(v * 100.0f);
-            if (r > 255) r = 255;
-            if (g2 > 255) g2 = 255;
-            if (b > 255) b = 255;
+            if (r > 255)
+                r = 255;
+            if (g2 > 255)
+                g2 = 255;
+            if (b > 255)
+                b = 255;
             vga_put_pixel(20 + x, 30 + y, GUI_COLOR(r, g2, b));
         }
     }
@@ -1188,7 +1623,8 @@ void gui_app_heatmap_run(void) {
 
 /* 19. Fractal Tree */
 static void __draw_branch(int32_t x, int32_t y, int len, int angle, int depth) {
-    if (depth <= 0 || len < 2) return;
+    if (depth <= 0 || len < 2)
+        return;
     int ex = x + len * __icos(angle) / 100;
     int ey = y + len * __isin(angle) / 100;
     gui_color_t c = GUI_COLOR(100 + depth * 30, 180 - depth * 20, 50);
@@ -1198,7 +1634,8 @@ static void __draw_branch(int32_t x, int32_t y, int len, int angle, int depth) {
 }
 void gui_app_fractal_tree_run(void) {
     gui_window_t *win = gui_window_create("Fractal Tree", 150, 50, 300, 360, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     __draw_branch(150, 340, 80, -90, 8);
     gui_window_draw_text(win, 60, 10, "Fractal Tree (depth 8)", GUI_GREEN, GUI_BLACK);
@@ -1207,7 +1644,8 @@ void gui_app_fractal_tree_run(void) {
 /* 20. Sierpinski Triangle */
 void gui_app_sierpinski_run(void) {
     gui_window_t *win = gui_window_create("Sierpinski", 200, 100, 330, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int depth = 5;
     int pts[3][2] = {{165, 10}, {10, 280}, {320, 280}};
@@ -1227,16 +1665,21 @@ void gui_app_sierpinski_run(void) {
 /* 21. Cellular Automata (Game of Life) */
 void gui_app_cellular_run(void) {
     gui_window_t *win = gui_window_create("Game of Life", 100, 50, 320, 340, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int w = 40, h = 40, cell = 7;
     int grid[40][40] = {0};
     /* Glider */
-    grid[5][5] = 1; grid[6][6] = 1; grid[7][4] = 1; grid[7][5] = 1; grid[7][6] = 1;
+    grid[5][5] = 1;
+    grid[6][6] = 1;
+    grid[7][4] = 1;
+    grid[7][5] = 1;
+    grid[7][6] = 1;
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
-            gui_rect_t cr = {10 + x*cell, 20 + y*cell, cell-1, cell-1};
-            gui_color_t c = grid[y][x] ? GUI_GREEN : GUI_COLOR(10,10,10);
+            gui_rect_t cr = {10 + x * cell, 20 + y * cell, cell - 1, cell - 1};
+            gui_color_t c = grid[y][x] ? GUI_GREEN : GUI_COLOR(10, 10, 10);
             gui_window_draw_rect(win, cr, c);
         }
     }
@@ -1246,7 +1689,8 @@ void gui_app_cellular_run(void) {
 /* 22. Moire Pattern */
 void gui_app_moire_run(void) {
     gui_window_t *win = gui_window_create("Moire", 200, 100, 400, 340, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cx = 200, cy = 160;
     for (int r = 0; r < 160; r += 4) {
@@ -1258,7 +1702,8 @@ void gui_app_moire_run(void) {
 /* 23. Tunnel Effect */
 void gui_app_tunnel_run(void) {
     gui_window_t *win = gui_window_create("Tunnel", 100, 100, 400, 320, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cx = 200, cy = 150;
     for (int r = 160; r > 0; r -= 6) {
@@ -1271,7 +1716,8 @@ void gui_app_tunnel_run(void) {
 /* 24. Metaballs */
 void gui_app_metaballs_run(void) {
     gui_window_t *win = gui_window_create("Metaballs", 150, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int balls[3][3] = {{100, 80, 40}, {220, 120, 35}, {160, 200, 45}};
     for (int y = 0; y < 260; y++) {
@@ -1292,7 +1738,8 @@ void gui_app_metaballs_run(void) {
 /* 25. Snow Effect */
 void gui_app_snow_run(void) {
     gui_window_t *win = gui_window_create("Snowfall", 100, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int flakes[40][2];
     for (int i = 0; i < 40; i++) {
@@ -1308,7 +1755,8 @@ void gui_app_snow_run(void) {
 /* 26. Gravity Simulator */
 void gui_app_gravity_run(void) {
     gui_window_t *win = gui_window_create("Gravity", 200, 100, 320, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int px = 50, py = 50, pvx = 5, pvy = 0;
     int gx = 160, gy = 130;
@@ -1320,8 +1768,10 @@ void gui_app_gravity_run(void) {
         float acc = 500.0f / dist2;
         pvx = (int)((float)pvx + acc * dx / __isqrt((int)dist2));
         pvy = (int)((float)pvy + acc * dy / __isqrt((int)dist2));
-        px += pvx / 10; py += pvy / 10;
-        if (px < 0 || px > 300 || py < 0 || py > 280) break;
+        px += pvx / 10;
+        py += pvy / 10;
+        if (px < 0 || px > 300 || py < 0 || py > 280)
+            break;
         vga_put_pixel(10 + px, 20 + py, GUI_COLOR(200, 200, 100));
     }
     gui_draw_circle_filled(gx + 10, gy + 20, 8, GUI_YELLOW);
@@ -1331,7 +1781,8 @@ void gui_app_gravity_run(void) {
 /* 27. Rotozoom */
 void gui_app_rotozoom_run(void) {
     gui_window_t *win = gui_window_create("Rotozoom", 100, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cx = 160, cy = 130, angle = 0;
     for (int y = 0; y < 260; y++) {
@@ -1341,7 +1792,8 @@ void gui_app_rotozoom_run(void) {
             int tx = (rx * c - ry * s) / 100;
             int ty = (rx * s + ry * c) / 100;
             int hue = (tx * 3 + ty * 7) % 360;
-            if (hue < 0) hue += 360;
+            if (hue < 0)
+                hue += 360;
             vga_put_pixel(10 + x, 20 + y, gui_color_from_hsv(hue, 200, 200));
         }
     }
@@ -1352,14 +1804,16 @@ void gui_app_rotozoom_run(void) {
 /* 28. Kaleidoscope */
 void gui_app_kaleidoscope_run(void) {
     gui_window_t *win = gui_window_create("Kaleidoscope", 150, 100, 320, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cx = 160, cy = 140;
     for (int y = 0; y < 280; y++) {
         for (int x = 0; x < 300; x++) {
             int dx = x - cx, dy = y - cy;
             int ang = 0;
-            if (dx != 0) ang = (360 + (dy * 45) / dx) % 360;
+            if (dx != 0)
+                ang = (360 + (dy * 45) / dx) % 360;
             int slices = 8;
             ang = ang % (360 / slices);
             int r = __isqrt(dx * dx + dy * dy);
@@ -1373,10 +1827,12 @@ void gui_app_kaleidoscope_run(void) {
 /* 29. Following Eyes */
 void gui_app_eyes_run(void) {
     gui_window_t *win = gui_window_create("Eyes", 200, 150, 300, 200, GUI_WHITE);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cy = 100, eyes_y = 100;
-    (void)cy; (void)eyes_y;
+    (void)cy;
+    (void)eyes_y;
     gui_draw_ellipse(100, 100, 40, 50, GUI_DARK_GRAY);
     gui_draw_ellipse_filled(100, 100, 38, 48, GUI_WHITE);
     gui_draw_circle_filled(100, 100, 12, GUI_BLACK);
@@ -1391,13 +1847,14 @@ void gui_app_eyes_run(void) {
 /* 30. Audio Bars Visualizer */
 void gui_app_bars_run(void) {
     gui_window_t *win = gui_window_create("Audio Bars", 150, 100, 420, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int w = 400, n = 40, bar_w = w / n;
     for (int i = 0; i < n; i++) {
         int h = 10 + (i * 23 + (i * i) % 50) % 200;
         gui_color_t c = gui_color_from_hsv(i * 9, 200, 150 + h / 4);
-        gui_rect_t r = {10 + i*bar_w, 270 - h, bar_w - 1, (uint32_t)h};
+        gui_rect_t r = {10 + i * bar_w, 270 - h, bar_w - 1, (uint32_t)h};
         gui_window_draw_rect(win, r, c);
     }
     gui_window_draw_text(win, 100, 10, "Audio Spectrum (simulated)", GUI_WHITE, GUI_BLACK);
@@ -1406,13 +1863,17 @@ void gui_app_bars_run(void) {
 /* 31. Bouncing Ball */
 void gui_app_bouncing_ball_run(void) {
     gui_window_t *win = gui_window_create("Bouncing Ball", 150, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int bx = 50, by = 50, bvx = 5, bvy = 4, r = 12;
     for (int i = 0; i < 200; i++) {
-        bx += bvx; by += bvy;
-        if (bx < r || bx > 300 - r) bvx = -bvx;
-        if (by < r || by > 260 - r) bvy = -bvy;
+        bx += bvx;
+        by += bvy;
+        if (bx < r || bx > 300 - r)
+            bvx = -bvx;
+        if (by < r || by > 260 - r)
+            bvy = -bvy;
         gui_draw_circle_filled(10 + bx, 20 + by, r, gui_color_from_hsv(i * 7 % 360, 200, 200));
     }
     gui_window_draw_text(win, 60, 10, "Bouncing Ball (trail)", GUI_WHITE, GUI_BLACK);
@@ -1421,7 +1882,8 @@ void gui_app_bouncing_ball_run(void) {
 /* 32. Color Spiral */
 void gui_app_spiral_run(void) {
     gui_window_t *win = gui_window_create("Color Spiral", 200, 100, 320, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cx = 160, cy = 140;
     for (int i = 0; i < 2000; i++) {
@@ -1437,13 +1899,14 @@ void gui_app_spiral_run(void) {
 /* 33. Bar Chart */
 void gui_app_chart_bar_run(void) {
     gui_window_t *win = gui_window_create("Bar Chart", 100, 100, 360, 300, GUI_WHITE);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int data[] = {45, 78, 32, 90, 55, 67, 82, 40, 73, 60};
-    int n = sizeof(data)/sizeof(data[0]), bw = 28, gap = 6;
+    int n = sizeof(data) / sizeof(data[0]), bw = 28, gap = 6;
     for (int i = 0; i < n; i++) {
         int h = data[i] * 2;
-        gui_rect_t r = {20 + i*(bw+gap), 250 - h, bw, (uint32_t)h};
+        gui_rect_t r = {20 + i * (bw + gap), 250 - h, bw, (uint32_t)h};
         gui_window_draw_rect(win, r, gui_color_from_hsv(i * 36, 200, 200));
         gui_window_draw_rect_outline(win, r, GUI_DARK_GRAY, 1);
     }
@@ -1456,35 +1919,38 @@ void gui_app_chart_bar_run(void) {
 /* 34. Line Chart */
 void gui_app_chart_line_run(void) {
     gui_window_t *win = gui_window_create("Line Chart", 100, 100, 360, 300, GUI_WHITE);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int data[] = {30, 60, 45, 80, 55, 70, 90, 65, 75, 85, 50, 95};
-    int n = sizeof(data)/sizeof(data[0]), step = 28;
+    int n = sizeof(data) / sizeof(data[0]), step = 28;
     /* Grid */
     for (int i = 0; i <= 5; i++) {
         int gy = 30 + i * 44;
-        gui_draw_dashed_line(20, gy, 20 + (n-1)*step, gy, GUI_LIGHT_GRAY, 4, 4);
+        gui_draw_dashed_line(20, gy, 20 + (n - 1) * step, gy, GUI_LIGHT_GRAY, 4, 4);
     }
     /* Data line */
-    for (int i = 0; i < n-1; i++) {
-        int x1 = 20 + i*step, y1 = 250 - data[i]*2;
-        int x2 = 20 + (i+1)*step, y2 = 250 - data[i+1]*2;
+    for (int i = 0; i < n - 1; i++) {
+        int x1 = 20 + i * step, y1 = 250 - data[i] * 2;
+        int x2 = 20 + (i + 1) * step, y2 = 250 - data[i + 1] * 2;
         gui_draw_line(x1, y1, x2, y2, GUI_BLUE);
         gui_draw_circle_filled(x1, y1, 3, GUI_RED);
     }
-    gui_draw_circle_filled(20 + (n-1)*step, 250 - data[n-1]*2, 3, GUI_RED);
+    gui_draw_circle_filled(20 + (n - 1) * step, 250 - data[n - 1] * 2, 3, GUI_RED);
     gui_window_draw_text(win, 100, 10, "Line Chart", GUI_TEXT_FG, GUI_WHITE);
 }
 
 /* 35. Pie Chart */
 void gui_app_chart_pie_run(void) {
     gui_window_t *win = gui_window_create("Pie Chart", 200, 150, 300, 280, GUI_WHITE);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int data[] = {30, 20, 25, 15, 10};
-    int n = sizeof(data)/sizeof(data[0]), cx = 120, cy = 140, r = 80;
+    int n = sizeof(data) / sizeof(data[0]), cx = 120, cy = 140, r = 80;
     int total = 0, start = 0;
-    for (int i = 0; i < n; i++) total += data[i];
+    for (int i = 0; i < n; i++)
+        total += data[i];
     for (int i = 0; i < n; i++) {
         int sweep = data[i] * 360 / total;
         gui_color_t c = gui_color_from_hsv(i * 72, 200, 200);
@@ -1492,7 +1958,8 @@ void gui_app_chart_pie_run(void) {
         int mid = start + sweep / 2;
         int lx = cx + (r + 15) * __icos(mid) / 100;
         int ly = cy + (r + 15) * __isin(mid) / 100;
-        char lbl[8]; snprintf(lbl, sizeof(lbl), "%d%%", data[i] * 100 / total);
+        char lbl[8];
+        snprintf(lbl, sizeof(lbl), "%d%%", data[i] * 100 / total);
         gui_window_draw_text(win, lx - 8, ly - 4, lbl, GUI_TEXT_FG, GUI_WHITE);
         start += sweep;
     }
@@ -1503,14 +1970,16 @@ void gui_app_chart_pie_run(void) {
 /* 36. Typography Demo */
 void gui_app_typography_run(void) {
     gui_window_t *win = gui_window_create("Typography", 150, 100, 320, 300, GUI_WHITE);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     gui_window_draw_text(win, 20, 20, "ABCDEFGHIJKLM", GUI_RED, GUI_WHITE);
     gui_window_draw_text(win, 20, 40, "NOPQRSTUVWXYZ", GUI_BLUE, GUI_WHITE);
     gui_window_draw_text(win, 20, 60, "abcdefghijklm", GUI_GREEN, GUI_WHITE);
     gui_window_draw_text(win, 20, 80, "nopqrstuvwxyz", GUI_CYAN, GUI_WHITE);
     gui_window_draw_text(win, 20, 100, "0123456789", GUI_DARK_GRAY, GUI_WHITE);
-    gui_window_draw_text(win, 20, 120, "!@#$%^&*()_+-=[]{}|;:,.<>?", GUI_COLOR(128,0,128), GUI_WHITE);
+    gui_window_draw_text(win, 20, 120, "!@#$%^&*()_+-=[]{}|;:,.<>?", GUI_COLOR(128, 0, 128),
+                         GUI_WHITE);
     gui_window_draw_text(win, 20, 160, "Color contrast demo:", GUI_TEXT_FG, GUI_WHITE);
     gui_window_draw_text(win, 20, 180, "White on blue", GUI_WHITE, GUI_TITLE_BG);
     gui_window_draw_text(win, 20, 200, "Black on yellow", GUI_BLACK, GUI_YELLOW);
@@ -1527,7 +1996,8 @@ void gui_app_typography_run(void) {
 /* 37. Flood Fill Demo */
 void gui_app_flood_fill_run(void) {
     gui_window_t *win = gui_window_create("Flood Fill", 200, 100, 320, 300, GUI_WHITE);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     /* Draw a bounded shape, then fill it */
     gui_draw_circle(100, 100, 50, GUI_BLUE);
@@ -1540,17 +2010,20 @@ void gui_app_flood_fill_run(void) {
 /* 38. Wave Interference */
 void gui_app_wave_interference_run(void) {
     gui_window_t *win = gui_window_create("Interference", 100, 100, 400, 320, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cx1 = 100, cx2 = 300;
     for (int y = 0; y < 280; y++) {
         for (int x = 0; x < 380; x++) {
-            int d1 = __isqrt((x-cx1)*(x-cx1) + y*y);
-            int d2 = __isqrt((x-cx2)*(x-cx2) + y*y);
+            int d1 = __isqrt((x - cx1) * (x - cx1) + y * y);
+            int d2 = __isqrt((x - cx2) * (x - cx2) + y * y);
             int v = (__isin(d1 * 4) + __isin(d2 * 4)) / 2;
             int val = (v + 100) * 128 / 200;
-            if (val > 255) val = 255;
-            if (val < 0) val = 0;
+            if (val > 255)
+                val = 255;
+            if (val < 0)
+                val = 0;
             vga_put_pixel(10 + x, 20 + y, GUI_COLOR(0, val, val));
         }
     }
@@ -1560,7 +2033,8 @@ void gui_app_wave_interference_run(void) {
 /* 39. Dual Timezone Clock */
 void gui_app_clock_dual_run(void) {
     gui_window_t *win = gui_window_create("Dual Clock", 300, 200, 240, 160, GUI_WHITE);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     gui_window_draw_text(win, 10, 10, "Local Time (UTC+0)", GUI_DARK_GRAY, GUI_WHITE);
     gui_window_draw_text(win, 10, 30, "00:00:00", GUI_BLUE, GUI_WHITE);
@@ -1572,18 +2046,20 @@ void gui_app_clock_dual_run(void) {
 /* 40. Heartbeat Monitor */
 void gui_app_heartbeat_run(void) {
     gui_window_t *win = gui_window_create("Heartbeat", 200, 150, 400, 250, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     /* Draw ECG-style line */
-    int pts[] = {0, 0, 20, 0, 40, 0, 50, -60, 55, 80, 60, -40, 65, 20, 70, 0,
-                 90, 0, 110, 0, 120, -40, 125, 50, 130, -30, 135, 10, 140, 0,
-                 160, 0, 180, 0, 190, -50, 195, 70, 200, -35, 205, 15, 210, 0};
-    int n = sizeof(pts)/sizeof(pts[0]) / 2;
+    int pts[] = {0,   0,  20,  0,   40,  0,   50,  -60, 55,  80,  60,  -40, 65,  20,  70,
+                 0,   90, 0,   110, 0,   120, -40, 125, 50,  130, -30, 135, 10,  140, 0,
+                 160, 0,  180, 0,   190, -50, 195, 70,  200, -35, 205, 15,  210, 0};
+    int n = sizeof(pts) / sizeof(pts[0]) / 2;
     int prev_x = 0, prev_y = 100;
     for (int i = 0; i < n; i++) {
-        int nx = 30 + pts[i*2] * 2, ny = 150 - (50 + pts[i*2+1]);
+        int nx = 30 + pts[i * 2] * 2, ny = 150 - (50 + pts[i * 2 + 1]);
         gui_draw_line(prev_x, prev_y, nx, ny, GUI_GREEN);
-        prev_x = nx; prev_y = ny;
+        prev_x = nx;
+        prev_y = ny;
     }
     gui_window_draw_text(win, 100, 10, "Heartbeat Monitor", GUI_RED, GUI_BLACK);
     gui_window_draw_text(win, 120, 220, "BPM: 72", GUI_GREEN, GUI_BLACK);
@@ -1601,11 +2077,17 @@ static int __icos(int deg) {
     int low = table[idx], high = table[idx + 1 < 13 ? idx + 1 : 0];
     return low + (high - low) * frac / 360;
 }
-static int __isin(int deg) { return __icos(deg - 90); }
+static int __isin(int deg) {
+    return __icos(deg - 90);
+}
 static int __isqrt(int n) {
-    if (n <= 0) return 0;
+    if (n <= 0)
+        return 0;
     int x = n, y = (x + 1) / 2;
-    while (y < x) { x = y; y = (x + n / x) / 2; }
+    while (y < x) {
+        x = y;
+        y = (x + n / x) / 2;
+    }
     return x;
 }
 
@@ -1617,13 +2099,15 @@ static int __isqrt(int n) {
 /* 1. Text Editor */
 void gui_app_text_editor_run(void) {
     gui_window_t *win = gui_window_create("Text Editor", 50, 50, 500, 400, GUI_WHITE);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     gui_window_draw_text(win, 10, 10, "Simple Text Editor (type to edit)", GUI_BLUE, GUI_WHITE);
     gui_rect_t er = {10, 30, 480, 360};
     gui_widget_t *te = gui_textedit_create(er);
     if (te) {
-        gui_textedit_set_text(te, "Welcome to the OS text editor!\nType here to edit.\nESC = close editor window.");
+        gui_textedit_set_text(
+            te, "Welcome to the OS text editor!\nType here to edit.\nESC = close editor window.");
         gui_window_add_widget(win, te);
     }
 }
@@ -1631,14 +2115,16 @@ void gui_app_text_editor_run(void) {
 /* 2. 3D Cube (wireframe projection) */
 void gui_app_cube_3d_run(void) {
     gui_window_t *win = gui_window_create("3D Cube", 100, 100, 320, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cx = 160, cy = 140, s = 60;
     int angle = 25;
     int c = __icos(angle), sn = __isin(angle);
     /* Simple 3D projection */
     int verts[8][2];
-    int cv[8][3] = {{-s,-s,-s},{s,-s,-s},{s,s,-s},{-s,s,-s},{-s,-s,s},{s,-s,s},{s,s,s},{-s,s,s}};
+    int cv[8][3] = {{-s, -s, -s}, {s, -s, -s}, {s, s, -s}, {-s, s, -s},
+                    {-s, -s, s},  {s, -s, s},  {s, s, s},  {-s, s, s}};
     for (int i = 0; i < 8; i++) {
         int x2d = cv[i][0];
         int y2d = cv[i][1] * c / 100 - cv[i][2] * sn / 100;
@@ -1646,19 +2132,23 @@ void gui_app_cube_3d_run(void) {
         verts[i][0] = cx + x2d + z2d / 3;
         verts[i][1] = cy + y2d;
     }
-    int edges[12][2] = {{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
+    int edges[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
+                        {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
     for (int i = 0; i < 12; i++) {
-        gui_draw_line(verts[edges[i][0]][0], verts[edges[i][0]][1],
-                      verts[edges[i][1]][0], verts[edges[i][1]][1], GUI_CYAN);
+        gui_draw_line(verts[edges[i][0]][0], verts[edges[i][0]][1], verts[edges[i][1]][0],
+                      verts[edges[i][1]][1], GUI_CYAN);
     }
     gui_window_draw_text(win, 80, 10, "3D Wireframe Cube", GUI_CYAN, GUI_BLACK);
-    (void)c; (void)sn; (void)angle;
+    (void)c;
+    (void)sn;
+    (void)angle;
 }
 
 /* 3. Julia Set */
 void gui_app_julia_run(void) {
     gui_window_t *win = gui_window_create("Julia Set", 100, 50, 400, 340, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     for (int py = 0; py < 320; py++) {
         for (int px = 0; px < 380; px++) {
@@ -1666,9 +2156,11 @@ void gui_app_julia_run(void) {
             float y = (float)py / 160.0f - 1.0f;
             float cx = -0.7f, cy = 0.27f;
             int iter = 0;
-            while (x*x + y*y < 4.0f && iter < 64) {
-                float xt = x*x - y*y + cx;
-                y = 2*x*y + cy; x = xt; iter++;
+            while (x * x + y * y < 4.0f && iter < 64) {
+                float xt = x * x - y * y + cx;
+                y = 2 * x * y + cy;
+                x = xt;
+                iter++;
             }
             gui_color_t c = iter >= 64 ? GUI_BLACK : gui_color_from_hsv(iter * 8 % 360, 200, 200);
             vga_put_pixel(10 + px, 20 + py, c);
@@ -1680,7 +2172,8 @@ void gui_app_julia_run(void) {
 /* 4. Lorenz Attractor */
 void gui_app_lorenz_run(void) {
     gui_window_t *win = gui_window_create("Lorenz Attractor", 150, 50, 320, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     float x = 0.1f, y = 0, z = 0;
     float dt = 0.01f, sigma = 10, rho = 28, beta = 2.667f;
@@ -1689,7 +2182,9 @@ void gui_app_lorenz_run(void) {
         float dx = sigma * (y - x);
         float dy = x * (rho - z) - y;
         float dz = x * y - beta * z;
-        x += dx * dt; y += dy * dt; z += dz * dt;
+        x += dx * dt;
+        y += dy * dt;
+        z += dz * dt;
         if (i > 100) {
             int px = 160 + (int)(x * 4), py = 140 + (int)(z * 4);
             if (px >= 0 && px < 300 && py >= 0 && py < 280) {
@@ -1697,16 +2192,21 @@ void gui_app_lorenz_run(void) {
                 vga_put_pixel(10 + px, 20 + py, c);
             }
         }
-        sx = x; sy = y; sz = z;
+        sx = x;
+        sy = y;
+        sz = z;
     }
     gui_window_draw_text(win, 60, 10, "Lorenz Attractor", GUI_WHITE, GUI_BLACK);
-    (void)sx; (void)sy; (void)sz;
+    (void)sx;
+    (void)sy;
+    (void)sz;
 }
 
 /* 5. Double Pendulum (trajectory) */
 void gui_app_pendulum_run(void) {
     gui_window_t *win = gui_window_create("Pendulum", 200, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     /* Draw a double pendulum configuration */
     int x1 = 160, y1 = 40, len1 = 60, len2 = 50;
@@ -1720,13 +2220,15 @@ void gui_app_pendulum_run(void) {
     gui_draw_circle_filled(x2, y2, 5, GUI_WHITE);
     gui_draw_circle_filled(x3, y3, 7, GUI_RED);
     gui_window_draw_text(win, 60, 10, "Double Pendulum", GUI_WHITE, GUI_BLACK);
-    (void)a1; (void)a2;
+    (void)a1;
+    (void)a2;
 }
 
 /* 6. Fourier Series Viz */
 void gui_app_fourier_run(void) {
     gui_window_t *win = gui_window_create("Fourier Series", 100, 100, 400, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int prev = 0;
     for (int x = 0; x < 380; x++) {
@@ -1736,7 +2238,8 @@ void gui_app_fourier_run(void) {
             val += (4.0f / (n * 3.14159f)) * (float)__isin((int)((float)n * t * 57.3f)) / 100.0f;
         }
         int y = 140 - (int)(val * 60);
-        if (x > 0) gui_draw_line(9 + x, 20 + prev, 10 + x, 20 + y, GUI_CYAN);
+        if (x > 0)
+            gui_draw_line(9 + x, 20 + prev, 10 + x, 20 + y, GUI_CYAN);
         prev = y;
     }
     (void)prev;
@@ -1746,22 +2249,25 @@ void gui_app_fourier_run(void) {
 /* 7. Wave Equation */
 void gui_app_wave_eq_run(void) {
     gui_window_t *win = gui_window_create("Wave Equation", 100, 100, 420, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int n = 100;
     float u[100], u_prev[100], u_next[100];
-    memset(u, 0, sizeof(u)); memset(u_prev, 0, sizeof(u_prev));
+    memset(u, 0, sizeof(u));
+    memset(u_prev, 0, sizeof(u_prev));
     u[40] = u[41] = u[42] = u[43] = u[44] = 1.0f;
     for (int step = 0; step < 100; step++) {
-        for (int i = 1; i < n-1; i++)
-            u_next[i] = 2 * u[i] - u_prev[i] + 0.5f * (u[i+1] - 2*u[i] + u[i-1]);
-        memcpy(u_prev, u, sizeof(float)*n);
-        memcpy(u, u_next, sizeof(float)*n);
+        for (int i = 1; i < n - 1; i++)
+            u_next[i] = 2 * u[i] - u_prev[i] + 0.5f * (u[i + 1] - 2 * u[i] + u[i - 1]);
+        memcpy(u_prev, u, sizeof(float) * n);
+        memcpy(u, u_next, sizeof(float) * n);
     }
     int prev_y = 0;
     for (int i = 0; i < n; i++) {
         int py = 150 - (int)(u[i] * 80);
-        if (i > 0) gui_draw_line(10 + (i-1)*4, 20 + prev_y, 10 + i*4, 20 + py, GUI_YELLOW);
+        if (i > 0)
+            gui_draw_line(10 + (i - 1) * 4, 20 + prev_y, 10 + i * 4, 20 + py, GUI_YELLOW);
         prev_y = py;
     }
     gui_window_draw_text(win, 100, 10, "Wave Equation (100 steps)", GUI_YELLOW, GUI_BLACK);
@@ -1770,7 +2276,8 @@ void gui_app_wave_eq_run(void) {
 /* 8. Reaction-Diffusion */
 void gui_app_reaction_diff_run(void) {
     gui_window_t *win = gui_window_create("Reaction-Diffusion", 100, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int w = 300, h = 260;
     for (int y = 0; y < h; y++)
@@ -1778,9 +2285,11 @@ void gui_app_reaction_diff_run(void) {
             float v = 0.5f + 0.5f * (float)__isin(x * 23 + y * 37) / 100.0f;
             v = (v + 0.5f * (float)__isin(x * 7 - y * 13) / 100.0f);
             int val = (int)(v * 255);
-            if (val > 255) val = 255;
-            if (val < 0) val = 0;
-            vga_put_pixel(10 + x, 20 + y, GUI_COLOR(val, val/2, val/3));
+            if (val > 255)
+                val = 255;
+            if (val < 0)
+                val = 0;
+            vga_put_pixel(10 + x, 20 + y, GUI_COLOR(val, val / 2, val / 3));
         }
     gui_window_draw_text(win, 40, 10, "Reaction-Diffusion Pattern", GUI_WHITE, GUI_BLACK);
 }
@@ -1788,18 +2297,22 @@ void gui_app_reaction_diff_run(void) {
 /* 9. Rule 30 Cellular Automata */
 void gui_app_cellular2_run(void) {
     gui_window_t *win = gui_window_create("Rule 30", 100, 50, 400, 340, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int w = 200, h = 160;
-    int grid[200] = {0}; grid[w/2] = 1;
+    int grid[200] = {0};
+    grid[w / 2] = 1;
     for (int row = 0; row < h; row++) {
         for (int col = 0; col < w; col++) {
-            if (grid[col]) vga_put_pixel(10 + col*2, 20 + row*2, GUI_WHITE);
-            vga_put_pixel(10 + col*2, 20 + row*2, grid[col] ? GUI_WHITE : GUI_COLOR(10,10,10));
+            if (grid[col])
+                vga_put_pixel(10 + col * 2, 20 + row * 2, GUI_WHITE);
+            vga_put_pixel(10 + col * 2, 20 + row * 2,
+                          grid[col] ? GUI_WHITE : GUI_COLOR(10, 10, 10));
         }
         int next[200] = {0};
-        for (int col = 1; col < w-1; col++) {
-            int pat = (grid[col-1] << 2) | (grid[col] << 1) | grid[col+1];
+        for (int col = 1; col < w - 1; col++) {
+            int pat = (grid[col - 1] << 2) | (grid[col] << 1) | grid[col + 1];
             next[col] = (pat == 1 || pat == 2 || pat == 3 || pat == 4) ? 1 : 0;
         }
         memcpy(grid, next, sizeof(grid));
@@ -1810,14 +2323,15 @@ void gui_app_cellular2_run(void) {
 /* 10. Maze Generation (DFS) */
 void gui_app_maze_gen_run(void) {
     gui_window_t *win = gui_window_create("Maze Generation", 100, 50, 340, 340, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int rows = 16, cols = 16, cell = 18;
     for (int r = 0; r < rows; r++)
         for (int c = 0; c < cols; c++) {
-            gui_rect_t cr = {10 + c*cell, 20 + r*cell, cell-1, cell-1};
-            gui_window_draw_rect(win, cr, GUI_COLOR(20,20,30));
-            gui_window_draw_rect_outline(win, cr, GUI_COLOR(40,40,60), 1);
+            gui_rect_t cr = {10 + c * cell, 20 + r * cell, cell - 1, cell - 1};
+            gui_window_draw_rect(win, cr, GUI_COLOR(20, 20, 30));
+            gui_window_draw_rect_outline(win, cr, GUI_COLOR(40, 40, 60), 1);
         }
     gui_window_draw_text(win, 60, 10, "Maze (DFS generated)", GUI_WHITE, GUI_BLACK);
 }
@@ -1825,19 +2339,23 @@ void gui_app_maze_gen_run(void) {
 /* 11. A* Pathfinding Viz */
 void gui_app_pathfind_run(void) {
     gui_window_t *win = gui_window_create("A* Pathfinding", 100, 50, 340, 340, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int sz = 16, cell = 18;
     for (int r = 0; r < sz; r++)
         for (int c = 0; c < sz; c++) {
-            gui_rect_t cr = {10 + c*cell, 20 + r*cell, cell-1, cell-1};
-            gui_color_t col = (r == 0 && c == 0) ? GUI_GREEN : ((r == sz-1 && c == sz-1) ? GUI_RED : GUI_COLOR(20,20,30));
+            gui_rect_t cr = {10 + c * cell, 20 + r * cell, cell - 1, cell - 1};
+            gui_color_t col =
+                (r == 0 && c == 0)
+                    ? GUI_GREEN
+                    : ((r == sz - 1 && c == sz - 1) ? GUI_RED : GUI_COLOR(20, 20, 30));
             gui_window_draw_rect(win, cr, col);
-            gui_window_draw_rect_outline(win, cr, GUI_COLOR(40,40,60), 1);
+            gui_window_draw_rect_outline(win, cr, GUI_COLOR(40, 40, 60), 1);
         }
     /* Draw a simple path */
     for (int i = 0; i < sz; i++) {
-        gui_rect_t pr = {10 + i*cell, 20 + i*cell, cell-1, cell-1};
+        gui_rect_t pr = {10 + i * cell, 20 + i * cell, cell - 1, cell - 1};
         gui_window_draw_rect(win, pr, GUI_YELLOW);
     }
     gui_window_draw_text(win, 40, 10, "A* Pathfinding", GUI_WHITE, GUI_BLACK);
@@ -1846,18 +2364,24 @@ void gui_app_pathfind_run(void) {
 /* 12. Sorting Comparison */
 void gui_app_sort_compare_run(void) {
     gui_window_t *win = gui_window_create("Sort Compare", 100, 50, 420, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int n = 30, bw = 6;
     int data1[30], data2[30];
-    for (int i = 0; i < n; i++) data1[i] = data2[i] = (i * 17 + 5) % 200;
+    for (int i = 0; i < n; i++)
+        data1[i] = data2[i] = (i * 17 + 5) % 200;
     /* Bubble sort vis */
     for (int i = 0; i < n; i++)
-        for (int j = 0; j < n-1; j++)
-            if (data1[j] > data1[j+1]) { int t = data1[j]; data1[j] = data1[j+1]; data1[j+1] = t; }
+        for (int j = 0; j < n - 1; j++)
+            if (data1[j] > data1[j + 1]) {
+                int t = data1[j];
+                data1[j] = data1[j + 1];
+                data1[j + 1] = t;
+            }
     for (int i = 0; i < n; i++) {
-        gui_rect_t r1 = {10 + i*bw, 260 - data1[i], bw-1, data1[i]};
-        gui_window_draw_rect(win, r1, gui_color_from_hsv(i * 12, 200, 150 + data1[i]/4));
+        gui_rect_t r1 = {10 + i * bw, 260 - data1[i], bw - 1, data1[i]};
+        gui_window_draw_rect(win, r1, gui_color_from_hsv(i * 12, 200, 150 + data1[i] / 4));
     }
     gui_window_draw_text(win, 10, 10, "Bubble", GUI_CYAN, GUI_BLACK);
     gui_window_draw_text(win, 210, 10, "Quick", GUI_YELLOW, GUI_BLACK);
@@ -1867,24 +2391,27 @@ void gui_app_sort_compare_run(void) {
 /* 13. Binary Tree Viz */
 void gui_app_bintree_run(void) {
     gui_window_t *win = gui_window_create("Binary Tree", 150, 50, 320, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int vals[31] = {0};
-    for (int i = 0; i < 31; i++) vals[i] = (i * 13 + 7) % 100;
+    for (int i = 0; i < 31; i++)
+        vals[i] = (i * 13 + 7) % 100;
     int depth = 4, ys = 35, xs = 140;
     for (int d = 0; d <= depth; d++) {
         int cnt = 1 << d;
         int y = 20 + d * ys;
         for (int i = 0; i < cnt; i++) {
             int idx = (1 << d) - 1 + i;
-            if (idx >= 31) break;
+            if (idx >= 31)
+                break;
             int x = xs + i * xs * 2 / (1 << d) - xs / (1 << d);
             gui_draw_circle_filled(x, y, 8, gui_color_from_hsv(vals[idx] * 7 % 360, 200, 200));
             gui_draw_circle(x, y, 8, GUI_WHITE);
             if (d < depth) {
                 int nxs = xs * 2 / (1 << d);
-                gui_draw_line(x, y + 8, x - nxs/2, y + ys - 8, GUI_DARK_GRAY);
-                gui_draw_line(x, y + 8, x + nxs/2, y + ys - 8, GUI_DARK_GRAY);
+                gui_draw_line(x, y + 8, x - nxs / 2, y + ys - 8, GUI_DARK_GRAY);
+                gui_draw_line(x, y + 8, x + nxs / 2, y + ys - 8, GUI_DARK_GRAY);
             }
         }
     }
@@ -1894,14 +2421,15 @@ void gui_app_bintree_run(void) {
 /* 14. Color Wheel */
 void gui_app_color_wheel_run(void) {
     gui_window_t *win = gui_window_create("Color Wheel", 150, 100, 340, 340, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cx = 170, cy = 170;
     for (int r = 0; r < 150; r += 2) {
         for (int a = 0; a < 360; a += 3) {
             int x = cx + r * __icos(a) / 100;
             int y = cy + r * __isin(a) / 100;
-            vga_put_pixel(x, y, gui_color_from_hsv(a, 200, 150 + r/3));
+            vga_put_pixel(x, y, gui_color_from_hsv(a, 200, 150 + r / 3));
         }
     }
     gui_window_draw_text(win, 80, 10, "HSV Color Wheel", GUI_WHITE, GUI_BLACK);
@@ -1910,14 +2438,15 @@ void gui_app_color_wheel_run(void) {
 /* 15. Floyd-Steinberg Dithering */
 void gui_app_dither_run(void) {
     gui_window_t *win = gui_window_create("Dithering", 150, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int w = 300, h = 260;
     /* Create smooth gradient */
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             float val = (float)x / (float)w;
-            int gray = (y < h/2) ? (int)(val * 255) : (x * y * 255 / (w * h));
+            int gray = (y < h / 2) ? (int)(val * 255) : (x * y * 255 / (w * h));
             int dithered = gray < 128 ? 0 : 255;
             vga_put_pixel(10 + x, 20 + y, GUI_COLOR(dithered, dithered, dithered));
         }
@@ -1928,7 +2457,8 @@ void gui_app_dither_run(void) {
 /* 16. Edge Detection */
 void gui_app_edge_run(void) {
     gui_window_t *win = gui_window_create("Edge Detection", 100, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     /* Draw some shapes then a "sobel-like" effect */
     gui_draw_circle_filled(100, 100, 40, GUI_WHITE);
@@ -1940,14 +2470,17 @@ void gui_app_edge_run(void) {
 /* 17. Spirograph */
 void gui_app_spirograph_run(void) {
     gui_window_t *win = gui_window_create("Spirograph", 150, 100, 320, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int R = 80, r = 30, d = 50;
     int cx = 160, cy = 140;
     for (int i = 0; i < 2000; i++) {
         float t = (float)i * 0.05f;
-        int x = cx + (R - r) * __icos((int)(t * 57.3f)) / 100 + d * __icos((int)((R - r) / r * t * 57.3f)) / 100;
-        int y = cy + (R - r) * __isin((int)(t * 57.3f)) / 100 - d * __isin((int)((R - r) / r * t * 57.3f)) / 100;
+        int x = cx + (R - r) * __icos((int)(t * 57.3f)) / 100 +
+                d * __icos((int)((R - r) / r * t * 57.3f)) / 100;
+        int y = cy + (R - r) * __isin((int)(t * 57.3f)) / 100 -
+                d * __isin((int)((R - r) / r * t * 57.3f)) / 100;
         vga_put_pixel(x, y, gui_color_from_hsv(i % 360, 200, 200));
     }
     gui_window_draw_text(win, 60, 10, "Spirograph", GUI_WHITE, GUI_BLACK);
@@ -1956,19 +2489,24 @@ void gui_app_spirograph_run(void) {
 /* 18. Voronoi Diagram */
 void gui_app_voronoi_run(void) {
     gui_window_t *win = gui_window_create("Voronoi", 100, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
-    int pts[8][2] = {{50,40},{270,30},{30,230},{290,250},{160,80},{150,200},{90,150},{230,140}};
+    int pts[8][2] = {{50, 40},  {270, 30},  {30, 230}, {290, 250},
+                     {160, 80}, {150, 200}, {90, 150}, {230, 140}};
     int n = 8;
     for (int y = 0; y < 260; y++) {
         for (int x = 0; x < 300; x++) {
             int min_d = 999999, mini = 0;
             for (int i = 0; i < n; i++) {
                 int dx = x - pts[i][0], dy = y - pts[i][1];
-                int d2 = dx*dx + dy*dy;
-                if (d2 < min_d) { min_d = d2; mini = i; }
+                int d2 = dx * dx + dy * dy;
+                if (d2 < min_d) {
+                    min_d = d2;
+                    mini = i;
+                }
             }
-            vga_put_pixel(10 + x, 20 + y, gui_color_from_hsv(mini * 45, 150, 150 + min_d/10));
+            vga_put_pixel(10 + x, 20 + y, gui_color_from_hsv(mini * 45, 150, 150 + min_d / 10));
         }
     }
     for (int i = 0; i < n; i++)
@@ -1979,7 +2517,8 @@ void gui_app_voronoi_run(void) {
 /* 19. Particle Fireworks */
 void gui_app_fireworks_run(void) {
     gui_window_t *win = gui_window_create("Fireworks", 100, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int bursts[5][30][3];
     for (int b = 0; b < 5; b++) {
@@ -1995,24 +2534,26 @@ void gui_app_fireworks_run(void) {
     for (int b = 0; b < 5; b++)
         for (int p = 0; p < 30; p++)
             vga_put_pixel(10 + bursts[b][p][0], 20 + bursts[b][p][1],
-                         gui_color_from_hsv(bursts[b][p][2], 200, 200));
+                          gui_color_from_hsv(bursts[b][p][2], 200, 200));
     gui_window_draw_text(win, 60, 10, "Particle Fireworks", GUI_WHITE, GUI_BLACK);
 }
 
 /* 20. Boids Flocking */
 void gui_app_boids_run(void) {
     gui_window_t *win = gui_window_create("Boids", 100, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int boids[10][4];
     for (int i = 0; i < 10; i++) {
         boids[i][0] = 30 + (i * 37) % 260;
         boids[i][1] = 30 + (i * 53) % 220;
-        boids[i][2] = 0; boids[i][3] = 0;
+        boids[i][2] = 0;
+        boids[i][3] = 0;
     }
     for (int i = 0; i < 10; i++) {
         int x = boids[i][0], y = boids[i][1];
-        gui_draw_triangle_filled(x, y, x-8, y-5, x-8, y+5, GUI_CYAN);
+        gui_draw_triangle_filled(x, y, x - 8, y - 5, x - 8, y + 5, GUI_CYAN);
     }
     gui_window_draw_text(win, 60, 10, "Boids Flocking", GUI_WHITE, GUI_BLACK);
 }
@@ -2020,13 +2561,14 @@ void gui_app_boids_run(void) {
 /* 21. Complex Plane Explorer */
 void gui_app_complex_run(void) {
     gui_window_t *win = gui_window_create("Complex Plane", 100, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     for (int y = 0; y < 260; y++) {
         for (int x = 0; x < 300; x++) {
             float re = (float)x / 150.0f - 1.0f;
             float im = (float)y / 130.0f - 1.0f;
-            float val = re*re + im*im;
+            float val = re * re + im * im;
             if (val < 4.0f) {
                 int hue = (int)(__isqrt((int)(val * 256)) * 20) % 360;
                 vga_put_pixel(10 + x, 20 + y, gui_color_from_hsv(hue, 200, 200));
@@ -2039,7 +2581,8 @@ void gui_app_complex_run(void) {
 /* 22. Screensaver */
 void gui_app_screensaver_run(void) {
     gui_window_t *win = gui_window_create("Screensaver", 100, 100, 400, 320, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int logos[8][2];
     for (int i = 0; i < 8; i++) {
@@ -2049,7 +2592,8 @@ void gui_app_screensaver_run(void) {
     for (int i = 0; i < 8; i++) {
         gui_color_t c = gui_color_from_hsv(i * 45, 200, 200);
         gui_draw_rounded_rect((gui_rect_t){logos[i][0], logos[i][1], 60, 30}, 5, c);
-        char lbl[8]; snprintf(lbl, sizeof(lbl), "OS %d", i+1);
+        char lbl[8];
+        snprintf(lbl, sizeof(lbl), "OS %d", i + 1);
         gui_window_draw_text(NULL, logos[i][0] + 8, logos[i][1] + 8, lbl, c, GUI_BLACK);
     }
     gui_window_draw_text(win, 100, 10, "Screensaver Preview (8 logos)", GUI_WHITE, GUI_BLACK);
@@ -2058,9 +2602,10 @@ void gui_app_screensaver_run(void) {
 /* 23. Biorhythm Chart */
 void gui_app_biorhythm_run(void) {
     gui_window_t *win = gui_window_create("Biorhythm", 100, 100, 380, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
-    int prev_phys=0, prev_emot=0, prev_intel=0;
+    int prev_phys = 0, prev_emot = 0, prev_intel = 0;
     int days = 30;
     for (int d = 0; d < days; d++) {
         int phys_deg = d * 360 / 23, emot_deg = d * 360 / 28, intel_deg = d * 360 / 33;
@@ -2068,11 +2613,13 @@ void gui_app_biorhythm_run(void) {
         int emot = 130 + 100 * __isin(emot_deg) / 100;
         int intel = 130 + 100 * __isin(intel_deg) / 100;
         if (d > 0) {
-            gui_draw_line(10 + (d-1)*12, 20 + prev_phys, 10 + d*12, 20 + phys, GUI_RED);
-            gui_draw_line(10 + (d-1)*12, 20 + prev_emot, 10 + d*12, 20 + emot, GUI_GREEN);
-            gui_draw_line(10 + (d-1)*12, 20 + prev_intel, 10 + d*12, 20 + intel, GUI_BLUE);
+            gui_draw_line(10 + (d - 1) * 12, 20 + prev_phys, 10 + d * 12, 20 + phys, GUI_RED);
+            gui_draw_line(10 + (d - 1) * 12, 20 + prev_emot, 10 + d * 12, 20 + emot, GUI_GREEN);
+            gui_draw_line(10 + (d - 1) * 12, 20 + prev_intel, 10 + d * 12, 20 + intel, GUI_BLUE);
         }
-        prev_phys = phys; prev_emot = emot; prev_intel = intel;
+        prev_phys = phys;
+        prev_emot = emot;
+        prev_intel = intel;
     }
     gui_window_draw_text(win, 80, 10, "Biorhythm (P/E/I)", GUI_WHITE, GUI_BLACK);
 }
@@ -2080,9 +2627,10 @@ void gui_app_biorhythm_run(void) {
 /* 24. Stopwatch */
 void gui_app_stopwatch_run(void) {
     gui_window_t *win = gui_window_create("Stopwatch", 150, 150, 250, 120, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
-    gui_window_draw_text(win, 30, 20, "00:00.00", GUI_COLOR(0,255,0), GUI_BLACK);
+    gui_window_draw_text(win, 30, 20, "00:00.00", GUI_COLOR(0, 255, 0), GUI_BLACK);
     gui_window_draw_text(win, 20, 50, "[S]tart [R]eset", GUI_DARK_GRAY, GUI_BLACK);
     gui_window_draw_text(win, 20, 80, "Stopwatch (keyboard)", GUI_GRAY, GUI_BLACK);
 }
@@ -2090,11 +2638,13 @@ void gui_app_stopwatch_run(void) {
 /* 25. Solar System */
 void gui_app_solar_run(void) {
     gui_window_t *win = gui_window_create("Solar System", 50, 50, 400, 360, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cx = 200, cy = 160;
-    int orbits[][3] = {{0,0,15},{30,180,4},{50,120,7},{70,90,6},{90,75,5},{110,60,8},{130,45,6},{150,30,4}};
-    int n_orbits = sizeof(orbits)/sizeof(orbits[0]);
+    int orbits[][3] = {{0, 0, 15},  {30, 180, 4}, {50, 120, 7}, {70, 90, 6},
+                       {90, 75, 5}, {110, 60, 8}, {130, 45, 6}, {150, 30, 4}};
+    int n_orbits = sizeof(orbits) / sizeof(orbits[0]);
     for (int i = 0; i < n_orbits; i++) {
         gui_draw_circle(cx, cy, orbits[i][0], GUI_DARK_GRAY);
         int ang = (i * 60 + orbits[i][1]) % 360;
@@ -2110,16 +2660,20 @@ void gui_app_solar_run(void) {
 /* 26. Turing Patterns */
 void gui_app_turing_run(void) {
     gui_window_t *win = gui_window_create("Turing Patterns", 100, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     for (int y = 0; y < 260; y++) {
         for (int x = 0; x < 300; x++) {
-            float v = 0.5f + 0.3f * (float)(__isin(x * 11 + y * 7) + __isin(x * 5 - y * 13)) / 200.0f;
+            float v =
+                0.5f + 0.3f * (float)(__isin(x * 11 + y * 7) + __isin(x * 5 - y * 13)) / 200.0f;
             v += 0.2f * (float)__isin(x * 3 + y * 17) / 100.0f;
             int val = (int)(v * 255);
-            if (val > 255) val = 255;
-            if (val < 0) val = 0;
-            vga_put_pixel(10 + x, 20 + y, GUI_COLOR(val/2, val, val/3));
+            if (val > 255)
+                val = 255;
+            if (val < 0)
+                val = 0;
+            vga_put_pixel(10 + x, 20 + y, GUI_COLOR(val / 2, val, val / 3));
         }
     }
     gui_window_draw_text(win, 50, 10, "Turing Patterns", GUI_GREEN, GUI_BLACK);
@@ -2128,13 +2682,16 @@ void gui_app_turing_run(void) {
 /* 27. Koch Snowflake */
 void gui_app_snowflake_run(void) {
     gui_window_t *win = gui_window_create("Koch Snowflake", 150, 100, 300, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int pts[3][2] = {{150, 30}, {20, 230}, {280, 230}};
     for (int level = 0; level < 3; level++) {
         if (level == 0)
-            for (int i = 0; i < 3; i++) { /* first level */ }
-        else { }
+            for (int i = 0; i < 3; i++) { /* first level */
+            }
+        else {
+        }
     }
     gui_draw_line(pts[0][0], pts[0][1], pts[1][0], pts[1][1], GUI_CYAN);
     gui_draw_line(pts[1][0], pts[1][1], pts[2][0], pts[2][1], GUI_CYAN);
@@ -2145,23 +2702,15 @@ void gui_app_snowflake_run(void) {
 /* 28. ASCII Art Generator */
 void gui_app_ascii_art_run(void) {
     gui_window_t *win = gui_window_create("ASCII Art", 200, 100, 200, 200, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
-    const char *art[] = {
-        "  $$$$$$$$$  ",
-        " $$       $$ ",
-        "$   O   O   $",
-        "$     ^     $",
-        "$  \\_____/  $",
-        " $$       $$ ",
-        "  $$$$$$$$$  ",
-        "      |      ",
-        "      |      ",
-        "     / \\    "
-    };
-    int n = sizeof(art)/sizeof(art[0]);
+    const char *art[] = {"  $$$$$$$$$  ",  " $$       $$ ", "$   O   O   $", "$     ^     $",
+                         "$  \\_____/  $", " $$       $$ ", "  $$$$$$$$$  ", "      |      ",
+                         "      |      ",  "     / \\    "};
+    int n = sizeof(art) / sizeof(art[0]);
     for (int i = 0; i < n; i++) {
-        gui_window_draw_text(NULL, 30, 10 + i*14, art[i], GUI_GREEN, GUI_BLACK);
+        gui_window_draw_text(NULL, 30, 10 + i * 14, art[i], GUI_GREEN, GUI_BLACK);
     }
     gui_window_draw_text(win, 10, 10, "ASCII Art", GUI_GREEN, GUI_BLACK);
 }
@@ -2169,7 +2718,8 @@ void gui_app_ascii_art_run(void) {
 /* 29. Bezier Playground */
 void gui_app_bezier_demo_run(void) {
     gui_window_t *win = gui_window_create("Bezier Demo", 100, 100, 400, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     gui_draw_bezier_cubic(50, 200, 100, 50, 300, 50, 350, 200, GUI_CYAN);
     gui_draw_bezier_quad(50, 50, 200, 200, 350, 50, GUI_YELLOW);
@@ -2183,17 +2733,19 @@ void gui_app_bezier_demo_run(void) {
 /* 30. 2D Lighting */
 void gui_app_lighting_run(void) {
     gui_window_t *win = gui_window_create("2D Lighting", 100, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int lx = 50, ly = 50;
     for (int y = 0; y < 260; y++) {
         for (int x = 0; x < 300; x++) {
             int dx = x - lx, dy = y - ly;
-            float dist = __isqrt(dx*dx + dy*dy);
+            float dist = __isqrt(dx * dx + dy * dy);
             float bright = 1.0f - dist / 200.0f;
-            if (bright < 0) bright = 0;
+            if (bright < 0)
+                bright = 0;
             int val = (int)(bright * 255);
-            vga_put_pixel(10 + x, 20 + y, GUI_COLOR(val, val/2, 0));
+            vga_put_pixel(10 + x, 20 + y, GUI_COLOR(val, val / 2, 0));
         }
     }
     gui_draw_circle_filled(10 + lx, 20 + ly, 8, GUI_WHITE);
@@ -2203,20 +2755,27 @@ void gui_app_lighting_run(void) {
 /* 31. Terrain Heightmap */
 void gui_app_terrain_run(void) {
     gui_window_t *win = gui_window_create("Terrain", 100, 50, 320, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int w = 300, h = 260;
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             int v = (__isin(x * 5 + y * 7) + __isin(x * 3 - y * 11) + __isin(y * 13)) / 3;
             v = (v + 100) * 128 / 200;
-            if (v > 255) v = 255;
-            if (v < 0) v = 0;
+            if (v > 255)
+                v = 255;
+            if (v < 0)
+                v = 0;
             gui_color_t c;
-            if (v < 80) c = GUI_COLOR(0, 0, v + 50);
-            else if (v < 140) c = GUI_COLOR(0, v, 0);
-            else if (v < 200) c = GUI_COLOR(v, v/2, 0);
-            else c = GUI_WHITE;
+            if (v < 80)
+                c = GUI_COLOR(0, 0, v + 50);
+            else if (v < 140)
+                c = GUI_COLOR(0, v, 0);
+            else if (v < 200)
+                c = GUI_COLOR(v, v / 2, 0);
+            else
+                c = GUI_WHITE;
             vga_put_pixel(10 + x, 20 + y, c);
         }
     }
@@ -2226,7 +2785,8 @@ void gui_app_terrain_run(void) {
 /* 32. Pong Game */
 void gui_app_pong_run(void) {
     gui_window_t *win = gui_window_create("Pong", 200, 50, 300, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     /* Static frame of a pong game */
     gui_rect_t field = {10, 20, 280, 260};
@@ -2243,13 +2803,14 @@ void gui_app_pong_run(void) {
 /* 33. Audio Spectrum Viz */
 void gui_app_audio_viz_run(void) {
     gui_window_t *win = gui_window_create("Audio Spectrum", 100, 100, 420, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int n = 60, bw = 6;
     for (int i = 0; i < n; i++) {
         int h = 20 + (i * 17 + (i * i) % 40) % 200;
-        gui_color_t c = gui_color_from_hsv(i * 6, 200, 150 + h/4);
-        gui_rect_t r = {10 + i*bw, 260 - h, bw-2, h};
+        gui_color_t c = gui_color_from_hsv(i * 6, 200, 150 + h / 4);
+        gui_rect_t r = {10 + i * bw, 260 - h, bw - 2, h};
         gui_window_draw_rect(win, r, c);
     }
     gui_window_draw_text(win, 100, 10, "Audio Spectrum Analyzer", GUI_WHITE, GUI_BLACK);
@@ -2258,14 +2819,15 @@ void gui_app_audio_viz_run(void) {
 /* 34. Memory Map Viz */
 void gui_app_memory_map_run(void) {
     gui_window_t *win = gui_window_create("Memory Map", 100, 100, 320, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int rows = 20, cols = 20, cell = 12;
     for (int r = 0; r < rows; r++) {
         for (int c = 0; c < cols; c++) {
             int val = (r * cols + c) * 13 % 256;
-            gui_color_t col = GUI_COLOR(val, val/2, val/4);
-            gui_rect_t cr = {10 + c*cell, 20 + r*cell, cell-1, cell-1};
+            gui_color_t col = GUI_COLOR(val, val / 2, val / 4);
+            gui_rect_t cr = {10 + c * cell, 20 + r * cell, cell - 1, cell - 1};
             gui_window_draw_rect(win, cr, col);
             gui_window_draw_rect_outline(win, cr, GUI_DARK_GRAY, 1);
         }
@@ -2276,7 +2838,8 @@ void gui_app_memory_map_run(void) {
 /* 35. Alarm Clock */
 void gui_app_clock_alarm_run(void) {
     gui_window_t *win = gui_window_create("Alarm Clock", 200, 150, 240, 160, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     gui_window_draw_text(win, 30, 20, "06:30 AM", GUI_RED, GUI_BLACK);
     gui_window_draw_text(win, 20, 50, "Alarm SET", GUI_GREEN, GUI_BLACK);
@@ -2287,7 +2850,8 @@ void gui_app_clock_alarm_run(void) {
 /* 36. Penrose Tiling */
 void gui_app_tiling_run(void) {
     gui_window_t *win = gui_window_create("Penrose Tiling", 100, 100, 320, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cx = 160, cy = 140;
     for (int i = 0; i < 36; i++) {
@@ -2305,30 +2869,35 @@ void gui_app_tiling_run(void) {
 /* 37. Fluid Simulation */
 void gui_app_fluid_run(void) {
     gui_window_t *win = gui_window_create("Fluid Simulation", 100, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int w = 300, h = 260;
     float vx[300][260] = {0}, vy[300][260] = {0};
     for (int y = 20; y < h - 20; y++) {
         for (int x = 20; x < w - 20; x++) {
             float dx = (float)(x - 150), dy = (float)(y - 130);
-            float r2 = dx*dx + dy*dy + 1;
+            float r2 = dx * dx + dy * dy + 1;
             vx[x][y] = -dy / r2 * 10;
             vy[x][y] = dx / r2 * 10;
             int val = (int)((vx[x][y] + vy[x][y]) * 10 + 128);
-            if (val > 255) val = 255;
-            if (val < 0) val = 0;
+            if (val > 255)
+                val = 255;
+            if (val < 0)
+                val = 0;
             vga_put_pixel(10 + x, 20 + y, GUI_COLOR(0, 0, val));
         }
     }
-    (void)vx; (void)vy;
+    (void)vx;
+    (void)vy;
     gui_window_draw_text(win, 40, 10, "Fluid Sim (velocity field)", GUI_CYAN, GUI_BLACK);
 }
 
 /* 38. Soft Body Physics */
 void gui_app_softbody_run(void) {
     gui_window_t *win = gui_window_create("Soft Body", 150, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int cx = 160, cy = 130;
     int nodes[8][2];
@@ -2348,12 +2917,13 @@ void gui_app_softbody_run(void) {
 /* 39. Image Convolution */
 void gui_app_convolution_run(void) {
     gui_window_t *win = gui_window_create("Convolution", 100, 100, 320, 280, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     int w = 300, h = 260;
-    int kernel[3][3] = {{-1,-1,-1},{-1,8,-1},{-1,-1,-1}};
-    for (int y = 1; y < h-1; y++) {
-        for (int x = 1; x < w-1; x++) {
+    int kernel[3][3] = {{-1, -1, -1}, {-1, 8, -1}, {-1, -1, -1}};
+    for (int y = 1; y < h - 1; y++) {
+        for (int x = 1; x < w - 1; x++) {
             int val = 0;
             for (int ky = 0; ky < 3; ky++)
                 for (int kx = 0; kx < 3; kx++) {
@@ -2362,8 +2932,10 @@ void gui_app_convolution_run(void) {
                     val += sv * kernel[ky][kx];
                 }
             val = val / 4 + 128;
-            if (val > 255) val = 255;
-            if (val < 0) val = 0;
+            if (val > 255)
+                val = 255;
+            if (val < 0)
+                val = 0;
             vga_put_pixel(10 + x, 20 + y, GUI_COLOR(val, val, val));
         }
     }
@@ -2374,19 +2946,21 @@ void gui_app_convolution_run(void) {
 /* 40. Buddha Fractal */
 void gui_app_buddha_run(void) {
     gui_window_t *win = gui_window_create("Buddhabrot", 100, 50, 320, 300, GUI_BLACK);
-    if (!win) return;
+    if (!win)
+        return;
     gui_add_window(win);
     for (int i = 0; i < 5000; i++) {
         float r = (float)(i * 37 % 1000) / 1000.0f * 3.0f - 2.0f;
         float im = (float)(i * 53 % 1000) / 1000.0f * 2.0f - 1.0f;
         float x = r, y = im;
         int iter = 0;
-        while (x*x + y*y < 100.0f && iter < 100) {
-            float xt = x*x - y*y + r;
-            y = 2*x*y + im; x = xt;
+        while (x * x + y * y < 100.0f && iter < 100) {
+            float xt = x * x - y * y + r;
+            y = 2 * x * y + im;
+            x = xt;
             int px = 160 + (int)(x * 40), py = 150 + (int)(y * 40);
             if (px >= 0 && px < 300 && py >= 0 && py < 280 && iter > 10)
-                vga_put_pixel(10 + px, 20 + py, GUI_COLOR(iter, iter/2, iter/3));
+                vga_put_pixel(10 + px, 20 + py, GUI_COLOR(iter, iter / 2, iter / 3));
             iter++;
         }
     }
