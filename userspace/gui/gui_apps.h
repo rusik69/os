@@ -102,5 +102,6 @@ void gui_app_notepad_run(void);
 void gui_app_settings_run(void);
 void gui_app_image_viewer_run(void);
 void gui_app_music_player_run(void);
+void gui_app_system_monitor_run(void);
 
 #endif /* GUI_APPS_H */

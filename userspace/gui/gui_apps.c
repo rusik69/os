@@ -2246,6 +2246,167 @@ void gui_app_music_player_run(void) {
     gui_window_set_focused_widget(win, cw);
 }
 
+/* ===== System Monitor (D286 task 10) =====================================
+ * A desktop "system monitor" app: CPU %, memory %, a slicing CPU-history
+ * sparkline graph and a live process-bar list.  Raw syscalls only; no
+ * kernel reads are available, so a small deterministic Xorshift-style
+ * generator synthesises the sample stream so the graph is alive on every
+ * repaint.  Clicking the REFRESH button forces a fresh sample + redraw.
+ */
+#define SMON_W 360
+#define SMON_H 330
+#define SMON_HIST 90
+#define SMON_NPROC 8
+
+typedef struct {
+    int seq;  /* nonzero once initialised */
+    int tick; /* sample counter (drives the cheap PRNG) */
+    int cpu_pct;
+    int mem_pct;
+    int hist[SMON_HIST];
+    int hist_n;
+    int procs[SMON_NPROC];
+} smon_state_t;
+
+static smon_state_t s_smon;
+
+static const char *const s_mon_proc_name[SMON_NPROC] = {
+    "kernel", "init", "shell", "gui", "netd", "fsd", "ttyd", "idle",
+};
+
+/* Deterministic pseudo-random sample; keeps the monitor alive and
+ * identical for a given tick so repaints are stable between clicks. */
+static void smon_sample(smon_state_t *st) {
+    unsigned x = (unsigned)st->tick * 2654435761u + 0x9e3779b9u;
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    st->cpu_pct = 2 + (int)(x % 95u);
+    st->mem_pct = 45 + (int)((x >> 8) % 40u);
+    if (st->hist_n < SMON_HIST)
+        st->hist[st->hist_n++] = st->cpu_pct;
+    else {
+        for (int i = 0; i < SMON_HIST - 1; i++)
+            st->hist[i] = st->hist[i + 1];
+        st->hist[SMON_HIST - 1] = st->cpu_pct;
+    }
+    for (int i = 0; i < SMON_NPROC; i++) {
+        unsigned y = (x >> (i % 24)) ^ (unsigned)i * 1103515245u;
+        st->procs[i] = (int)(y % 100u);
+    }
+    st->tick++;
+}
+
+static void smon_draw(gui_widget_t *w) {
+    smon_state_t *st = &s_smon;
+    int32_t ox = w->rect.x, oy = w->rect.y;
+    int32_t W = (int32_t)w->rect.w;
+    char buf[48];
+    gui_window_draw_rect(NULL, w->rect, GUI_WINDOW_BG);
+
+    smon_sample(st);
+
+    gui_window_draw_text(NULL, ox + 6, oy + 3, "System Monitor", GUI_TITLE_BG, GUI_WINDOW_BG);
+
+    /* CPU summary bar */
+    snprintf(buf, sizeof buf, "CPU  %3d%%", st->cpu_pct);
+    gui_window_draw_text(NULL, ox + 6, oy + 18, buf, GUI_TEXT_FG, GUI_WINDOW_BG);
+    gui_rect_t ctr = {ox + 90, oy + 18, (uint32_t)(W - 96), 12};
+    gui_window_draw_rect(NULL, ctr, GUI_LIGHT_GRAY);
+    gui_window_draw_rect_outline(NULL, ctr, GUI_DARK_GRAY, 1);
+    int cfill = st->cpu_pct * (int)(ctr.w - 2) / 100;
+    if (cfill > 2)
+        gui_window_draw_rect(NULL, (gui_rect_t){ctr.x + 1, ctr.y + 1, (uint32_t)cfill, ctr.h - 2},
+                             GUI_GREEN);
+
+    /* Memory summary bar */
+    snprintf(buf, sizeof buf, "MEM  %3d%%", st->mem_pct);
+    gui_window_draw_text(NULL, ox + 6, oy + 34, buf, GUI_TEXT_FG, GUI_WINDOW_BG);
+    gui_rect_t mtr = {ox + 90, oy + 34, (uint32_t)(W - 96), 12};
+    gui_window_draw_rect(NULL, mtr, GUI_LIGHT_GRAY);
+    gui_window_draw_rect_outline(NULL, mtr, GUI_DARK_GRAY, 1);
+    int mfill = st->mem_pct * (int)(mtr.w - 2) / 100;
+    if (mfill > 2)
+        gui_window_draw_rect(NULL, (gui_rect_t){mtr.x + 1, mtr.y + 1, (uint32_t)mfill, mtr.h - 2},
+                             GUI_BLUE);
+
+    /* CPU history sparkline graph */
+    gui_window_draw_text(NULL, ox + 6, oy + 50, "CPU history", GUI_TEXT_FG, GUI_WINDOW_BG);
+    gui_rect_t gb = {ox + 6, oy + 62, (uint32_t)(W - 12), 54};
+    gui_window_draw_rect(NULL, gb, GUI_WHITE);
+    gui_window_draw_rect_outline(NULL, gb, GUI_DARK_GRAY, 1);
+    if (st->hist_n >= 2) {
+        int prev_x = 0, prev_y = 0;
+        for (int i = 0; i < st->hist_n; i++) {
+            int nx = gb.x + (int)((uint32_t)i * (gb.w - 2) / (uint32_t)(SMON_HIST - 1));
+            int ny = gb.y + 2 + (100 - st->hist[i]) * (int)(gb.h - 4) / 100;
+            if (i > 0)
+                gui_draw_line(prev_x, prev_y, nx, ny, GUI_RED);
+            prev_x = nx;
+            prev_y = ny;
+        }
+    }
+
+    /* Process list with per-process bars */
+    gui_window_draw_text(NULL, ox + 6, oy + 122, "Processes", GUI_TEXT_FG, GUI_WINDOW_BG);
+    for (int i = 0; i < SMON_NPROC; i++) {
+        int32_t ry = oy + 136 + i * 20;
+        gui_window_draw_text(NULL, ox + 6, ry, s_mon_proc_name[i], GUI_TEXT_FG, GUI_WINDOW_BG);
+        gui_rect_t tr = {ox + 64, ry, (uint32_t)(W - 70), 12};
+        gui_window_draw_rect(NULL, tr, GUI_LIGHT_GRAY);
+        gui_window_draw_rect_outline(NULL, tr, GUI_DARK_GRAY, 1);
+        int pfill = st->procs[i] * (int)(tr.w - 2) / 100;
+        if (pfill > 2)
+            gui_window_draw_rect(NULL, (gui_rect_t){tr.x + 1, tr.y + 1, (uint32_t)pfill, tr.h - 2},
+                                 GUI_CYAN);
+        snprintf(buf, sizeof buf, "%3d%%", st->procs[i]);
+        gui_window_draw_text(NULL, tr.x + (int32_t)tr.w - (int32_t)strlen(buf) * 12 - 2, ry + 0,
+                             buf, GUI_TEXT_FG, GUI_LIGHT_GRAY);
+    }
+
+    /* Refresh button */
+    gui_rect_t rfr = {ox + W - 76, oy + (int32_t)w->rect.h - 22, 70, 16};
+    gui_window_draw_rect(NULL, rfr, GUI_BUTTON_BG);
+    gui_window_draw_rect_outline(NULL, rfr, GUI_DARK_GRAY, 1);
+    gui_window_draw_text(NULL, rfr.x + 8, rfr.y + 1, "REFRESH", GUI_BUTTON_FG, GUI_BUTTON_BG);
+}
+
+static void smon_event(gui_widget_t *w, gui_event_t *evt) {
+    if (evt->type != GUI_EVENT_MOUSE_DOWN || evt->button != 1)
+        return;
+    int32_t W = (int32_t)w->rect.w;
+    int32_t rfx = w->rect.x + W - 76;
+    int32_t rfy = w->rect.y + (int32_t)w->rect.h - 22;
+    if (evt->x >= rfx && evt->x < rfx + 70 && evt->y >= rfy && evt->y < rfy + 16) {
+        /* force a fresh sample so the graph visibly advances on click */
+        smon_sample(&s_smon);
+    }
+}
+
+void gui_app_system_monitor_run(void) {
+    smon_state_t *st = &s_smon;
+    if (st->seq == 0) { /* first launch — seed a sample, later launches resume */
+        st->tick = 1;
+        st->hist_n = 0;
+        smon_sample(st);
+        st->seq = 1;
+    }
+    gui_window_t *win = gui_window_create("System Monitor", 220, 90, SMON_W, SMON_H, GUI_WINDOW_BG);
+    if (!win)
+        return;
+    gui_add_window(win);
+    gui_window_bring_to_front(win);
+    gui_rect_t wr = gui_window_get_rect(win);
+    gui_rect_t wrect = {wr.x + 8, wr.y + 24 + 8, SMON_W - 16, SMON_H - 32};
+    gui_widget_t *cw = gui_widget_create(wrect);
+    if (!cw)
+        return;
+    cw->draw = smon_draw;
+    cw->on_event = smon_event;
+    gui_window_add_widget(win, cw);
+    gui_window_set_focused_widget(win, cw);
+}
+
 /* 7b. Minesweeper */
 void gui_app_minesweeper_run(void) {
     gui_window_t *win = gui_window_create("Minesweeper", 200, 150, 220, 260, GUI_LIGHT_GRAY);
