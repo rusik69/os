@@ -1377,7 +1377,7 @@ static const char *sh_builtins[] = {
     "kill",     "source", ".",       "trap",    "read",    "which", "ps",       "free",
     "uptime",   "uname",  "time",    "test",    "[",       "true",  "false",    "break",
     "continue", "return", "type",    "ulimit",  "umask",   "times", "readonly", "shift",
-    "getopts",  "printf", "mapfile", "declare", "typeset", 0};
+    "getopts",  "printf", "mapfile", "declare", "typeset", "bind",  0};
 static int cmd_uname(int argc, char **argv);
 static int cmd_time(int argc, char **argv);
 static int cmd_help(void);
@@ -1391,7 +1391,39 @@ static int cmd_getopts(int argc, char **argv);
 static int cmd_printf(int argc, char **argv);
 static int cmd_mapfile(int argc, char **argv);
 static int cmd_declare(int argc, char **argv);
+static int cmd_bind(int argc, char **argv);
 static int cmd_test(int argc, char **argv);
+
+/* Key bindings consulted by sh_getline (bash `bind` builtin).
+ * action: "clear-screen" is honored by the line editor. */
+#define MAX_BINDS 32
+struct sh_bind {
+    int key; /* byte value of the key (e.g. 12 for ^L) */
+    char action[64];
+};
+static struct sh_bind sh_binds[MAX_BINDS];
+static int sh_bind_count;
+
+static const char *bind_action_for(int key) {
+    for (int i = 0; i < sh_bind_count; i++)
+        if (sh_binds[i].key == key)
+            return sh_binds[i].action;
+    return 0;
+}
+static void bind_set(int key, const char *action) {
+    for (int i = 0; i < sh_bind_count; i++)
+        if (sh_binds[i].key == key) {
+            strncpy(sh_binds[i].action, action, 63);
+            sh_binds[i].action[63] = '\0';
+            return;
+        }
+    if (sh_bind_count < MAX_BINDS) {
+        sh_binds[sh_bind_count].key = key;
+        strncpy(sh_binds[sh_bind_count].action, action, 63);
+        sh_binds[sh_bind_count].action[63] = '\0';
+        sh_bind_count++;
+    }
+}
 
 static int run_builtin(int argc, char **argv) {
     const char *cmd = argv[0];
@@ -1713,6 +1745,8 @@ static int run_builtin(int argc, char **argv) {
         return cmd_mapfile(argc, argv);
     if (strcmp(cmd, "declare") == 0 || strcmp(cmd, "typeset") == 0)
         return cmd_declare(argc, argv);
+    if (strcmp(cmd, "bind") == 0)
+        return cmd_bind(argc, argv);
     if (strcmp(cmd, "ps") == 0)
         return cmd_ps();
     if (strcmp(cmd, "free") == 0)
@@ -2782,8 +2816,13 @@ static int sh_getline(char *buf, int max) {
                 i--;
                 write(1, "\b \b", 3);
             }
-        } else
-            buf[i++] = c;
+        } else {
+            const char *act = bind_action_for(c);
+            if (act && strcmp(act, "clear-screen") == 0)
+                write(1, "\033[2J\033[H", 7);
+            else
+                buf[i++] = c;
+        }
     }
     buf[i] = '\0';
     return i;
@@ -3479,6 +3518,40 @@ static int cmd_declare(int argc, char **argv) {
             var_mark_readonly(namebuf);
     }
     return 0;
+}
+
+/* ── bind builtin: manage readline key bindings ───────────────── */
+/* Usage: bind            — list all bindings
+ *        bind -P         — list bindings in re-input form
+ *        bind "\\C-l:clear-screen" — bind a key to an action */
+static int cmd_bind(int argc, char **argv) {
+    if (argc < 2) {
+        for (int i = 0; i < sh_bind_count; i++)
+            printf("\\C-%c: %s\n", 'a' + (sh_binds[i].key - 1), sh_binds[i].action);
+        return 0;
+    }
+    if (strcmp(argv[1], "-P") == 0 || strcmp(argv[1], "-p") == 0) {
+        for (int i = 0; i < sh_bind_count; i++)
+            printf("bind '\\C-%c: %s'\n", 'a' + (sh_binds[i].key - 1), sh_binds[i].action);
+        return 0;
+    }
+    /* bind "key:action" */
+    const char *spec = argv[1];
+    if (spec[0] == '\\' && (spec[1] == 'C' || spec[1] == 'c') && spec[2] == '-') {
+        char kc = spec[3];
+        int key = 0;
+        if (kc >= 'a' && kc <= 'z')
+            key = kc - 'a' + 1;
+        else if (kc >= 'A' && kc <= 'Z')
+            key = kc - 'A' + 1;
+        const char *colon = sh_strchr(spec, ':');
+        if (key && colon) {
+            bind_set(key, colon + 1);
+            return 0;
+        }
+    }
+    printf("bind: invalid binding: %s\n", spec);
+    return 1;
 }
 
 /* ── ps / free / uptime / uname / time / help ────────────────── */
