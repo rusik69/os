@@ -1,10 +1,13 @@
 #include "landlock.h"
-#include "printf.h"
-#include "string.h"
+
 #include "errno.h"
 #include "kernel.h"
+#include "lsm.h"
+#include "printf.h"
 #include "process.h"
 #include "scheduler.h"
+#include "string.h"
+#include "vfs.h"
 
 /*
  * Landlock implementation — path-based access-control sandboxing.
@@ -50,6 +53,14 @@ void landlock_init(void)
     landlock_initialised = 1;
 
     kprintf("[OK] landlock: path-based access control initialised\n");
+}
+
+/* Register the Landlock enforcement hook with the LSM framework.  This
+ * must run after lsm_init() (Landlock is stack-registered via module_init
+ * ordering in the kernel boot path). */
+void landlock_lsm_register(void) {
+    lsm_register_hook(LSM_HOOK_INODE_PERMISSION, (void *)landlock_enforce);
+    lsm_stack_register("landlock");
 }
 
 /* Helper: resolve a parent_fd to a path string for use in rules. */
@@ -277,13 +288,60 @@ int landlock_check_path(const struct process *proc, const char *path,
     return 0;
 }
 
-/* ── Stub: landlock_enforce ─────────────────────────────── */
-static int landlock_enforce(const char *path, uint64_t access_mask)
-{
-    (void)path;
-    (void)access_mask;
-    kprintf("[landlock] landlock_enforce: not yet implemented\n");
-    return 0;
+/* ── Enforcement: access_mask on fs operations ─────────────────────── */
+
+/* Convert a VFS access mask (VFS_R_OK=4, VFS_W_OK=2, VFS_X_OK=1) into
+ * the corresponding Landlock filesystem access rights, so rulesets set
+ * up via landlock_add_rule can be enforced at every VFS permission check. */
+static uint64_t landlock_mask_from_vfs(int mask) {
+    uint64_t bits = 0;
+
+    if (mask & VFS_R_OK)
+        bits |= LANDLOCK_ACCESS_FS_READ_FILE;
+    if (mask & VFS_W_OK)
+        bits |= LANDLOCK_ACCESS_FS_WRITE_FILE;
+    if (mask & VFS_X_OK)
+        bits |= LANDLOCK_ACCESS_FS_EXECUTE;
+
+    return bits;
+}
+
+/* LSM inode_permission / file_permission handler: enforce the current
+ * process's stacked Landlock rulesets against the requested access. */
+int landlock_enforce(const char *path, int mask) {
+    struct process *cur;
+    uint64_t bits;
+
+    if (!landlock_initialised)
+        return 0;
+    if (!path)
+        return 0;
+
+    /* A pure existence probe (VFS_F_OK) never carries access rights. */
+    if (mask == VFS_F_OK)
+        return 0;
+
+    cur = process_get_current();
+    if (!cur)
+        return 0;
+
+    /* Fast path: current process has no stacked rulesets — nothing to
+     * enforce (Landlock only restricts processes that opted in). */
+    int has_ruleset = 0;
+    for (int i = 0; i < LANDLOCK_MAX_RULESETS_PER_PROC; i++) {
+        if (cur->landlock_ruleset_ids[i] >= 0) {
+            has_ruleset = 1;
+            break;
+        }
+    }
+    if (!has_ruleset)
+        return 0;
+
+    bits = landlock_mask_from_vfs(mask);
+    if (bits == 0)
+        return 0;
+
+    return landlock_check_path(cur, path, bits);
 }
 
 /* ── Stub: landlock_handle_ptrace ─────────────────────────────── */

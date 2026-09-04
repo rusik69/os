@@ -58,6 +58,13 @@ int landlock_add_rule(int ruleset_fd, int rule_type,
 /* Apply a ruleset to the current process (enforce) */
 int landlock_restrict_self(int ruleset_fd, uint32_t flags);
 
+/* LSM hook handler: enforce stacked rulesets on a path access request.
+ * Called from the inode_permission hook with a VFS access mask. */
+int landlock_enforce(const char *path, int mask);
+
+/* Register the enforcement handler with the LSM framework (after init). */
+void landlock_lsm_register(void);
+
 /* Check whether a given access path is allowed for a given process.
  * Returns 0 if allowed, -EACCES otherwise. */
 int landlock_check_path(const struct process *proc, const char *path,

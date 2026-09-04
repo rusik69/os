@@ -608,6 +608,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* LSM hook framework (modules register hooks after this) */
     lsm_init();
 
+    /* Landlock registers its enforcement hook on the inode_permission
+     * hook after the framework is up. */
+    landlock_lsm_register();
+
     /* Seccomp BPF filter support */
     seccomp_bpf_init();
 
