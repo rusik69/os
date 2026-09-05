@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-only
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * usb_serial.c — USB serial driver (FTDI, PL2303, CP2102)
  *

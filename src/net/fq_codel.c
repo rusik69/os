@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-only
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * fq_codel.c — Fair Queuing with Controlled Delay (AQM packet scheduler)
  *

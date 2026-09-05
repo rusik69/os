@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-only
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * blk_mq.c — Multi-queue block I/O layer with tag-based request allocation
  *

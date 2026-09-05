@@ -142,7 +142,7 @@ static int quota_account(const char *namespace, uint64_t cpu_millicores,
 
         struct resource_quota *q = &quota_table[i];
         spinlock_acquire(&q->lock);
-        // int64_t delta = add ? 1 : -1;
+        /* int64_t delta = add ? 1 : -1; */
         q->used_containers += (uint64_t)(add ? 1 : 0);
         if (is_pod) q->used_pods += (uint64_t)(add ? 1 : 0);
         if (is_volume) q->used_volumes += (uint64_t)(add ? 1 : 0);

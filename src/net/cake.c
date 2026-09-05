@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-only
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * cake.c — Common Applications Kept Enhanced (comprehensive AQM qdisc)
  *

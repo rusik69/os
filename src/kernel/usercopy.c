@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-only
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * usercopy.c — Hardened copy_from_user/copy_to_user bounds checking
  *

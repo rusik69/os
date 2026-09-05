@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-only
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * acpi_cppc.c — ACPI CPPC (Collaborative Processor Performance Control)
  *

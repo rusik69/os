@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-only
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * nilfs2.c — NILFS2 (continuous snapshotting FS) skeleton
  *

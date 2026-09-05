@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-only
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * usb_cdc_ether.c — USB CDC Ethernet Control Model (ECM) / EEM driver
  *

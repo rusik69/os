@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-only
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * tcp_bbr2.c — BBRv2 congestion control with ECN/probe-RTT
  *

@@ -10,7 +10,7 @@
 #include "stacktrace.h"
 #include "heap.h"
 
-// SPDX-License-Identifier: GPL-2.0-only
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * kasan_light.c — Kernel Address SANitizer (lightweight variant)
  *

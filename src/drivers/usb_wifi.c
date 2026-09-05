@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-only
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * usb_wifi.c — USB Wi-Fi driver for Realtek RTL8188EU / RTL8192EU
  *
