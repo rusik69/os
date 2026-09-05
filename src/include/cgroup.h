@@ -65,6 +65,26 @@ struct cgroup_io_state {
     struct cgroup_io_device devices[CGROUP_IO_MAX_DEVICES];
 };
 
+/* ── RDMA controller state ──────────────────────────────────────── */
+#define CGROUP_RDMA_MAX_DEVS 8
+#define CGROUP_RDMA_HCA_NAME_LEN 24
+/* Per-HCA RDMA resource limit/usage record.  Mirrors the cgroup v2
+ * rdma.max / rdma.current controller: each RDMA (InfiniBand/RoCE) HCA
+ * exposes two countable resources — hca_handle (allocated UCONTEXT/PDP,
+ * i.e. "context handles") and hca_object (QPs/CQs/MRs/etc).  Limits are
+ * stored here and enforced on allocation; 0 = unlimited. */
+struct cgroup_rdma_device {
+    char name[CGROUP_RDMA_HCA_NAME_LEN]; /* e.g. "mlx5_0" */
+    uint64_t hca_handle_limit;           /* max context handles */
+    uint64_t hca_object_limit;           /* max HCA objects */
+    uint64_t hca_handle_usage;           /* current handles */
+    uint64_t hca_object_usage;           /* current objects */
+    int in_use;
+};
+struct cgroup_rdma_state {
+    struct cgroup_rdma_device devices[CGROUP_RDMA_MAX_DEVS];
+};
+
 /* PID controller state */
 struct cgroup_pids_state {
     uint64_t current; /* current number of tasks */
@@ -82,7 +102,9 @@ struct cgroup_freezer_state {
 #define CG_CTRL_IO (1U << 2)
 #define CG_CTRL_PIDS (1U << 3)
 #define CG_CTRL_FREEZER (1U << 4)
-#define CG_CTRL_ALL (CG_CTRL_CPU | CG_CTRL_MEMORY | CG_CTRL_IO | CG_CTRL_PIDS | CG_CTRL_FREEZER)
+#define CG_CTRL_RDMA (1U << 5)
+#define CG_CTRL_ALL \
+    (CG_CTRL_CPU | CG_CTRL_MEMORY | CG_CTRL_IO | CG_CTRL_PIDS | CG_CTRL_FREEZER | CG_CTRL_RDMA)
 
 /* ── Cgroup structure ────────────────────────────────────────────── */
 
@@ -118,6 +140,7 @@ struct cgroup {
     struct cgroup_io_state io;
     struct cgroup_pids_state pids;
     struct cgroup_freezer_state freezer;
+    struct cgroup_rdma_state rdma;
 };
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -169,6 +192,16 @@ void cgroup_pids_stat(int cg_id, uint64_t *current, uint64_t *max);
 int cgroup_freeze(int cg_id);
 int cgroup_unfreeze(int cg_id);
 int cgroup_freezer_state(int cg_id);
+
+/* RDMA controller: set/read HCA resource limits */
+int cgroup_rdma_set_limit(int cg_id, const char *hca_name, uint64_t handle_limit,
+                          uint64_t object_limit);
+/* Account an RDMA resource allocation/dealloc against a cgroup.
+ * @is_object: 1 = hca_object, 0 = hca_handle; @delta: +1 alloc / -1 free.
+ * Returns 0 on success, -EAGAIN if the limit would be exceeded. */
+int cgroup_rdma_account(int cg_id, const char *hca_name, int is_object, int delta);
+int cgroup_rdma_stat(int cg_id, struct cgroup_rdma_device *devices, int max);
+int cgroup_rdma_find(int cg_id, const char *hca_name, struct cgroup_rdma_device *out);
 
 /* Control file interface */
 int cgroup_write_control(int cg_id, const char *controller, const char *key, const char *value);

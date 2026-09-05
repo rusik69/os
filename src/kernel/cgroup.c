@@ -148,7 +148,7 @@ static int cgroup_v2_read(void *priv, const char *path, void *buf, uint32_t max,
     {
         int n = snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
                          "# Cgroup v2 unified hierarchy\n"
-                         "# Controllers: cpu memory io pids freezer\n"
+                         "# Controllers: cpu memory io pids freezer rdma\n"
                          "# /sys/fs/cgroup/ mounted\n\n");
         if (n > 0 && pos + n < (int)sizeof(tmp))
             pos += n;
@@ -171,6 +171,8 @@ static int cgroup_v2_read(void *priv, const char *path, void *buf, uint32_t max,
             strlcat(ctrl, "io ", sizeof(ctrl));
         if (mask & CG_CTRL_FREEZER)
             strlcat(ctrl, "freezer", sizeof(ctrl));
+        if (mask & CG_CTRL_RDMA)
+            strlcat(ctrl, " rdma", sizeof(ctrl));
         if (ctrl[0] == '\0')
             strlcpy(ctrl, "-", sizeof(ctrl));
 
@@ -500,6 +502,8 @@ static uint32_t controller_name_to_mask(const char *name) {
         return CG_CTRL_PIDS;
     if (strcmp(name, "freezer") == 0)
         return CG_CTRL_FREEZER;
+    if (strcmp(name, "rdma") == 0)
+        return CG_CTRL_RDMA;
     return 0;
 }
 
@@ -1322,6 +1326,121 @@ int cgroup_freezer_state(int cg_id) {
     return g_cgroups[cg_id].freezer.state;
 }
 
+/* ── RDMA controller (D315 task 12) ──────────────────────────────── */
+
+/* Locate an HCA device record in a cgroup's RDMA state; add it if absent
+ * (respecting CGROUP_RDMA_MAX_DEVS).  Caller holds g_cgroup_lock.
+ * Returns the device index or -1 if the array is full. */
+static int cgroup_rdma_slot(struct cgroup *cg, const char *hca_name) {
+    if (!hca_name)
+        return -1;
+    int slot = -1;
+    for (int i = 0; i < CGROUP_RDMA_MAX_DEVS; i++) {
+        if (cg->rdma.devices[i].in_use && strcmp(cg->rdma.devices[i].name, hca_name) == 0)
+            return i;
+        if (slot < 0 && !cg->rdma.devices[i].in_use)
+            slot = i;
+    }
+    if (slot < 0)
+        return -1;
+    memset(&cg->rdma.devices[slot], 0, sizeof(cg->rdma.devices[slot]));
+    strlcpy(cg->rdma.devices[slot].name, hca_name, sizeof(cg->rdma.devices[slot].name));
+    cg->rdma.devices[slot].in_use = 1;
+    return slot;
+}
+
+/* Set the RDMA resource limits for one HCA in a cgroup.
+ * 0 = unlimited (the default, matching rdma.max "max"). */
+int cgroup_rdma_set_limit(int cg_id, const char *hca_name, uint64_t handle_limit,
+                          uint64_t object_limit) {
+    if (!cgroup_valid(cg_id))
+        return -EINVAL;
+    struct cgroup *cg = &g_cgroups[cg_id];
+    spinlock_acquire(&g_cgroup_lock);
+    int slot = cgroup_rdma_slot(cg, hca_name);
+    if (slot < 0) {
+        spinlock_release(&g_cgroup_lock);
+        return -ENOSPC;
+    }
+    cg->rdma.devices[slot].hca_handle_limit = handle_limit;
+    cg->rdma.devices[slot].hca_object_limit = object_limit;
+    spinlock_release(&g_cgroup_lock);
+    return 0;
+}
+EXPORT_SYMBOL(cgroup_rdma_set_limit);
+
+/* Account an RDMA resource alloc/decrease against a cgroup.
+ * Returns -EAGAIN if an allocation would exceed the limit (free goes
+ * through regardless). */
+int cgroup_rdma_account(int cg_id, const char *hca_name, int is_object, int delta) {
+    if (!hca_name || !cgroup_valid(cg_id))
+        return -EINVAL;
+    struct cgroup *cg = &g_cgroups[cg_id];
+    spinlock_acquire(&g_cgroup_lock);
+    int slot = -1;
+    for (int i = 0; i < CGROUP_RDMA_MAX_DEVS; i++) {
+        if (cg->rdma.devices[i].in_use && strcmp(cg->rdma.devices[i].name, hca_name) == 0) {
+            slot = i;
+            break;
+        }
+    }
+    int rc = 0;
+    if (slot >= 0) {
+        struct cgroup_rdma_device *d = &cg->rdma.devices[slot];
+        uint64_t *usage = is_object ? &d->hca_object_usage : &d->hca_handle_usage;
+        uint64_t limit = is_object ? d->hca_object_limit : d->hca_handle_limit;
+        if (delta > 0 && limit > 0 && *usage + (uint64_t)delta > limit) {
+            rc = -EAGAIN; /* allocation would breach the limit */
+        } else {
+            /* Apply signed delta to the running usage counter. */
+            int64_t nu = (int64_t)*usage + delta;
+            *usage = nu > 0 ? (uint64_t)nu : 0;
+        }
+    }
+    /* No device record → no limit configured → allow and don't track. */
+    spinlock_release(&g_cgroup_lock);
+    return rc;
+}
+EXPORT_SYMBOL(cgroup_rdma_account);
+
+/* Copy the RDMA device records for a cgroup into @devices (up to @max).
+ * Returns the count written. */
+int cgroup_rdma_stat(int cg_id, struct cgroup_rdma_device *devices, int max) {
+    if (!cgroup_valid(cg_id))
+        return -EINVAL;
+    if (!devices || max <= 0)
+        return 0;
+    struct cgroup *cg = &g_cgroups[cg_id];
+    int count = 0;
+    spinlock_acquire(&g_cgroup_lock);
+    for (int i = 0; i < CGROUP_RDMA_MAX_DEVS && count < max; i++) {
+        if (cg->rdma.devices[i].in_use)
+            devices[count++] = cg->rdma.devices[i];
+    }
+    spinlock_release(&g_cgroup_lock);
+    return count;
+}
+EXPORT_SYMBOL(cgroup_rdma_stat);
+
+/* Look up one HCA's RDMA record; returns 1 if found (copied to @out), 0 if not. */
+int cgroup_rdma_find(int cg_id, const char *hca_name, struct cgroup_rdma_device *out) {
+    if (!hca_name || !out || !cgroup_valid(cg_id))
+        return 0;
+    struct cgroup *cg = &g_cgroups[cg_id];
+    int found = 0;
+    spinlock_acquire(&g_cgroup_lock);
+    for (int i = 0; i < CGROUP_RDMA_MAX_DEVS; i++) {
+        if (cg->rdma.devices[i].in_use && strcmp(cg->rdma.devices[i].name, hca_name) == 0) {
+            *out = cg->rdma.devices[i];
+            found = 1;
+            break;
+        }
+    }
+    spinlock_release(&g_cgroup_lock);
+    return found;
+}
+EXPORT_SYMBOL(cgroup_rdma_find);
+
 /* ── Sysfs/proc interface helpers ─────────────────────────────────── */
 
 /* Write a cgroup control file value.
@@ -1457,6 +1576,51 @@ int cgroup_write_control(int cg_id, const char *controller, const char *key, con
         if (strcmp(key, "cpuset.mems") == 0 || strcmp(key, "mems") == 0)
             return cgroup_cpuset_set_mems(cg_id, &set);
         return cgroup_cpuset_set(cg_id, &set);
+    } else if (strcmp(controller, "rdma") == 0 || strcmp(key, "rdma.max") == 0) {
+        /* RDMA controller (D315 task 12).  Format mirrors real cgroup v2
+         * rdma.max:  "<hca> hca_handle=<n> hca_object=<n>"  where each <n>
+         * may be "max" (unlimited).  <key> may carry the HCA device name
+         * (e.g. "mlx5_0"); if not, <value> must start with it. */
+        const char *hca = key;
+        if (strcmp(hca, "rdma.max") == 0 || strcmp(key, "max") == 0)
+            hca = value; /* "<hca> hca_handle=... ..." — parse name prefix */
+        char name[CGROUP_RDMA_HCA_NAME_LEN];
+        const char *v = hca;
+        int nlen = 0;
+        while (*v && *v != ' ' && *v != '\t' && nlen < CGROUP_RDMA_HCA_NAME_LEN - 1)
+            name[nlen++] = *v++;
+        name[nlen] = '\0';
+        if (nlen == 0)
+            return -EINVAL;
+        uint64_t hlimit = 0, olimit = 0;
+        while (*v) {
+            while (*v == ' ' || *v == '\t')
+                v++;
+            if (*v == '\0')
+                break;
+            int is_handle = (strncmp(v, "hca_handle", 10) == 0);
+            const char *eq = strchr(v, '=');
+            if (!eq) {
+                while (*v && *v != ' ' && *v != '\t')
+                    v++;
+                continue;
+            }
+            eq++;
+            uint64_t val = 0;
+            if (strncmp(eq, "max", 3) == 0) {
+                val = 0;
+            } else {
+                while (*eq >= '0' && *eq <= '9')
+                    val = val * 10 + (uint64_t)(*eq++ - '0');
+            }
+            if (is_handle)
+                hlimit = val;
+            else
+                olimit = val;
+            while (*v && *v != ' ' && *v != '\t')
+                v++;
+        }
+        return cgroup_rdma_set_limit(cg_id, name, hlimit, olimit);
     }
 
     return 0;
@@ -1493,7 +1657,7 @@ void cgroup_init(void) {
         kprintf("[OK] cgroup v2 mounted at /sys/fs/cgroup/\n");
     }
 
-    kprintf("[OK] Cgroup v2 initialized (cpu, memory, io, pids, freezer)\n");
+    kprintf("[OK] Cgroup v2 initialized (cpu, memory, io, pids, freezer, rdma)\n");
     g_cgroup_initialized = 1;
 }
 EXPORT_SYMBOL(cgroup_init);
