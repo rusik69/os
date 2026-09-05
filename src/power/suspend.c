@@ -166,61 +166,89 @@
  */
 
 #include "suspend.h"
+
 #include "acpi.h"
-#include "pmm.h"
-#include "string.h"
-#include "printf.h"
-#include "spinlock.h"
-#include "io.h"
-#include "cpu.h"           /* read_msr, write_msr */
-#include "smp.h"
+#include "cpu.h" /* read_msr, write_msr */
 #include "cpuhp.h"
+#include "io.h"
+#include "pmm.h"
+#include "printf.h"
+#include "smp.h"
+#include "spinlock.h"
+#include "string.h"
 
 /* ── Suspend statistics struct ─────────────────────────────────── */
 struct suspend_stats {
     int success;
     int fail;
 };
-#include "cpuidle.h"       /* MWAIT C-state support */
-#include "timer.h"          /* timer_get_ticks */
-#include "lockdown.h"
 #include "blockdev.h"
+#include "cpuidle.h" /* MWAIT C-state support */
+#include "lockdown.h"
+#include "rtc.h"   /* persistent clock: rtc_update_clock, rtc_get_time, rtc_set_epoch */
+#include "timer.h" /* timer_get_ticks */
 
 /* ── MSR definitions for S0ix ──────────────────────────────────────── */
-#define MSR_PKG_CST_CONFIG_CONTROL  0x000000E2
-#define MSR_PMG_IO_CAP_BASE         0x0000014F
-#define MSR_MISC_PWR_MGMT           0x000001AA
-#define MSR_POWER_MISC              0x000001FC
+#define MSR_PKG_CST_CONFIG_CONTROL 0x000000E2
+#define MSR_PMG_IO_CAP_BASE 0x0000014F
+#define MSR_MISC_PWR_MGMT 0x000001AA
+#define MSR_POWER_MISC 0x000001FC
 
 /* ── Static save area ────────────────────────────────────────────────── */
 /* Pre-allocated page that survives S3 (RAM is self-refreshed). */
-static struct suspend_state *g_save     = NULL;
-static uint64_t              g_save_phys = 0;
-static int                   g_setup_once = 0;
+static struct suspend_state *g_save = NULL;
+static uint64_t g_save_phys = 0;
+static int g_setup_once = 0;
 
 /* ── CR/register helpers ─────────────────────────────────────────────── */
-static inline uint64_t rdcr0(void) { uint64_t v; __asm__ volatile("mov %%cr0, %0" : "=r"(v)); return v; }
-static inline uint64_t rdcr2(void) { uint64_t v; __asm__ volatile("mov %%cr2, %0" : "=r"(v)); return v; }
-static inline uint64_t rdcr3(void) { uint64_t v; __asm__ volatile("mov %%cr3, %0" : "=r"(v)); return v; }
-static inline uint64_t rdcr4(void) { uint64_t v; __asm__ volatile("mov %%cr4, %0" : "=r"(v)); return v; }
-static inline void     wrcr0(uint64_t v) { __asm__ volatile("mov %0, %%cr0" :: "r"(v) : "memory"); }
-static inline void     wrcr3(uint64_t v) { __asm__ volatile("mov %0, %%cr3" :: "r"(v) : "memory"); }
-static inline void     wrcr4(uint64_t v) { __asm__ volatile("mov %0, %%cr4" :: "r"(v) : "memory"); }
+static inline uint64_t rdcr0(void) {
+    uint64_t v;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(v));
+    return v;
+}
+static inline uint64_t rdcr2(void) {
+    uint64_t v;
+    __asm__ volatile("mov %%cr2, %0" : "=r"(v));
+    return v;
+}
+static inline uint64_t rdcr3(void) {
+    uint64_t v;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(v));
+    return v;
+}
+static inline uint64_t rdcr4(void) {
+    uint64_t v;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(v));
+    return v;
+}
+static inline void wrcr0(uint64_t v) {
+    __asm__ volatile("mov %0, %%cr0" ::"r"(v) : "memory");
+}
+static inline void wrcr3(uint64_t v) {
+    __asm__ volatile("mov %0, %%cr3" ::"r"(v) : "memory");
+}
+static inline void wrcr4(uint64_t v) {
+    __asm__ volatile("mov %0, %%cr4" ::"r"(v) : "memory");
+}
 
 /* ── State save ──────────────────────────────────────────────────────── */
 static void suspend_save_cpu_state(void) {
-    if (!g_save) return;
+    if (!g_save)
+        return;
 
     memset(g_save, 0, sizeof(*g_save));
 
     /* Save GDT pseudo-descriptor using the CPU's SGDT instruction */
     {
-        struct { uint16_t len; uint64_t base; } __attribute__((packed)) gdt, idt;
-        __asm__ volatile("sgdt %0" : "=m"(gdt) :: "memory");
-        __asm__ volatile("sidt %0" : "=m"(idt) :: "memory");
-        g_save->gdt_base  = gdt.base;
+        struct {
+            uint16_t len;
+            uint64_t base;
+        } __attribute__((packed)) gdt, idt;
+        __asm__ volatile("sgdt %0" : "=m"(gdt)::"memory");
+        __asm__ volatile("sidt %0" : "=m"(idt)::"memory");
+        g_save->gdt_base = gdt.base;
         g_save->gdt_limit = gdt.len;
-        g_save->idt_base  = idt.base;
+        g_save->idt_base = idt.base;
         g_save->idt_limit = idt.len;
     }
 
@@ -262,25 +290,31 @@ static void suspend_restore_cpu_state(void) {
 
     /* GDT */
     {
-        struct { uint16_t len; uint64_t base; } __attribute__((packed)) gdt;
-        gdt.len  = (uint16_t)g_save->gdt_limit;
+        struct {
+            uint16_t len;
+            uint64_t base;
+        } __attribute__((packed)) gdt;
+        gdt.len = (uint16_t)g_save->gdt_limit;
         gdt.base = g_save->gdt_base;
-        __asm__ volatile("lgdt %0" :: "m"(gdt) : "memory");
+        __asm__ volatile("lgdt %0" ::"m"(gdt) : "memory");
     }
 
     /* Segment registers */
-    __asm__ volatile("mov %0, %%ds" :: "r"(g_save->ds));
-    __asm__ volatile("mov %0, %%es" :: "r"(g_save->es));
-    __asm__ volatile("mov %0, %%fs" :: "r"(g_save->fs));
-    __asm__ volatile("mov %0, %%gs" :: "r"(g_save->gs));
-    __asm__ volatile("mov %0, %%ss" :: "r"(g_save->ss));
+    __asm__ volatile("mov %0, %%ds" ::"r"(g_save->ds));
+    __asm__ volatile("mov %0, %%es" ::"r"(g_save->es));
+    __asm__ volatile("mov %0, %%fs" ::"r"(g_save->fs));
+    __asm__ volatile("mov %0, %%gs" ::"r"(g_save->gs));
+    __asm__ volatile("mov %0, %%ss" ::"r"(g_save->ss));
 
     /* IDT */
     {
-        struct { uint16_t len; uint64_t base; } __attribute__((packed)) idt;
-        idt.len  = (uint16_t)g_save->idt_limit;
+        struct {
+            uint16_t len;
+            uint64_t base;
+        } __attribute__((packed)) idt;
+        idt.len = (uint16_t)g_save->idt_limit;
         idt.base = g_save->idt_base;
-        __asm__ volatile("lidt %0" :: "m"(idt) : "memory");
+        __asm__ volatile("lidt %0" ::"m"(idt) : "memory");
     }
 
     /* CR3 (page tables) first, then CR4, EFER, finally CR0 */
@@ -290,7 +324,7 @@ static void suspend_restore_cpu_state(void) {
     {
         uint32_t lo = (uint32_t)g_save->efer;
         uint32_t hi = (uint32_t)(g_save->efer >> 32);
-        __asm__ volatile("wrmsr" :: "a"(lo), "d"(hi), "c"(0xC0000080) : "memory");
+        __asm__ volatile("wrmsr" ::"a"(lo), "d"(hi), "c"(0xC0000080) : "memory");
     }
 
     wrcr0(g_save->cr0);
@@ -313,7 +347,8 @@ int suspend_s3(void) {
     /* Allocate save area on first call (4 KB page, persists through S3) */
     if (!g_save) {
         g_save_phys = pmm_alloc_frame();
-        if (!g_save_phys) return -2;
+        if (!g_save_phys)
+            return -2;
         g_save = (struct suspend_state *)PHYS_TO_VIRT(g_save_phys);
     }
 
@@ -330,8 +365,8 @@ int suspend_s3(void) {
     }
 
     kprintf("suspend: === entering ACPI S3 (Suspend-to-RAM) ===\n");
-    kprintf("suspend: save area at phys 0x%lx, size %lu bytes\n",
-            (unsigned long)g_save_phys, (unsigned long)sizeof(*g_save));
+    kprintf("suspend: save area at phys 0x%lx, size %lu bytes\n", (unsigned long)g_save_phys,
+            (unsigned long)sizeof(*g_save));
 
     /* Save current CPU state */
     suspend_save_cpu_state();
@@ -376,15 +411,12 @@ static uint64_t g_s0ix_total_ticks = 0;
  *
  * Returns 1 if S0ix is supported, 0 otherwise.
  */
-int suspend_s0ix_supported(void)
-{
+int suspend_s0ix_supported(void) {
     /* Check for MWAIT support (required for C1e+) */
     uint32_t eax, ebx, ecx, edx;
-    __asm__ volatile("cpuid"
-                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-                     : "a"(1), "c"(0));
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1), "c"(0));
 
-    int have_monitor = (ecx >> 3) & 1;  /* MONITOR/MWAIT CPUID feature bit */
+    int have_monitor = (ecx >> 3) & 1; /* MONITOR/MWAIT CPUID feature bit */
 
     if (!have_monitor) {
         kprintf("[suspend] S0ix: MWAIT not supported\n");
@@ -420,15 +452,14 @@ int suspend_s0ix_supported(void)
  *
  * Returns the number of timer ticks spent in S0ix.
  */
-uint64_t suspend_s0ix_enter(int flags, uint32_t max_latency_us)
-{
+uint64_t suspend_s0ix_enter(int flags, uint32_t max_latency_us) {
     uint64_t start_tick, end_tick;
 
     if (!suspend_s0ix_supported())
         return 0;
 
-    kprintf("[suspend] === Entering S0ix (flags=%d, max_latency=%u us) ===\n",
-            flags, max_latency_us);
+    kprintf("[suspend] === Entering S0ix (flags=%d, max_latency=%u us) ===\n", flags,
+            max_latency_us);
 
     start_tick = end_tick = 0;
 
@@ -453,26 +484,23 @@ uint64_t suspend_s0ix_enter(int flags, uint32_t max_latency_us)
     }
 
     /* MWAIT loop — continues until a wake event occurs */
-    __asm__ volatile(
-        "1: \n"
-        /* MONITOR — set address range for MWAIT */
-        "xor %%rax, %%rax \n"
-        "xor %%rcx, %%rcx \n"
-        "xor %%rdx, %%rdx \n"
-        "monitor \n"
-        /* MWAIT — enter low-power state */
-        "mov %[hint], %%rax \n"
-        "mov %[ext], %%rcx \n"
-        "mwait \n"
-        /* Check if we should continue (on wake) */
-        "test %[maxlat], %[maxlat] \n"
-        "jz 1b \n"
-        : /* no outputs */
-        : [hint] "r" ((uint64_t)mwait_hint),
-          [ext] "r" ((uint64_t)mwait_ext),
-          [maxlat] "r" ((uint64_t)max_latency_us)
-        : "rax", "rcx", "rdx", "memory"
-    );
+    __asm__ volatile("1: \n"
+                     /* MONITOR — set address range for MWAIT */
+                     "xor %%rax, %%rax \n"
+                     "xor %%rcx, %%rcx \n"
+                     "xor %%rdx, %%rdx \n"
+                     "monitor \n"
+                     /* MWAIT — enter low-power state */
+                     "mov %[hint], %%rax \n"
+                     "mov %[ext], %%rcx \n"
+                     "mwait \n"
+                     /* Check if we should continue (on wake) */
+                     "test %[maxlat], %[maxlat] \n"
+                     "jz 1b \n"
+                     : /* no outputs */
+                     : [hint] "r"((uint64_t)mwait_hint), [ext] "r"((uint64_t)mwait_ext),
+                       [maxlat] "r"((uint64_t)max_latency_us)
+                     : "rax", "rcx", "rdx", "memory");
 
     end_tick = timer_get_ticks();
 
@@ -480,8 +508,7 @@ uint64_t suspend_s0ix_enter(int flags, uint32_t max_latency_us)
     g_s0ix_total_ticks += (end_tick - start_tick);
 
     kprintf("[suspend] S0ix exit: slept %llu ticks (%llu entries total)\n",
-            (unsigned long long)(end_tick - start_tick),
-            (unsigned long long)g_s0ix_entries);
+            (unsigned long long)(end_tick - start_tick), (unsigned long long)g_s0ix_entries);
 #else
     (void)flags;
     (void)max_latency_us;
@@ -494,18 +521,18 @@ uint64_t suspend_s0ix_enter(int flags, uint32_t max_latency_us)
 /*
  * Return S0ix statistics.
  */
-void suspend_s0ix_stats(uint64_t *entries, uint64_t *total_ticks)
-{
-    if (entries) *entries = g_s0ix_entries;
-    if (total_ticks) *total_ticks = g_s0ix_total_ticks;
+void suspend_s0ix_stats(uint64_t *entries, uint64_t *total_ticks) {
+    if (entries)
+        *entries = g_s0ix_entries;
+    if (total_ticks)
+        *total_ticks = g_s0ix_total_ticks;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
  *  Hibernate (Suspend-to-Disk) support
  * ═══════════════════════════════════════════════════════════════════════ */
 
-int suspend_hibernate(void)
-{
+int suspend_hibernate(void) {
     /* Lockdown: block hibernation at INTEGRITY level or above */
     if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY)) {
         kprintf("hibernate: blocked by kernel lockdown\n");
@@ -549,7 +576,7 @@ int suspend_hibernate(void)
      * We need enough swap space for the entire memory image.
      * For simplicity, we calculate the number of pages needed.
      */
-    uint64_t total_pages = 0;  /* would be totalram_pages from MM */
+    uint64_t total_pages = 0; /* would be totalram_pages from MM */
     /* In a full implementation, we would iterate all memory zones
      * and count freeable pages.  For now, we use a placeholder. */
     /* Assume 512 MB of memory = 131072 pages */
@@ -559,13 +586,12 @@ int suspend_hibernate(void)
     uint64_t swap_size = blockdev_get_sectors(swap_dev_id);
     if (swap_sectors > swap_size) {
         kprintf("hibernate: swap device too small (need %llu sectors, have %llu)\n",
-                (unsigned long long)swap_sectors,
-                (unsigned long long)swap_size);
+                (unsigned long long)swap_sectors, (unsigned long long)swap_size);
         return -ENOSPC;
     }
 
-    kprintf("hibernate: need %llu sectors on swap device %d\n",
-            (unsigned long long)swap_sectors, swap_dev_id);
+    kprintf("hibernate: need %llu sectors on swap device %d\n", (unsigned long long)swap_sectors,
+            swap_dev_id);
 
     /* ── Step 3: Write swap signature for resume ───────────────────
      * We write a hibernate signature at a known location on the
@@ -582,8 +608,9 @@ int suspend_hibernate(void)
         uint32_t checksum;      /* simple checksum */
         uint32_t version;       /* hibernate format version */
     } __attribute__((packed));
-    struct hibernate_header *hdr = (struct hibernate_header *)(sig_sector + 512 - sizeof(struct hibernate_header));
-    hdr->image_offset = 1;  /* start after header sector */
+    struct hibernate_header *hdr =
+        (struct hibernate_header *)(sig_sector + 512 - sizeof(struct hibernate_header));
+    hdr->image_offset = 1; /* start after header sector */
     hdr->image_sectors = swap_sectors;
     hdr->total_pages = total_pages;
     hdr->checksum = 0xDEADBEEF;
@@ -601,8 +628,7 @@ int suspend_hibernate(void)
      * This is a simplified placeholder — a full implementation would
      * use the swsusp (Software Suspend) mechanism with atomic copy.
      */
-    kprintf("hibernate: saving %llu pages to swap...\n",
-            (unsigned long long)total_pages);
+    kprintf("hibernate: saving %llu pages to swap...\n", (unsigned long long)total_pages);
 
     /* Allocate a temporary buffer for page I/O */
     uint8_t *page_buf = (uint8_t *)pmm_alloc_frame();
@@ -611,7 +637,7 @@ int suspend_hibernate(void)
         return -ENOMEM;
     }
 
-    uint64_t cur_sector = 1;  /* start after header */
+    uint64_t cur_sector = 1; /* start after header */
     for (uint64_t p = 0; p < total_pages; p++) {
         /* Read the current page from its physical location */
         uint64_t phys_addr = p * 4096ULL;
@@ -620,24 +646,21 @@ int suspend_hibernate(void)
         /* Write to swap (8 sectors per page) */
         ret = blk_submit_sync(swap_dev_id, cur_sector, 8, page_buf, BLK_REQ_WRITE);
         if (ret != 0) {
-            kprintf("hibernate: write error at sector %llu\n",
-                    (unsigned long long)cur_sector);
+            kprintf("hibernate: write error at sector %llu\n", (unsigned long long)cur_sector);
             break;
         }
         cur_sector += 8;
 
         if ((p % 10000) == 0 && p > 0) {
-            kprintf("hibernate: saved %llu/%llu pages (%.0f%%)\n",
-                    (unsigned long long)p, (unsigned long long)total_pages,
-                    (double)p * 100.0 / (double)total_pages);
+            kprintf("hibernate: saved %llu/%llu pages (%.0f%%)\n", (unsigned long long)p,
+                    (unsigned long long)total_pages, (double)p * 100.0 / (double)total_pages);
         }
     }
 
     pmm_free_frame((uint64_t)page_buf);
 
     kprintf("hibernate: memory image saved (%llu pages, %llu sectors)\n",
-            (unsigned long long)total_pages,
-            (unsigned long long)(cur_sector - 1));
+            (unsigned long long)total_pages, (unsigned long long)(cur_sector - 1));
 
     /* ── Step 5: Power off (enter S4) ──────────────────────────────
      * Write the S4 sleep type to the ACPI PM1a_CNT register.
@@ -665,21 +688,24 @@ int suspend_hibernate(void)
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* PM suspend state identifiers */
-#define PM_SUSPEND_STANDBY     1
-#define PM_SUSPEND_MEM         2
-#define PM_SUSPEND_DISK        3
+#define PM_SUSPEND_STANDBY 1
+#define PM_SUSPEND_MEM 2
+#define PM_SUSPEND_DISK 3
 
 /* State type for suspend_prepare / suspend_enter */
 typedef int suspend_state_t;
 
 /* Suspend state names for logging */
-static const char *pm_state_name(int state)
-{
+static const char *pm_state_name(int state) {
     switch (state) {
-    case PM_SUSPEND_STANDBY: return "standby";
-    case PM_SUSPEND_MEM:     return "mem";
-    case PM_SUSPEND_DISK:    return "disk";
-    default:                 return "unknown";
+    case PM_SUSPEND_STANDBY:
+        return "standby";
+    case PM_SUSPEND_MEM:
+        return "mem";
+    case PM_SUSPEND_DISK:
+        return "disk";
+    default:
+        return "unknown";
     }
 }
 
@@ -693,9 +719,9 @@ static spinlock_t g_suspend_stats_lock = SPINLOCK_INIT;
 #define MAX_SUSPEND_DEVICES 64
 
 struct suspend_device_entry {
-    int  in_use;
+    int in_use;
     char devname[48];
-    int  suspended;
+    int suspended;
 };
 
 static struct suspend_device_entry g_suspend_devices[MAX_SUSPEND_DEVICES];
@@ -703,9 +729,9 @@ static int g_suspend_device_count = 0;
 static spinlock_t g_suspend_dev_lock = SPINLOCK_INIT;
 
 /* Register a device for suspend ordering (called by driver PM runtime) */
-int suspend_device_register(const char *name)
-{
-    if (!name) return -EINVAL;
+int suspend_device_register(const char *name) {
+    if (!name)
+        return -EINVAL;
 
     spinlock_acquire(&g_suspend_dev_lock);
     if (g_suspend_device_count >= MAX_SUSPEND_DEVICES) {
@@ -722,13 +748,11 @@ int suspend_device_register(const char *name)
 }
 
 /* Suspend all registered devices (called ordered from leaf to root) */
-static int suspend_devices(void)
-{
+static int suspend_devices(void) {
     spinlock_acquire(&g_suspend_dev_lock);
     for (int i = 0; i < g_suspend_device_count; i++) {
         if (g_suspend_devices[i].in_use) {
-            kprintf("[suspend]  suspending device: %s\n",
-                    g_suspend_devices[i].devname);
+            kprintf("[suspend]  suspending device: %s\n", g_suspend_devices[i].devname);
             g_suspend_devices[i].suspended = 1;
         }
     }
@@ -737,13 +761,11 @@ static int suspend_devices(void)
 }
 
 /* Resume all suspended devices (reverse order) */
-static void resume_devices(void)
-{
+static void resume_devices(void) {
     spinlock_acquire(&g_suspend_dev_lock);
     for (int i = g_suspend_device_count - 1; i >= 0; i--) {
         if (g_suspend_devices[i].in_use && g_suspend_devices[i].suspended) {
-            kprintf("[suspend]  resuming device: %s\n",
-                    g_suspend_devices[i].devname);
+            kprintf("[suspend]  resuming device: %s\n", g_suspend_devices[i].devname);
             g_suspend_devices[i].suspended = 0;
         }
     }
@@ -757,7 +779,7 @@ static struct {
     uint64_t total_count;
     uint64_t pending;
     uint64_t history[WAKEUP_EVENT_HISTORY];
-    int      history_idx;
+    int history_idx;
 } g_wakeup_state;
 
 /* Forward declarations for functions defined later in this file */
@@ -768,8 +790,7 @@ int suspend_enter(suspend_state_t state);
 void suspend_wakeup(void);
 
 /* Record a wakeup event (called from interrupt handlers) */
-void pm_wakeup_event(void)
-{
+void pm_wakeup_event(void) {
     uint64_t tick = 0;
     /* timer_get_ticks may not be available early, use best-effort */
     /* tick = timer_get_ticks(); */
@@ -777,8 +798,7 @@ void pm_wakeup_event(void)
     g_wakeup_state.total_count++;
     g_wakeup_state.pending++;
     g_wakeup_state.history[g_wakeup_state.history_idx] = tick;
-    g_wakeup_state.history_idx =
-        (g_wakeup_state.history_idx + 1) % WAKEUP_EVENT_HISTORY;
+    g_wakeup_state.history_idx = (g_wakeup_state.history_idx + 1) % WAKEUP_EVENT_HISTORY;
 }
 
 /* ── Public suspend API ─────────────────────────────────────────────── */
@@ -787,50 +807,43 @@ void pm_wakeup_event(void)
 static int g_pm_state = 0; /* 0 = active, PM_SUSPEND_* = suspending */
 
 /* Begin a suspend cycle — sets the global PM state */
-void pm_suspend_begin(int state)
-{
+void pm_suspend_begin(int state) {
     g_pm_state = state;
     kprintf("[suspend] PM state set to %s (%d)\n", pm_state_name(state), state);
 }
 
 /* End a suspend cycle — clears the global PM state */
-void pm_suspend_end(void)
-{
+void pm_suspend_end(void) {
     kprintf("[suspend] PM state cleared (back to active)\n");
     g_pm_state = 0;
 }
 
 /* Check if the system is currently in a suspend cycle */
-int pm_suspend_in_progress(void)
-{
+int pm_suspend_in_progress(void) {
     return (g_pm_state != 0) ? 1 : 0;
 }
 
 /* Get the current PM suspend state */
-int pm_suspend_get_state(void)
-{
+int pm_suspend_get_state(void) {
     return g_pm_state;
 }
 
 /* Complete suspend cycle: prepare → enter → wakeup */
-int pm_suspend_cycle(int state)
-{
+int pm_suspend_cycle(int state) {
     int ret;
 
     pm_suspend_begin(state);
 
     ret = suspend_prepare(state);
     if (ret < 0) {
-        kprintf("[suspend] Prepare failed for %s: %d\n",
-                pm_state_name(state), ret);
+        kprintf("[suspend] Prepare failed for %s: %d\n", pm_state_name(state), ret);
         pm_suspend_end();
         return ret;
     }
 
     ret = suspend_enter(state);
     if (ret < 0) {
-        kprintf("[suspend] Enter failed for %s: %d\n",
-                pm_state_name(state), ret);
+        kprintf("[suspend] Enter failed for %s: %d\n", pm_state_name(state), ret);
         pm_suspend_end();
         return ret;
     }
@@ -882,7 +895,8 @@ static int suspend_offline_secondary_cpus(void) {
         if (ret != CPUHP_OK) {
             /* Abort — roll back the CPUs we managed to offline. */
             kprintf("[suspend] failed to offline CPU %d (rc=%d); "
-                    "aborting suspend\n", cpu, ret);
+                    "aborting suspend\n",
+                    cpu, ret);
             for (int j = 1; j < cpu; j++) {
                 if (g_suspend_offlined_cpus & (1UL << j)) {
                     cpuhp_bring_cpu(j);
@@ -913,10 +927,14 @@ static void suspend_online_secondary_cpus(void) {
     }
 }
 
-int suspend_prepare(suspend_state_t state)
-{
-    kprintf("[suspend] Preparing system for %s suspend...\n",
-            pm_state_name(state));
+int suspend_prepare(suspend_state_t state) {
+    kprintf("[suspend] Preparing system for %s suspend...\n", pm_state_name(state));
+
+    /* Step 0: Persist the current system time to the RTC before the clock
+     * stops advancing with the CPUs.  On resume the RTC (backed by battery
+     * and running while the system sleeps) is re-read to restore the wall
+     * clock, so the system's notion of time survives the suspend gap. */
+    rtc_update_clock();
 
     /* Step 1: Suspend devices in order */
     int ret = suspend_devices();
@@ -945,8 +963,7 @@ int suspend_prepare(suspend_state_t state)
         return ret;
     }
 
-    kprintf("[suspend] System prepared for %s suspend\n",
-            pm_state_name(state));
+    kprintf("[suspend] System prepared for %s suspend\n", pm_state_name(state));
     return 0;
 }
 
@@ -959,13 +976,12 @@ int suspend_prepare(suspend_state_t state)
  *
  * This function returns after resume.
  */
-int suspend_enter(suspend_state_t state)
-{
+int suspend_enter(suspend_state_t state) {
     int ret = 0;
 
     kprintf("[suspend] Entering %s state...\n", pm_state_name(state));
 
-    cli();  /* Disable interrupts — must not be interrupted during entry */
+    cli(); /* Disable interrupts — must not be interrupted during entry */
 
     switch (state) {
     case PM_SUSPEND_STANDBY:
@@ -992,11 +1008,10 @@ int suspend_enter(suspend_state_t state)
         break;
     }
 
-    sti();  /* Re-enable interrupts after resume/error */
+    sti(); /* Re-enable interrupts after resume/error */
 
     if (ret < 0) {
-        kprintf("[suspend] %s entry failed (rc=%d)\n",
-                pm_state_name(state), ret);
+        kprintf("[suspend] %s entry failed (rc=%d)\n", pm_state_name(state), ret);
     }
 
     return ret;
@@ -1005,9 +1020,22 @@ int suspend_enter(suspend_state_t state)
 /* suspend_wakeup — Called after waking from suspend.
  * Re-enables devices and notifies drivers of wakeup.
  */
-void suspend_wakeup(void)
-{
+void suspend_wakeup(void) {
     kprintf("[suspend] Waking up from suspend...\n");
+
+    /* The RTC kept running while the CPUs slept, so re-read it to recover
+     * the true wall clock and rebase the boot epoch accordingly.  This is
+     * the resume half of the persistent clock: wall clock = rtc_now,
+     * so boot_epoch = rtc_now - ticks_since_boot.  Ticks were frozen by
+     * the sleep, so the recomputed epoch makes clock_gettime(REALTIME)
+     * report the post-resume wall-clock time instead of the stale pre-
+     * suspend time. */
+    struct rtc_time now;
+    rtc_get_time(&now);
+    uint64_t rtc_epoch = rtc_to_epoch(&now);
+    uint64_t ticks = timer_get_ticks();
+    uint64_t ticks_sec = ticks / TIMER_FREQ;
+    rtc_set_epoch((rtc_epoch >= ticks_sec) ? (rtc_epoch - ticks_sec) : 0);
 
     /* Resume devices in reverse order */
     resume_devices();
@@ -1030,32 +1058,29 @@ void suspend_wakeup(void)
 /* suspend_stats — Return current suspend statistics.
  * Fills in success/fail counts and total wakeup count.
  */
-void suspend_stats(struct suspend_stats *stats)
-{
-    if (!stats) return;
+void suspend_stats(struct suspend_stats *stats) {
+    if (!stats)
+        return;
 
     spinlock_acquire(&g_suspend_stats_lock);
     stats->success = g_suspend_stats.success;
-    stats->fail    = g_suspend_stats.fail;
+    stats->fail = g_suspend_stats.fail;
     spinlock_release(&g_suspend_stats_lock);
 }
 
 /* suspend_wakeup_count — Return total wakeup events seen since boot. */
-int suspend_wakeup_count(void)
-{
+int suspend_wakeup_count(void) {
     return (int)g_wakeup_state.total_count;
 }
 
 /* suspend_wakeup_count_check — Check if wakeup events are pending.
  * Returns 0 if no pending wakeups (safe to suspend), >0 if pending.
  */
-int suspend_wakeup_count_check(void)
-{
+int suspend_wakeup_count_check(void) {
     return (g_wakeup_state.pending > 0) ? 1 : 0;
 }
 
 /* suspend_wakeup_count_reset — Clear the pending wakeup counter. */
-void suspend_wakeup_count_reset(void)
-{
+void suspend_wakeup_count_reset(void) {
     g_wakeup_state.pending = 0;
 }
