@@ -32,15 +32,17 @@ struct cgroup_io_device {
 /* ── Per-controller state ────────────────────────────────────────── */
 
 /* CPU controller state */
+#define CGROUP_CPUACCT_MAX_CPUS 16 /* per-cpu account slots */
 struct cgroup_cpu_state {
-    uint64_t max_quota;         /* cpu.max quota in µs */
-    uint64_t max_period;        /* cpu.max period in µs */
-    uint64_t usage_usec;        /* CPU time used in µs (total) */
-    uint64_t usage_user_usec;   /* CPU time in user mode µs */
-    uint64_t usage_system_usec; /* CPU time in kernel mode µs */
-    int throttled;              /* 1 if currently throttled */
-    uint64_t nr_throttled;      /* total throttling events */
-    uint64_t throttled_usec;    /* total time throttled in µs */
+    uint64_t max_quota;                             /* cpu.max quota in µs */
+    uint64_t max_period;                            /* cpu.max period in µs */
+    uint64_t usage_usec;                            /* CPU time used in µs (total) */
+    uint64_t usage_user_usec;                       /* CPU time in user mode µs */
+    uint64_t usage_system_usec;                     /* CPU time in kernel mode µs */
+    uint64_t per_cpu_usec[CGROUP_CPUACCT_MAX_CPUS]; /* per-CPU usage */
+    int throttled;                                  /* 1 if currently throttled */
+    uint64_t nr_throttled;                          /* total throttling events */
+    uint64_t throttled_usec;                        /* total time throttled in µs */
 };
 
 /* Memory controller state */
@@ -138,6 +140,9 @@ int cgroup_cpu_account_split(int pid, uint64_t delta_us, int is_user);
 int cgroup_cpu_is_throttled(int cg_id);
 void cgroup_cpu_stat(int cg_id, uint64_t *usage_usec, uint64_t *user_usec, uint64_t *system_usec,
                      uint64_t *nr_throttled, uint64_t *throttled_usec);
+/* Fill @per_cpu (up to @max) with per-CPU usage µs for a cgroup.
+ * Returns the number of slots written. */
+int cgroup_cpu_percpu_stat(int cg_id, uint64_t *per_cpu, int max);
 
 /* Memory controller */
 int cgroup_mem_set_max(int cg_id, uint64_t max_bytes);

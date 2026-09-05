@@ -851,6 +851,12 @@ int cgroup_cpu_account_split(int pid, uint64_t delta_us, int is_user) {
         else
             cg->cpu.usage_system_usec += delta_us;
         cg->cpu.usage_usec += delta_us;
+        {
+            extern int smp_get_cpu_id(void);
+            int cpu = smp_get_cpu_id();
+            if (cpu >= 0)
+                cg->cpu.per_cpu_usec[(unsigned)cpu % CGROUP_CPUACCT_MAX_CPUS] += delta_us;
+        }
         spinlock_release(&g_cgroup_lock);
         return 0;
     }
@@ -861,6 +867,14 @@ int cgroup_cpu_account_split(int pid, uint64_t delta_us, int is_user) {
     else
         cg->cpu.usage_system_usec += delta_us;
     cg->cpu.usage_usec += delta_us;
+
+    /* Per-CPU breakdown */
+    {
+        extern int smp_get_cpu_id(void);
+        int cpu = smp_get_cpu_id();
+        if (cpu >= 0)
+            cg->cpu.per_cpu_usec[(unsigned)cpu % CGROUP_CPUACCT_MAX_CPUS] += delta_us;
+    }
 
     /* Check if we've exceeded the quota in this period */
     if (cg->cpu.usage_usec > cg->cpu.max_quota) {
@@ -875,6 +889,8 @@ int cgroup_cpu_account_split(int pid, uint64_t delta_us, int is_user) {
         cg->cpu.usage_usec = 0;
         cg->cpu.usage_user_usec = 0;
         cg->cpu.usage_system_usec = 0;
+        for (int p = 0; p < CGROUP_CPUACCT_MAX_CPUS; p++)
+            cg->cpu.per_cpu_usec[p] = 0;
         cg->cpu.throttled = 0;
     }
 
@@ -912,6 +928,20 @@ void cgroup_cpu_stat(int cg_id, uint64_t *usage_usec, uint64_t *user_usec, uint6
         *nr_throttled = cg->cpu.nr_throttled;
     if (throttled_usec)
         *throttled_usec = cg->cpu.throttled_usec;
+}
+
+/* Per-CPU usage breakdown for a cgroup. */
+int cgroup_cpu_percpu_stat(int cg_id, uint64_t *per_cpu, int max) {
+    if (!cgroup_valid(cg_id) || !per_cpu)
+        return 0;
+    struct cgroup *cg = &g_cgroups[cg_id];
+
+    spinlock_acquire(&g_cgroup_lock);
+    int n = (max < CGROUP_CPUACCT_MAX_CPUS) ? max : CGROUP_CPUACCT_MAX_CPUS;
+    for (int i = 0; i < n; i++)
+        per_cpu[i] = cg->cpu.per_cpu_usec[i];
+    spinlock_release(&g_cgroup_lock);
+    return n;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
