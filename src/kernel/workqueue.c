@@ -20,11 +20,15 @@
 
 #define KERNEL_INTERNAL
 #include "workqueue.h"
+
+#include "cpuhp.h"
+#include "errno.h"
+#include "printf.h"
 #include "process.h"
 #include "scheduler.h"
-#include "string.h"
-#include "printf.h"
+#include "smp.h"
 #include "spinlock.h"
+#include "string.h"
 
 /* ── Per-workqueue state ──────────────────────────────────────────── */
 
@@ -445,6 +449,153 @@ static int workqueue_oom_get_state(void)
     return wq_oom_state;
 }
 
+/* ── CPU hotplug: migrate worker threads off a dying CPU ───────────── */
+
+/*
+ * When a CPU is being taken offline, any workqueue worker thread that is
+ * running on (or pinned to) that CPU must be migrated to a remaining
+ * online CPU so that pending work continues to be drained.  Worker
+ * threads created via kthread_create() have no hard affinity by default,
+ * but workers bound to a specific CPU (cpu_affinity non-zero) must be
+ * re-pinned to a surviving CPU, and a worker mid-execution on the dying
+ * CPU must be handed back to the scheduler.
+ */
+
+/* Pick the lowest-numbered online CPU other than @dead.  Returns a CPU id
+ * on success or -1 if no viable survivor exists (should not happen, since
+ * the BSP/CPU 0 cannot be offlined). */
+static int wq_pick_survivor(int dead_cpu) {
+    for (int c = 0; c < smp_cpu_count; c++) {
+        if (c != dead_cpu && cpuhp_is_online(c))
+            return c;
+    }
+    return -1;
+}
+
+/* Find a worker's kthread pcb from its recorded pid. */
+static struct process *wq_worker_proc(int pid) {
+    if (pid <= 0)
+        return NULL;
+    return process_get_by_pid((uint32_t)pid);
+}
+
+/*
+ * Re-pin @proc so it no longer runs on dead_cpu.  If @proc was pinned to
+ * exactly the dying CPU, move it onto @survivor.  Returns 1 if affinity
+ * changed (or @proc was running on dead_cpu), else 0.
+ */
+static int wq_rebind_affinity(struct process *proc, int dead_cpu, int survivor) {
+    int changed = 0;
+
+    if (proc->cpu_affinity != 0) {
+        /* Explicit per-CPU pin.  Clear the dying CPU's bit. */
+        uint8_t aff = (uint8_t)(proc->cpu_affinity & (uint8_t) ~(1U << dead_cpu));
+        if (aff == 0)
+            aff = (uint8_t)(1U << survivor); /* was pinned to the dead CPU */
+        if (aff != proc->cpu_affinity) {
+            proc->cpu_affinity = aff;
+            changed = 1;
+        }
+    } else if (proc->on_cpu) {
+        /* Default (all-CPU) worker mid-execution on the dying CPU.
+         * We cannot tell precisely which CPU it executed on here, but if
+         * the dying CPU currently has it as current_process it must be
+         * handed back to the scheduler.  Detect via current_process. */
+        if ((unsigned int)dead_cpu < SMP_MAX_CPUS &&
+            cpu_info_array[dead_cpu].current_process == proc)
+            changed = 1;
+    }
+
+    return changed;
+}
+
+/*
+ * Ensure a worker that was running on the dying CPU is re-queued so the
+ * scheduler can place it on a survivor.  Mirrors the general hotplug task
+ * migration path (see cpuhp_migrate_tasks_away) but scoped to workqueues.
+ */
+static void wq_relaunch_worker(struct process *proc, int dead_cpu) {
+    int was_current =
+        ((unsigned int)dead_cpu < SMP_MAX_CPUS && cpu_info_array[dead_cpu].current_process == proc);
+
+    if (proc->on_cpu && was_current) {
+        proc->state = PROCESS_READY;
+        proc->on_cpu = 0;
+        /* scheduler_add() acquires sched_lock internally (same path the
+         * general hotplug migration uses via cpuhp_migrate_tasks_away). */
+        scheduler_add(proc);
+    }
+}
+
+/*
+ * workqueue_cpu_offline - Migrate workqueue worker threads off a dying CPU.
+ * @cpu_id: the CPU being taken offline.
+ *
+ * Walk fast-path state in the system workqueue graveyard and every pool
+ * workqueue.  For each worker whose affinity includes the dying CPU, re-pin
+ * it to a surviving online CPU; if that worker was executing on the dying
+ * CPU, hand it back to the scheduler so its pending work keeps draining.
+ *
+ * Called from the CPU hotplug notifier registered by workqueue_init().
+ */
+void workqueue_cpu_offline(int cpu_id) {
+    int survivor;
+    unsigned int workers_moved = 0;
+
+    if (cpu_id < 0 || (unsigned int)cpu_id >= SMP_MAX_CPUS)
+        return;
+
+    survivor = wq_pick_survivor(cpu_id);
+    if (survivor < 0) {
+        /* Only the BSP remains online and is being offlined — refused. */
+        kprintf("[workqueue] CPU %d offline: no surviving CPU\n", cpu_id);
+        return;
+    }
+
+    /* System workqueue singleton. */
+    if (g_wq_initialized && g_sys_wq.worker_pids[0] > 0) {
+        struct process *w = wq_worker_proc(g_sys_wq.worker_pids[0]);
+        if (w && wq_rebind_affinity(w, cpu_id, survivor)) {
+            wq_relaunch_worker(w, cpu_id);
+            workers_moved++;
+        }
+    }
+
+    /* Pool of dynamic workqueues. */
+    for (int q = 0; q < WQ_MAX_WORKQUEUES; q++) {
+        struct wq_internal *wq = &wq_pool[q];
+        if (!wq->in_use)
+            continue;
+        for (int wi = 0; wi < WQ_UNBOUND_MAX_WORKERS; wi++) {
+            if (wq->worker_pids[wi] <= 0)
+                continue;
+            struct process *w = wq_worker_proc(wq->worker_pids[wi]);
+            if (w && wq_rebind_affinity(w, cpu_id, survivor)) {
+                wq_relaunch_worker(w, cpu_id);
+                workers_moved++;
+            }
+        }
+    }
+
+    if (workers_moved)
+        kprintf("[workqueue] migrated %u worker(s) off CPU %d\n", workers_moved,
+                (unsigned int)cpu_id);
+}
+
+/*
+ * CPU hotplug notifier: on a transition to OFFLINE, migrate workqueue
+ * workers off that CPU.  Registered by workqueue_init().  Runs with
+ * cpuhp_lock held and interrupts disabled, so it only does lightweight
+ * bookkeeping plus a scheduler re-queue (which mirrors the general
+ * hotplug migration path and takes sched_lock internally).
+ */
+static void wq_hotplug_notify(int cpu_id, enum cpuhp_state old_state, enum cpuhp_state new_state) {
+    (void)old_state;
+    /* Only act once the CPU has fully reached OFFLINE. */
+    if (new_state == CPUHP_STATE_OFFLINE)
+        workqueue_cpu_offline(cpu_id);
+}
+
 /* ── Initialisation ───────────────────────────────────────────────── */
 
 void __init workqueue_init(void)
@@ -459,6 +610,12 @@ void __init workqueue_init(void)
     /* Initialise workqueue pool */
     memset(wq_pool, 0, sizeof(wq_pool));
     spinlock_init(&wq_pool_lock);
+
+    /* Register CPU-hotplug notifier so worker threads are migrated off a
+     * CPU that is being taken offline.  cpuhp_init() already ran (from
+     * smp_init_bsp), so the notifier table is ready. */
+    if (cpuhp_register_notify(wq_hotplug_notify) != 0)
+        kprintf("[workqueue] failed to register CPU hotplug notifier\n");
 
     g_wq_initialized = 1;
 

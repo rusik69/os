@@ -78,4 +78,8 @@ void workqueue_destroy(struct workqueue_struct *wq);
 /* Initialize the workqueue subsystem (creates the system workqueue). */
 void workqueue_init(void);
 
+/* Migrate workqueue worker threads off a CPU being taken offline.
+ * Called from the CPU-hotplug notifier registered by workqueue_init(). */
+void workqueue_cpu_offline(int cpu_id);
+
 #endif /* WORKQUEUE_H */
