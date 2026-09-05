@@ -215,7 +215,93 @@ int pid_ns_visible(const struct process *caller, const struct process *target)
     return 0;
 }
 
-/* ── Get namespace-local PID ─────────────────────────────────────
+/* ── Cross-namespace PID translation ─────────────────────────────
+ *
+ * A process is visible from `viewer` only when `target` is `viewer`
+ * itself or a descendant of it.  Namespace hierarchy is represented
+ * by `parent_id` on each descriptor; walk from the target up toward
+ * the root looking for `viewer`.
+ */
+static int pid_ns_is_descendant_or_equal(const struct pid_namespace *viewer,
+                                         const struct pid_namespace *target) {
+    if (!viewer)
+        return 1; /* NULL treats as root */
+    if (viewer == &init_pid_ns)
+        return 1; /* root sees everything */
+    if (!target)
+        return 0;
+
+    /* If the target is at/below viewer in the hierarchy, walking the
+     * target's parent chain must eventually reach viewer's id. */
+    int guard = PIDNS_MAX_NS + 2;
+    const struct pid_namespace *ns = target;
+    while (ns && guard-- > 0) {
+        if (ns == viewer)
+            return 1;
+        if (ns == &init_pid_ns)
+            break;
+        uint32_t parent_id = ns->parent_id;
+        if (parent_id == (uint32_t)-1)
+            break;
+        if (parent_id >= PIDNS_MAX_NS)
+            break;
+        ns = &pid_ns_table[parent_id];
+        if (!ns || !ns->in_use)
+            break;
+    }
+    return 0;
+}
+
+int pid_ns_is_ancestor_or_equal(const struct pid_namespace *viewer,
+                                const struct pid_namespace *target) {
+    return pid_ns_is_descendant_or_equal(viewer, target);
+}
+
+/* ── Forward translation: target process → PID as seen from viewer ─── */
+
+uint32_t pid_ns_translate_pid(const struct process *target, const struct pid_namespace *viewer_ns) {
+    if (!target)
+        return 0;
+
+    const struct pid_namespace *target_ns = target->pid_ns ? target->pid_ns : &init_pid_ns;
+
+    /* Target not visible from the viewer's namespace → no translation. */
+    if (!pid_ns_is_descendant_or_equal(viewer_ns, target_ns))
+        return 0;
+
+    /* Viewer is an ancestor namespace (or the root): the process is
+     * addressed by its global kernel-wide PID, which is its stable
+     * identity at every level above its own namespace. */
+    if (!viewer_ns || viewer_ns == &init_pid_ns || viewer_ns != target_ns)
+        return target->pid;
+
+    /* Same namespace — use the namespace-local PID. */
+    return pid_ns_get_ns_pid(target);
+}
+
+/* ── Reverse translation: namespace-local PID → process ──────────
+ *
+ * Iterate the process table, translating each process into a PID as
+ * seen from `caller_ns` and return the first process that maps to the
+ * requested value.  Because a caller in `caller_ns` can only address
+ * visible processes, invisible entries are skipped by translate_pid
+ * returning 0.
+ */
+struct process *pid_ns_lookup_pid(const struct pid_namespace *caller_ns, uint32_t pid) {
+    struct process *table = process_get_table();
+    if (!table)
+        return NULL;
+
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state == PROCESS_UNUSED)
+            continue;
+        if (pid_ns_translate_pid(&table[i], caller_ns) == pid)
+            return &table[i];
+    }
+    return NULL;
+}
+
+/* Get namespace-local PID ─────────────────────────────────────────
  *
  * Inside a PID namespace, the process's visible PID is the one
  * allocated within that namespace.  For the root namespace, this

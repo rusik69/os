@@ -76,4 +76,37 @@ int pid_ns_visible(const struct process *caller, const struct process *target);
  * For the root namespace, this is the same as the global PID. */
 uint32_t pid_ns_get_ns_pid(const struct process *proc);
 
+/* ── Cross-namespace PID translation ─────────────────────────────
+ *
+ * Processes in different PID namespaces address each other with
+ * different numbers.  `pid_ns_translate_pid()` converts a target
+ * process into the PID value that a process inside `viewer_ns` uses to
+ * refer to it; `pid_ns_lookup_pid()` does the reverse — given a PID
+ * number as seen inside `caller_ns`, find the underlying process.
+ *
+ * Translation model (simplified, matches the existing allocator):
+ *   - A process is visible from `viewer_ns` only when its own namespace
+ *     is `viewer_ns` itself or a descendant of it (a child ns cannot
+ *     see ancestors).
+ *   - When `viewer_ns` equals the process's own namespace, the viewer
+ *     uses the namespace-local PID (`ns_pid`).
+ *   - When `viewer_ns` is an ancestor namespace (including the root),
+ *     the process is addressed by its global kernel-wide PID, which is
+ *     its stable identity at every level above its own namespace.
+ *   - Returns 0 when the target is not visible from `viewer_ns`.
+ */
+
+/* Is `viewer` the same namespace as, or an ancestor of, `target`? */
+int pid_ns_is_ancestor_or_equal(const struct pid_namespace *viewer,
+                                const struct pid_namespace *target);
+
+/* Translate `target`'s PID into the number `viewer_ns` uses for it.
+ * Returns 0 if `target` is not visible from `viewer_ns`. */
+uint32_t pid_ns_translate_pid(const struct process *target, const struct pid_namespace *viewer_ns);
+
+/* Reverse translation: find the process a caller in `caller_ns`
+ * addresses with the namespace-local value `pid`.  Returns NULL if no
+ * visible process matches. */
+struct process *pid_ns_lookup_pid(const struct pid_namespace *caller_ns, uint32_t pid);
+
 #endif /* PID_NAMESPACE_H */
