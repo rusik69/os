@@ -165,10 +165,72 @@ extern int scheduler_migrate_tasks_from(int from_cpu);
 /* Lock protecting hotplug state transitions — serialises online/offline */
 spinlock_t cpuhp_lock = SPINLOCK_INIT;
 
-/* Notifier list for future expansion (e.g. ACPI thermal, cpufreq) */
+/* Notifier list for subsystems that react to CPU online/offline (workqueue,
+ * timer, RCU, IRQ migration etc. register their per-CPU teardown here). */
 #define CPUHP_NOTIFIER_MAX 8
 static cpuhp_notify_fn cpuhp_notifiers[CPUHP_NOTIFIER_MAX];
 static int cpuhp_notifier_count = 0;
+
+/* ── Built-in notifier callbacks ─────────────────────────────────────── */
+
+/* Human-readable name for a hotplug state (diagnostics). */
+static const char *cpuhp_state_name(enum cpuhp_state st) {
+    switch (st) {
+    case CPUHP_STATE_DEAD:
+        return "DEAD";
+    case CPUHP_STATE_OFFLINE:
+        return "OFFLINE";
+    case CPUHP_STATE_PMM:
+        return "PMM";
+    case CPUHP_STATE_SLAB:
+        return "SLAB";
+    case CPUHP_STATE_IRQWORK:
+        return "IRQWORK";
+    case CPUHP_STATE_MIGRATE:
+        return "MIGRATE";
+    case CPUHP_STATE_DRAIN:
+        return "DRAIN";
+    case CPUHP_STATE_SCHED:
+        return "SCHED";
+    case CPUHP_STATE_ONLINE:
+        return "ONLINE";
+    default:
+        return "?";
+    }
+}
+
+/* Log every transition so the hotplug path is observable on the console. */
+static void cpuhp_transition_log(int cpu_id, enum cpuhp_state old_state,
+                                 enum cpuhp_state new_state) {
+    if (old_state == new_state)
+        return;
+    if (new_state == CPUHP_STATE_ONLINE)
+        kprintf("[CPU] notifier: CPU %d now ONLINE (%d online)\n", cpu_id, cpuhp_online_count());
+    else if (new_state == CPUHP_STATE_OFFLINE)
+        kprintf("[CPU] notifier: CPU %d now OFFLINE (%d online)\n", cpu_id, cpuhp_online_count());
+    else
+        kprintf("[CPU] notifier: CPU %d %s -> %s\n", cpu_id, cpuhp_state_name(old_state),
+                cpuhp_state_name(new_state));
+}
+
+/* Consistency check: once a CPU is fully OFFLINE its per-CPU runqueues must
+ * have been drained by scheduler_migrate_tasks_from(). Warn if any residual
+ * tasks are still queued (a real mis-migration bug caught at hotplug time). */
+static void cpuhp_sched_verify(int cpu_id, enum cpuhp_state old_state, enum cpuhp_state new_state) {
+    if (new_state != CPUHP_STATE_OFFLINE)
+        return;
+    if (cpu_id < 0 || cpu_id >= smp_cpu_count)
+        return;
+
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        if (cpu_info_array[cpu_id].queue_head[lvl] != NULL) {
+            kprintf("[CPU] WARNING: CPU %d offline but level %d runqueue "
+                    "still holds tasks!\n",
+                    cpu_id, lvl);
+            break;
+        }
+    }
+}
 
 /* ── Initialisation ─────────────────────────────────────────────────── */
 
@@ -181,6 +243,10 @@ void cpuhp_init(void) {
 
     cpuhp_notifier_count = 0;
     memset(cpuhp_notifiers, 0, sizeof(cpuhp_notifiers));
+
+    /* Register built-in notifier callbacks (observability + sched sanity). */
+    cpuhp_register_notify(cpuhp_transition_log);
+    cpuhp_register_notify(cpuhp_sched_verify);
 
     kprintf("[CPU] Hotplug initialized (max %d CPUs)\n", CPUHP_MAX_CPUS);
 }
@@ -205,10 +271,10 @@ int cpuhp_register_notify(cpuhp_notify_fn fn) {
     return 0;
 }
 
-void cpuhp_notify(void) {
+void cpuhp_notify(int cpu_id, enum cpuhp_state old_state, enum cpuhp_state new_state) {
     for (int i = 0; i < cpuhp_notifier_count; i++) {
         if (cpuhp_notifiers[i])
-            cpuhp_notifiers[i]();
+            cpuhp_notifiers[i](cpu_id, old_state, new_state);
     }
 }
 
@@ -479,7 +545,7 @@ int cpuhp_bring_cpu(int cpu_id) {
 
     if (ret == CPUHP_OK)
         kprintf("[CPU] CPU %d brought online (now %d online)\n", cpu_id, cpuhp_online_count());
-    cpuhp_notify();
+    cpuhp_notify(cpu_id, cur, CPUHP_STATE_ONLINE);
 
 out:
     spinlock_irqsave_release(&cpuhp_lock, irq_flags);
@@ -531,7 +597,7 @@ int cpuhp_take_cpu_offline(int cpu_id) {
 
     if (ret == CPUHP_OK)
         kprintf("[CPU] CPU %d taken offline (now %d online)\n", cpu_id, cpuhp_online_count());
-    cpuhp_notify();
+    cpuhp_notify(cpu_id, cur, CPUHP_STATE_OFFLINE);
 
 out:
     spinlock_irqsave_release(&cpuhp_lock, irq_flags);

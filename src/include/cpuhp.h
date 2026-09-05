@@ -40,8 +40,16 @@ enum cpuhp_state {
 #define CPUHP_ERR_BUSY -2  /* cannot offline: tasks refused to migrate */
 #define CPUHP_ERR_BSP -3   /* cannot offline the boot CPU */
 
-/* Notifier callback type for CPU hotplug state changes */
-typedef void (*cpuhp_notify_fn)(void);
+/* Notifier callback type for CPU hotplug state changes.
+ *
+ * A registered callback is invoked after a CPU state transition with the
+ * affected CPU and the old/new states.  @old_state is the state before the
+ * transition, @new_state the state after it.  Callbacks run with cpuhp_lock
+ * held and interrupts disabled, so they must not sleep, and must not call
+ * cpuhp_bring_cpu()/cpuhp_take_cpu_offline() re-entrantly on the same CPU.
+ * Keep the work short (bookkeeping, flags, lightweight accounting).
+ */
+typedef void (*cpuhp_notify_fn)(int cpu_id, enum cpuhp_state old_state, enum cpuhp_state new_state);
 
 /* Per-CPU hotplug state table (defined in smp.c) */
 extern enum cpuhp_state cpuhp_cpu_state[CPUHP_MAX_CPUS];
@@ -97,10 +105,12 @@ int cpuhp_online_count(void);
 int cpuhp_migrate_tasks_away(int cpu_id);
 
 /*
- * Notify hotplug listeners that a CPU state changed.
- * Called internally after state transitions.
+ * Notify hotplug listeners that a CPU changed state.
+ * Called internally (with cpuhp_lock held, interrupts disabled) after a
+ * state transition.  Each registered callback receives the affected CPU and
+ * the old/new states.
  */
-void cpuhp_notify(void);
+void cpuhp_notify(int cpu_id, enum cpuhp_state old_state, enum cpuhp_state new_state);
 
 /*
  * Register a callback invoked on CPU hotplug state changes.
