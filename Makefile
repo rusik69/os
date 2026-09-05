@@ -536,6 +536,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/ima.c \
          src/kernel/ima_policy.c \
          src/kernel/ima_appraise.c \
+         src/kernel/ima_template.c \
          src/kernel/evm.c \
          src/kernel/ipe.c \
          src/kernel/keyring.c \

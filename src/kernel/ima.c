@@ -18,6 +18,7 @@
 
 #include "errno.h"
 #include "heap.h"
+#include "ima_template.h"
 #include "printf.h"
 #include "sha256.h"
 #include "string.h"
@@ -120,17 +121,6 @@ static int ima_hash_file(const char *path, uint8_t digest[IMA_DIGEST_SIZE]) {
 }
 
 /* ── Hex formatting helpers ──────────────────────────────────────── */
-
-static void hash_to_hex(const uint8_t *hash, char *hex, int hex_len) {
-    static const char hex_chars[] = "0123456789abcdef";
-    int i;
-    for (i = 0; i < IMA_DIGEST_SIZE && (i * 2 + 1) < hex_len; i++) {
-        hex[i * 2] = hex_chars[(hash[i] >> 4) & 0x0F];
-        hex[i * 2 + 1] = hex_chars[hash[i] & 0x0F];
-    }
-    hex[hex_len - 1] = '\0';
-}
-
 static int hex_to_hash(const char *hex, uint8_t *hash) {
     int i;
     for (i = 0; i < IMA_DIGEST_SIZE; i++) {
@@ -376,24 +366,16 @@ int ima_buf_read(char *buf, int size) {
     if (n > 0 && pos + n < size)
         pos += n;
 
-    /* Format per entry: <type> <hash_hex> <path> */
+    /* Format per entry via the active IMA template (ima-ng default) */
     for (i = 0; i < total && pos < size - 128; i++) {
         int idx = (start + i) % IMA_LOG_MAX;
-        char hex[IMA_HASH_HEX_LEN];
-        const char *type_str;
 
         if (ima_log[idx].path[0] == '\0')
             continue;
 
-        hash_to_hex(ima_log[idx].hash, hex, (int)sizeof(hex));
-
-        if (ima_log[idx].appraised)
-            type_str = ima_log[idx].passed ? "appraise-ok" : "appraise-fail";
-        else
-            type_str = (ima_log[idx].type == IMA_FILE_EXEC) ? "exec" : "read";
-
-        n = snprintf(buf + pos, (size_t)(size - pos), "%s %s %s\n", type_str, hex,
-                     ima_log[idx].path);
+        int tpl = ima_template_current();
+        n = ima_template_render(tpl, ima_log[idx].path, ima_log[idx].hash, ima_log[idx].type,
+                                ima_log[idx].appraised, ima_log[idx].passed, buf + pos, size - pos);
         if (n > 0 && pos + n < size)
             pos += n;
     }
@@ -425,6 +407,24 @@ static int ima_mode_write_cb(const char *data, uint32_t size, void *priv) {
 static int ima_log_read_cb(char *buf, uint32_t max_size, void *priv) {
     (void)priv;
     return ima_buf_read(buf, (int)max_size);
+}
+
+/* ima_fmt — read/select the measurement-list template. */
+static int ima_fmt_read_cb(char *buf, uint32_t max_size, void *priv) {
+    const char *name;
+    int n;
+
+    (void)priv;
+    name = ima_template_name(ima_template_current());
+    n = snprintf(buf, (size_t)max_size, "%s\n", name ? name : "none");
+    return n;
+}
+
+static int ima_fmt_write_cb(const char *data, uint32_t size, void *priv) {
+    (void)priv;
+    if (!data || size == 0)
+        return -EINVAL;
+    return ima_template_select(data, (int)size);
 }
 
 /* ── Boot-time kernel measurement ────────────────────────────────── */
@@ -471,6 +471,10 @@ void __init ima_init(void) {
 
     /* Create measurement log file (read-only, dynamic) */
     sysfs_create_writable_file("/sys/kernel/security/ima_log", "", NULL, ima_log_read_cb, NULL);
+
+    /* Create template selection file (defaults to ima-ng) */
+    sysfs_create_writable_file("/sys/kernel/security/ima_fmt", "ima-ng\n", NULL, ima_fmt_read_cb,
+                               ima_fmt_write_cb);
 
     /* Measure the kernel image at boot */
     ima_measure_kernel();
