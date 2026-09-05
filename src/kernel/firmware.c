@@ -300,8 +300,20 @@ int request_firmware(const struct firmware **fw_ptr, const char *name)
         uint8_t *disk_data = NULL;
         size_t   disk_size = 0;
         int ret = fw_load_from_disk(name, &disk_data, &disk_size);
-        if (ret != 0)
+        if (ret != 0) {
+            /* Disk lookup missed — fall back to a userspace helper.  Expose
+             * /sys/class/firmware/<name>/ (loading + data) so a userspace
+             * helper can supply the blob via the sysfs upload ABI.  The
+             * upload, when committed, drops the blob into the firmware cache
+             * — so a later request_firmware() for the same name (or a retry
+             * by the caller) serves it from the cache lookup at step 1
+             * without re-touching the filesystem. */
+            firmware_sysfs_register(name);
+            kprintf("[FW] '%s' not in cache/builtin/disk; userspace-helper "
+                    "upload available via /sys/class/firmware/%s/{loading,data}\n",
+                    name, name);
             return ret;
+        }
 
         /* Insert into cache (transfers ownership of disk_data) */
         spinlock_acquire(&fw_lock);
