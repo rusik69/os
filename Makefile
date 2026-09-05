@@ -1821,6 +1821,33 @@ rpm: release
 		echo "rpmbuild not found — install with: sudo apt install rpm"; \
 	fi
 
+# ── Profiling build (make profile) ───────────────────────────────────
+# Rebuilds the kernel with frame pointers + -g3 debug info for perf-based
+# profiling (perf record -g), using a separate build_profile/ tree.
+# NOTE: classic gprof (-pg / mcount) is incompatible with the kernel's
+# -mno-sse/-mno-sse2 flags (mcount needs SSE for varargs), so this target
+# uses -fno-omit-frame-pointer instead.
+PROFILE_BUILDDIR = build_profile
+PROFILE_CFLAGS = $(KERNEL_STD) $(KERNEL_WARN) -fno-omit-frame-pointer \
+                 -g3 -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom \
+                 -O2 -MMD -MP -include kernel_pch.h -I$(PROFILE_BUILDDIR) \
+                 -DKVERSION=\\\"$(KVERSION)-profile\\\" \
+                 -DBUILD_TIME=\\\"$(shell date -u '+%Y-%m-%d_%H:%M:%S_UTC')\\\" \
+                 $(VERMAGIC_FLAGS)
+
+profile: $(BUILDDIR)/disk.img
+	@echo "=== Building profiling kernel (-fno-omit-frame-pointer, -g3) ==="
+	@mkdir -p $(PROFILE_BUILDDIR)
+	@# Generate the config-gz + kpti trampoline headers into the profile tree
+	@$(MAKE) BUILDDIR=$(PROFILE_BUILDDIR) CC="$(CC)" LD="$(LD)" OBJCOPY="$(OBJCOPY)" \
+		$(PROFILE_BUILDDIR)/build_config_gz.h $(PROFILE_BUILDDIR)/kpti_trampoline_bin.h
+	@$(MAKE) BUILDDIR=$(PROFILE_BUILDDIR) CFLAGS="$(PROFILE_CFLAGS)" \
+		CC="$(CC)" LD="$(LD)" OBJCOPY="$(OBJCOPY)" -j$(NPROCS) $(PROFILE_BUILDDIR)/kernel.bin
+	@echo "=== Profiling kernel built: $(PROFILE_BUILDDIR)/kernel.bin ==="
+	@echo "Profile with perf:"
+	@echo "  perf record -g ./scripts/qemu-boot.sh $(PROFILE_BUILDDIR)/kernel.bin"
+	@echo "  perf report        # frame-pointer call graph"
+
 # ── New run targets (SMP, GDB, UEFI) ──────────────────────────────────
 
 dist: release
