@@ -1488,8 +1488,7 @@ static int nvme_mpath_submit(struct blk_request *req)
     if (!mp || mp->nr_paths == 0)
         return -ENODEV;
 
-    uint64_t start_ticks = 0; /* timer_get_ticks() — would need timer.h */
-    int first_error = 0;
+        int first_error = 0;
 
     /* Round-robin across paths */
     for (int attempt = 0; attempt < mp->nr_paths && attempt < 2; attempt++) {
@@ -2340,8 +2339,7 @@ static int nvme_submit_cmd(void *q, struct nvme_sq_entry *cmd)
     struct nvme_sq_entry *slot = (struct nvme_sq_entry *)queue->sq_virt + queue->sq_tail;
     memcpy(slot, cmd, sizeof(struct nvme_sq_entry));
 
-    uint16_t sq_tail = queue->sq_tail;
-    queue->sq_tail = (uint16_t)((queue->sq_tail + 1) % queue->sq_size);
+        queue->sq_tail = (uint16_t)((queue->sq_tail + 1) % queue->sq_size);
 
     /* Ring the submission queue doorbell */
     if (nvme_ring_sq_doorbell(&g_nvme_ctrl, queue->qid, queue->sq_tail) != 0)

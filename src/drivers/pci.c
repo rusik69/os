@@ -1769,7 +1769,6 @@ int pci_vpd_read_field(struct pci_device *dev, uint8_t field_tag,
                 found = 1;
                 data_len = small_len;
                 /* Read remaining bytes from this word + subsequent words */
-                int bytes_in_word = 2;  /* tag + len already consumed? */
                 /* The word layout: byte0=tag, byte1=len, bytes 2-3 = first 2 data bytes */
                 tag_data[0] = (uint8_t)((word >> 16) & 0xFF);
                 tag_data[1] = (uint8_t)((word >> 24) & 0xFF);

@@ -3,6 +3,7 @@
 
 #include "errno.h"
 #include "heap.h"
+#include "module_compress.h" /* gzip_inflate — compressed firmware support */
 #include "printf.h"
 #include "spinlock.h"
 #include "string.h"
@@ -201,6 +202,42 @@ static int fw_load_from_disk(const char *name, uint8_t **out_data, size_t *out_s
     if (ret != 0 || bytes_read != fw_size) {
         kfree(fw_data);
         return -EIO;
+    }
+
+    /* Compressed firmware support: a gzip wrapper whose first two bytes are
+     * the gzip magic (0x1f 0x8b).  Reuse the kernel's gzip inflater; the
+     * uncompressed size is the little-endian ISIZE trailer (the last 4 bytes
+     * of the stream, mod 2^32).  This lets firmware be shipped compressed on
+     * disk and transparently decompressed on load. */
+    if (fw_size >= 18 && fw_data[0] == 0x1f && fw_data[1] == 0x8b) {
+        uint64_t isize = (uint64_t)fw_data[fw_size - 4] | ((uint64_t)fw_data[fw_size - 3] << 8) |
+                         ((uint64_t)fw_data[fw_size - 2] << 16) |
+                         ((uint64_t)fw_data[fw_size - 1] << 24);
+        if (isize == 0 || isize > (1ULL << 24)) {
+            /* ISIZE of 0 or an implausibly large value (16 MB cap) suggests a
+             * corrupt or non-gzip stream — reject rather than over-allocate. */
+            kfree(fw_data);
+            return -EBADF;
+        }
+
+        uint8_t *plain = (uint8_t *)kmalloc(isize);
+        if (!plain) {
+            kfree(fw_data);
+            return -ENOMEM;
+        }
+
+        uint64_t plain_size = 0;
+        int dret = gzip_inflate(fw_data, fw_size, plain, isize, &plain_size);
+        if (dret != 0 || plain_size != isize) {
+            kfree(fw_data);
+            kfree(plain);
+            return -EBADF;
+        }
+        kfree(fw_data);
+        fw_data = plain;
+        fw_size = (size_t)plain_size;
+        kprintf("[FW] decompressed '%s' (%llu->%llu bytes)\n", name, (unsigned long long)bytes_read,
+                (unsigned long long)plain_size);
     }
 
     *out_data = fw_data;

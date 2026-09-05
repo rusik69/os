@@ -743,8 +743,7 @@ void blk_request_done(struct blk_request *req) {
         return;
     }
 
-    uint64_t elapsed_ticks = timer_get_ticks();
-    req->done = 1;
+        req->done = 1;
     req->inflight = 0;
 
     struct blk_request_queue *q = &g_queues[req->dev_id];

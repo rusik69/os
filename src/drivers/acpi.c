@@ -1076,7 +1076,6 @@ void __init acpi_init(void) {
      * We also search the DSDT for _S4_ object presence. */
     {
         /* Extract S4 info from FADT flags field (byte offset 112 in FADT) */
-        uint8_t *fadt_bytes = (uint8_t *)fadt;
         if (sizeof(struct fadt) >= 116) {
             /* flags are at offset 112 for ACPI 1.0 FADT, but our struct
              * has variable layout. Try to read the _flags2 field which

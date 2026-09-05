@@ -238,7 +238,6 @@ static int huff_build(struct huff_table *ht,
         next_code[len]++;
 
         /* Fill all entries with this prefix */
-        int step = 1U << len;
         for (uint32_t j = 0; j < (uint32_t)(1U << (HUFF_MAX_BITS - len)); j++) {
             uint32_t idx = ((uint32_t)c << (HUFF_MAX_BITS - len)) | j;
             if (idx < HUFF_LUT_SIZE)
@@ -1192,7 +1191,6 @@ static int lzma_decode(struct lzma_state *ls, uint64_t uncomp_size)
                 }
 
                 /* Swap rep distances */
-                uint32_t tmp = ls->rep2;
                 ls->rep2 = ls->rep1;
                 ls->rep1 = ls->rep0;
                 ls->rep0 = dist;
