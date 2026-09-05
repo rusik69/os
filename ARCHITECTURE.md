@@ -260,7 +260,34 @@ firmware → bootloader → kernel → init.
     ```
     If `init=` was given on the kernel command line, that path is used instead.
 
-16. The boot thread then transitions to the **idle loop** — reaping zombie
+16. The kernel module subsystem is initialized in two distinct phases.
+
+    **Phase 3a — module API bring-up (early):**
+    - `modules_init()` — allocates the module table (`MODULE_MAX` slots),
+      locking, and the module-state machine (`UNUSED → LOADING → LIVE`).
+    - `module_sig_init()` — sets up module signature/key verification.
+    - `ksym_init()` — builds the exported-kernel-symbol table used for
+      resolving `EXPORT_SYMBOL()` references when a module is loaded.
+    - `blockdev_init()` — registers the block-device table *before*
+      `do_initcalls()` runs the driver initcalls that register devices.
+
+    **Phase 3b — on-demand module loading (after rootfs is mounted):**
+    - `do_initcalls()` runs all registered driver/`module_init()` initcalls.
+    - From any context, the kernel may call `request_module("name")` to
+      autoload `/modules/<name>.ko` (mirroring Linux's `/lib/modules/` layout):
+      * PCI subsystem → `request_module("pci:v...d...")` on device probe;
+      * VFS on mount   → `request_module("ext2")` for an unregistered FS;
+      * socket create  → `request_module("ipv6")` for an unsupported family.
+    - `request_module()` runs the same ELF loader as `sys_init_module()`
+      (userspace `msyscall`-style path) and may sleep on I/O. The full load
+      pipeline is: verify signature → allocate module memory in the
+      `MODULES_VADDR` region → relocate `.text/.rodata/.data/.bss` → resolve
+      `EXPORT_SYMBOL` deps (loading them first via `request_module()`) →
+      run the module's `init_module()` → mark state `LIVE`.
+    - `/sbin/modprobe` and the `init_module`/`finit_module` syscalls expose
+      the same path to userspace.
+
+17. The boot thread then transitions to the **idle loop** — reaping zombie
     processes and executing `cpuidle_idle()` when no tasks are runnable.
 
 ### Phase 4: Userspace Init (PID 1)
