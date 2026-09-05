@@ -1,5 +1,6 @@
 #include "blockdev.h"
 
+#include "cgroup.h"
 #include "export.h"
 #include "heap.h"
 #include "ioprio.h"
@@ -450,6 +451,32 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count, void *buf, uint32_
                 dev_id, (unsigned int)count, buf, (void *)ra, ((const uint8_t *)buf)[0],
                 ((const uint8_t *)buf)[1], ((const uint8_t *)buf)[2], ((const uint8_t *)buf)[3]);
         return -EINVAL;
+    }
+
+    /* ── Per-cgroup I/O bandwidth limit enforcement (D315 task 8, io.max).
+     * Map the submitting process to its cgroup and run a token-bucket
+     * throttle check.  If the read/write bandwidth budget for the current
+     * block-window is exhausted, wait a tick so the budget refills.  The
+     * spin is bounded so a pathological (never-refilling) budget degrades
+     * to running unthrottled instead of hanging the kernel.  No lock is
+     * held across the wait — cgroup_io_throttle_check releases the cgroup
+     * lock before returning. ── */
+    {
+        struct process *cur = process_get_current();
+        if (cur) {
+            int cg = cgroup_of_pid(cur->pid);
+            if (cg >= 0) {
+                int is_write = (flags & BLK_REQ_WRITE) ? 1 : 0;
+                uint64_t bytes = (uint64_t)count * 512;
+                unsigned int spins = 0;
+                while (cgroup_io_throttle_check(cg, is_write, bytes) && spins < 1000000) {
+                    uint64_t t0 = timer_get_ticks();
+                    while (timer_get_ticks() == t0)
+                        ;
+                    spins++;
+                }
+            }
+        }
     }
 
     uint32_t max_xfer = g_blockdevs[dev_id].max_transfer;

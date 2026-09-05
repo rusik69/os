@@ -1353,6 +1353,62 @@ int cgroup_write_control(int cg_id, const char *controller, const char *key, con
                 val = val * 10 + (uint64_t)(*s++ - '0');
             return cgroup_pids_set_max(cg_id, (int64_t)val);
         }
+    } else if (strcmp(controller, "io") == 0 || strcmp(controller, "io.max") == 0 ||
+               strcmp(key, "io.max") == 0) {
+        /* I/O read/write bandwidth limits (D315 task 8).
+         * Format (real cgroup v2 io.max):  "8:0 rbps=<n> wbps=<n> [riops=<n> wiops=<n>]"
+         * Here <controller>=<"io"|"io.max">, <key>=<"M:m"|"8:0">, <value>=<"rbps=... ...">.
+         * Each limit may be "max" (unlimited, stored as 0). */
+        uint16_t major = 0, minor = 0;
+        const char *dev = key;
+        if (*dev >= '0' && *dev <= '9') {
+            while (*dev >= '0' && *dev <= '9')
+                major = (uint16_t)(major * 10 + (uint16_t)(*dev++ - '0'));
+            if (*dev == ':')
+                dev++;
+            while (*dev >= '0' && *dev <= '9')
+                minor = (uint16_t)(minor * 10 + (uint16_t)(*dev++ - '0'));
+        }
+        uint64_t rbps = 0, wbps = 0, riops = 0, wiops = 0;
+        const char *tok = value;
+        while (tok && *tok) {
+            while (*tok == ' ' || *tok == '\t')
+                tok++;
+            if (*tok == '\0')
+                break;
+            int is_bw = (strncmp(tok, "rbps", 4) == 0) || (strncmp(tok, "wbps", 4) == 0);
+            int is_read = (strncmp(tok, "rbps", 4) == 0) || (strncmp(tok, "riops", 5) == 0);
+            const char *eq = strchr(tok, '=');
+            if (!eq) {
+                /* Skip to next whitespace if no '=' */
+                while (*tok && *tok != ' ' && *tok != '\t')
+                    tok++;
+                continue;
+            }
+            eq++;
+            uint64_t v = 0;
+            if (strncmp(eq, "max", 3) == 0) {
+                v = 0; /* unlimited */
+            } else {
+                while (*eq >= '0' && *eq <= '9')
+                    v = v * 10 + (uint64_t)(*eq++ - '0');
+            }
+            if (is_bw) {
+                if (is_read)
+                    rbps = v;
+                else
+                    wbps = v;
+            } else {
+                if (is_read)
+                    riops = v;
+                else
+                    wiops = v;
+            }
+            /* Advance to next token */
+            while (*tok && *tok != ' ' && *tok != '\t')
+                tok++;
+        }
+        return cgroup_io_set_limit(cg_id, major, minor, rbps, wbps, riops, wiops);
     } else if (strcmp(controller, "freezer") == 0) {
         if (strcmp(value, "FROZEN") == 0)
             return cgroup_freeze(cg_id);
