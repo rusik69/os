@@ -91,6 +91,14 @@ void cpuidle_init(void);
 /* Initialise per-CPU idle data (called on each CPU during AP bringup) */
 void cpuidle_init_cpu(void);
 
+/* Disable cpuidle on an explicitly-offlined CPU so it never enters a C-state
+ * while parked (only HLT fallback).  Hotplug integration: called by the CPU
+ * hotplug teardown path before the CPU is taken offline. */
+void cpuidle_cpu_offline(int cpu);
+
+/* Re-enable cpuidle on a CPU being brought back online. */
+void cpuidle_cpu_online(int cpu);
+
 /* Enter idle — called when the CPU has no runnable tasks.
  * Selects the deepest available C-state and enters it. */
 void cpuidle_idle(void);

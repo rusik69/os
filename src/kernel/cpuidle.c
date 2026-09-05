@@ -784,6 +784,42 @@ void cpuidle_init_cpu(void)
 }
 
 /**
+ * cpuidle_cpu_offline - Disable cpuidle on a CPU being taken offline
+ * @cpu: Logical CPU id being offlined
+ *
+ * Marks the target CPU's idle data disabled so it never selects a C-state
+ * while parked mid-transition; the idle loop then falls back to a plain HLT.
+ * Idempotent and safe to call on an already-offlined CPU.
+ */
+void cpuidle_cpu_offline(int cpu)
+{
+    if (cpu < 0 || cpu >= SMP_MAX_CPUS)
+        return;
+    cpu_info_array[cpu].idle_data.enabled = 0;
+}
+
+/**
+ * cpuidle_cpu_online - Re-enable cpuidle on a CPU being brought online
+ * @cpu: Logical CPU id being onlined
+ *
+ * Restores cpuidle selection on the target CPU (deepest state + fresh menu
+ * governor state), mirroring cpuidle_init_cpu() without touching the current
+ * CPU's data.
+ */
+void cpuidle_cpu_online(int cpu)
+{
+    struct cpuidle_cpu *c;
+    if (cpu < 0 || cpu >= SMP_MAX_CPUS)
+        return;
+    c = &cpu_info_array[cpu].idle_data;
+    memset(c, 0, sizeof(*c));
+    c->enabled       = 1;
+    c->deepest_state = (uint8_t)(idle_state_count > 0 ? idle_state_count - 1 : 0);
+    c->last_state_idx = 0;
+    c->menu_correction_factor = MENU_CORRECTION_INIT;
+}
+
+/**
  * cpuidle_idle - Enter an idle state selected by the active governor
  *
  * The main idle entry point called by the scheduler when no task is
