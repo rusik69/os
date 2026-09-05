@@ -26,6 +26,10 @@
 #define USERNS_MAX_NS      64   /* maximum number of user namespaces */
 #define USERNS_MAX_MAPS     8   /* max UID/GID map entries per namespace */
 
+/* Number of 32-bit words in the per-namespace capability bounding set.
+ * Must be large enough to cover CAP_LAST_CAP (38, see caps.h). */
+#define USERNS_CAP_BSET_WORDS 2
+
 /* ── UID/GID map entry ────────────────────────────────────────────
  *
  * Maps a contiguous range of `count` IDs starting at `first_inside`
@@ -69,6 +73,15 @@ struct user_namespace {
     /* Setgroups control: 0 = allow setgroups, 1 = deny setgroups.
      * Set to 1 when a non-single-entry GID mapping is written. */
     int      setgroups_denied;
+
+    /* Per-namespace capability bounding set — the set of capabilities
+     * that may ever be granted to a process inside this namespace.
+     * Stored as 2 × 32-bit words (covers caps 0..63, CAP_LAST_CAP=38).
+     * A child namespace inherits its parent's bounding set at creation,
+     * so a capability dropped from a parent can never appear again in
+     * any descendant.  A capability permanently dropped from here can
+     * never be regained inside this namespace. */
+    uint32_t cap_bset[USERNS_CAP_BSET_WORDS];
 };
 
 /* ── Root (initial) user namespace ──────────────────────────────── */
@@ -179,6 +192,21 @@ static inline int user_ns_current_has_cap(const struct process *proc,
 {
     return user_ns_has_cap(proc, proc ? proc->user_ns : NULL, cap);
 }
+
+/* ── Per-namespace capability bounding set ────────────────────────
+ *
+ * Each user namespace carries its own bounding set (initialized from
+ * its parent's at creation).  A capability must be present in the
+ * namespace's bounding set before it can be granted to a process in
+ * that namespace.
+ *
+ *   user_ns_cap_bset_has(ns, cap) — is `cap` available inside `ns`?
+ *   user_ns_cap_bset_drop(ns, cap) — permanently drop `cap` from `ns`
+ *        (and, by inheritance, from every descendant namespace).
+ *        Irreversible; only allowed on non-root namespaces.
+ */
+int user_ns_cap_bset_has(const struct user_namespace *ns, uint32_t cap);
+int user_ns_cap_bset_drop(struct user_namespace *ns, uint32_t cap);
 
 /* ── Privilege checks for namespace-aware operations ──────────────
  *

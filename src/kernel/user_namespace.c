@@ -60,6 +60,13 @@ void user_ns_init(void)
     user_ns_table[0] = init_user_ns;
     user_ns_count = 1;
 
+    /* Root namespace starts with the full capability bounding set;
+     * descendant namespaces inherit (and are therefore capped by) it. */
+    for (int i = 0; i < USERNS_CAP_BSET_WORDS; i++)
+        init_user_ns.cap_bset[i] = ~0u;
+    for (int i = 0; i < USERNS_CAP_BSET_WORDS; i++)
+        user_ns_table[0].cap_bset[i] = init_user_ns.cap_bset[i];
+
     kprintf("[OK] user_namespace: root namespace initialized\n");
 }
 
@@ -111,6 +118,15 @@ struct user_namespace *user_ns_create(struct user_namespace *parent,
     ns->gid_map[0].first_inside  = 0;
     ns->gid_map[0].first_outside = caller_gid;
     ns->gid_map[0].count         = 1;
+
+    /* Capability bounding set: a child namespace inherits its parent's
+     * bounding set, so it can never grant a capability that was dropped
+     * from any ancestor namespace. */
+    {
+        const struct user_namespace *p = parent ? parent : &init_user_ns;
+        for (int i = 0; i < USERNS_CAP_BSET_WORDS; i++)
+            ns->cap_bset[i] = p->cap_bset[i];
+    }
 
     user_ns_count++;
 
@@ -663,9 +679,45 @@ int user_ns_has_cap(const struct process *proc,
      * owned by this namespace.  Here we just check the bit. */
     int word = cap / 64;
     int bit  = cap % 64;
-    if (word < PROCESS_SYSCALL_CAP_WORDS)
+    if (word < PROCESS_SYSCALL_CAP_WORDS) {
+        /* The namespace's own bounding set caps what may be granted
+         * here: a capability dropped from this namespace (or any of
+         * its ancestors) can never be effective inside it. */
+        if (!user_ns_cap_bset_has(ns, cap))
+            return 0;
         return (proc->syscall_caps[word] >> bit) & 1;
+    }
 
+    return 0;
+}
+
+/* ── Per-namespace capability bounding set ──────────────────────── */
+
+int user_ns_cap_bset_has(const struct user_namespace *ns, uint32_t cap) {
+    if (cap > CAP_LAST_CAP)
+        return 0;
+    uint32_t word = cap / 32;
+    uint32_t bit = cap % 32;
+    if (word >= USERNS_CAP_BSET_WORDS)
+        return 0;
+    return (ns->cap_bset[word] >> bit) & 1;
+}
+
+int user_ns_cap_bset_drop(struct user_namespace *ns, uint32_t cap) {
+    if (!ns || ns == &init_user_ns)
+        return -EPERM; /* cannot cap the root namespace */
+    if (cap > CAP_LAST_CAP)
+        return -EINVAL;
+    uint32_t word = cap / 32;
+    uint32_t bit = cap % 32;
+    if (word >= USERNS_CAP_BSET_WORDS)
+        return -EINVAL;
+
+    spinlock_acquire(&user_ns_lock);
+    ns->cap_bset[word] &= ~(1u << bit);
+    spinlock_release(&user_ns_lock);
+
+    kprintf("[USERNS] capability %u dropped from bounding set (ns id=%d)\n", (unsigned)cap, ns->id);
     return 0;
 }
 
