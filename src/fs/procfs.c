@@ -70,6 +70,7 @@
 #include "module.h"
 #include "net.h"
 #include "net_internal.h"
+#include "pid_namespace.h"
 #include "pmm.h"
 #include "printf.h"
 #include "process.h"
@@ -1269,6 +1270,33 @@ static int procfs_gen_pid_limits(uint32_t pid, char *buf, int max) {
 
 /* ─── VFS ops ────────────────────────────────────────────────────────────────── */
 
+/*
+ * procfs_pid_lookup — Resolve a numeric <pid> from a /proc/<pid>/... path
+ * in the caller's PID namespace.
+ *
+ * The numeric value in the path is interpreted in the calling process's
+ * namespace (Item 111).  Returns the target process if it exists and is
+ * visible from the caller's namespace, NULL otherwise.  On success the
+ * caller should bind to *global_pid, the target's kernel-wide PID, since
+ * the per-file generators address processes by the global PID.
+ */
+static struct process *procfs_pid_lookup(uint32_t pid, uint32_t *out_global) {
+    struct process *caller = process_get_current();
+    struct process *proc;
+
+    if (!caller) {
+        /* Kernel context (no caller process) — plain global lookup. */
+        proc = process_get_by_pid(pid);
+    } else {
+        struct pid_namespace *ns = caller->pid_ns ? caller->pid_ns : pid_ns_root();
+        proc = pid_ns_lookup_pid(ns, pid);
+    }
+
+    if (proc && proc->state != PROCESS_UNUSED && out_global)
+        *out_global = proc->pid;
+    return proc;
+}
+
 /**
  * procfs_read — Read a procfs virtual file.
  * @priv:   Opaque mount-private data (unused here).
@@ -1411,6 +1439,18 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         const char *p = path + 6; /* skip "/proc/" */
         uint32_t pid = 0; int got = 0;
         while (*p >= '0' && *p <= '9') { pid = pid * 10 + (uint32_t)(*p - '0'); p++; got = 1; }
+        if (got) {
+            /* The numeric PID is interpreted in the caller's PID namespace.
+             * Resolve it to the underlying process and rebind to the global
+             * PID that the file generators address by.  Invisible or
+             * nonexistent targets are rejected so child-namespace processes
+             * cannot reach PIDs outside their namespace. */
+            uint32_t gpid = 0;
+            struct process *tgt = procfs_pid_lookup(pid, &gpid);
+            if (!tgt)
+                return -ESRCH;
+            pid = gpid;
+        }
         if (got && strcmp(p, "/status") == 0) {
             len = procfs_gen_pid_status(pid, buf, (int)max_size);
             if (len < 0) return -EINVAL;
@@ -1684,6 +1724,14 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     const char *p = path + 6;
     uint32_t pid = 0; int got = 0;
     while (*p >= '0' && *p <= '9') { pid = pid * 10 + (uint32_t)(*p - '0'); p++; got = 1; }
+    if (got) {
+        /* Resolve the numeric PID in the caller's namespace (Item 111). */
+        uint32_t gpid = 0;
+        struct process *tgt = procfs_pid_lookup(pid, &gpid);
+        if (!tgt)
+            return -ENOENT;
+        pid = gpid;
+    }
     if (got && strcmp(p, "/status") == 0) {
         struct process *proc = process_get_by_pid(pid);
         if (proc && proc->state != PROCESS_UNUSED) {
@@ -1784,14 +1832,21 @@ static int procfs_readdir(void *priv, const char *path) {
     (void)priv;
     if (strcmp(path, "/proc") == 0) {
         kprintf("uptime\nmeminfo\ncpuinfo\nversion\nconfig.gz\nself\nstat\nloadavg\nnet\nmounts\npressure\n");
-        /* Also list active PIDs */
+        /* Also list active PIDs, each reported as the caller sees it
+         * (namespace-local PID value).  Processes invisible from the
+         * caller's PID namespace are omitted (Item 111). */
         struct process *table = process_get_table();
         struct process *caller = process_get_current();
+        struct pid_namespace *ns = (caller && caller->pid_ns) ? caller->pid_ns : pid_ns_root();
         for (int i = 0; i < PROCESS_MAX; i++) {
-            if (table[i].state != PROCESS_UNUSED) {
-                if (!caller || process_can_see(caller, &table[i]))
-                    kprintf("%lu\n", (unsigned long)table[i].pid);
-            }
+            if (table[i].state == PROCESS_UNUSED)
+                continue;
+            uint32_t vpid = pid_ns_translate_pid(&table[i], ns);
+            if (vpid == 0)
+                continue; /* not reachable from caller's ns */
+            if (caller && !process_can_see(caller, &table[i]))
+                continue;
+            kprintf("%lu\n", (unsigned long)vpid);
         }
         return 0;
     }
@@ -1802,7 +1857,8 @@ static int procfs_readdir(void *priv, const char *path) {
         uint32_t pid = 0; int got = 0;
         while (*p >= '0' && *p <= '9') { pid = pid * 10 + (uint32_t)(*p - '0'); p++; got = 1; }
         if (got && strcmp(p, "/fd") == 0) {
-            struct process *proc = process_get_by_pid(pid);
+            uint32_t gpid = 0;
+            struct process *proc = procfs_pid_lookup(pid, &gpid);
             if (!proc || proc->state == PROCESS_UNUSED) return -EINVAL;
             for (int i = 0; i < PROCESS_FD_MAX; i++) {
                 if (proc->fd_table[i].used)
