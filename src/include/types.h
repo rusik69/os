@@ -267,6 +267,49 @@ struct timeval {
 /* Compile-time ABI assertion: struct timeval must be 16 bytes */
 _Static_assert(sizeof(struct timeval) == 16, "struct timeval size mismatch");
 
+/* timex — NTP clock parameters (adjtimex(2) / ntp_adjtime(3)).
+ * Layout mirrors the Linux x86_64 uapi struct timex. */
+struct timex {
+    uint32_t modes;      /* mode selector */
+    int64_t offset;      /* time offset (us) */
+    int64_t freq;        /* frequency offset (scaled ppm) */
+    int64_t maxerror;    /* maximum error (us) */
+    int64_t esterror;    /* estimated error (us) */
+    int32_t status;      /* clock status */
+    int64_t constant;    /* PLL time constant */
+    int64_t precision;   /* clock precision (us) */
+    int64_t tolerance;   /* clock frequency tolerance (scaled ppm) */
+    struct timeval time; /* current time */
+    int64_t tick;        /* microseconds per tick */
+    int64_t ppsfreq;     /* PPS frequency (scaled ppm) */
+    int64_t jitter;      /* PPS jitter (us) */
+    int32_t shift;       /* PPS interval duration (s) */
+    int64_t stabil;      /* PPS stability (scaled ppm) */
+    int64_t jitcnt;      /* jitter limit exceeded count */
+    int64_t calcnt;      /* calibration intervals */
+    int64_t errcnt;      /* calibration errors */
+    int64_t stbcnt;      /* stability limit exceeded count */
+    int32_t tai;         /* TAI-UTC offset (s) */
+};
+
+/* adjtimex mode bits */
+#define ADJ_OFFSET 0x0001
+#define ADJ_FREQUENCY 0x0002
+#define ADJ_MAXERROR 0x0004
+#define ADJ_ESTERROR 0x0008
+#define ADJ_STATUS 0x0010
+#define ADJ_TIMECONST 0x0020
+#define ADJ_TICK 0x4000
+#define ADJ_TAI 0x0080
+
+/* Clock status bits (Linux STA_* constants from <sys/timex.h>) */
+#define STA_PLL 0x0001
+#define STA_PPSFREQ 0x0002
+#define STA_FLL 0x0008
+#define STA_INS 0x0010 /* insert leap second */
+#define STA_DEL 0x0020 /* delete leap second */
+#define STA_UNSYNC 0x0040
+
 /* utsname — system identification structure returned by uname(2) */
 struct utsname {
     char sysname[65];

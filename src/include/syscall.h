@@ -1056,6 +1056,10 @@ struct linux_dirent64 {
 /* Process spawning — lightweight create+exec (Item 306) */
 #define SYS_POSIX_SPAWN 777 /* posix_spawn(path, argv, envp, flags) → pid or -errno */
 
+/* ── Time: settimeofday / adjtimex ────────────────────────────── */
+#define SYS_SETTIMEOFDAY 901 /* settimeofday(tv, tz) → 0 or -errno */
+#define SYS_ADJTIMEX 902     /* adjtimex(struct timex *tx) → 0 or -errno */
+
 /* ── D123: Process & Signal Syscalls ──────────────────────────── */
 #define SYS_RT_SIGACTION 450      /* rt_sigaction(sig, act, oldact, sigsetsize) */
 #define SYS_RT_SIGPROCMASK 453    /* rt_sigprocmask(how, set, oldset, sigsetsize) */
@@ -1457,6 +1461,8 @@ void posix_timer_init(void);
 /* ── POSIX Timer & Clock syscalls (implemented in posix_timer.c) ── */
 int64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr);
 int64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr);
+int64_t sys_settimeofday(uint64_t tv_addr, uint64_t tz_addr);
+int64_t sys_adjtimex(uint64_t tx_addr);
 int64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr);
 int64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags, uint64_t req_addr, uint64_t rem_addr);
 int64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr, uint64_t timerid_addr);

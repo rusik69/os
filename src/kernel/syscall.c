@@ -13324,6 +13324,10 @@ int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64
         return sys_clock_gettime(a1, a2);
     case SYS_CLOCK_SETTIME:
         return sys_clock_settime(a1, a2);
+    case SYS_SETTIMEOFDAY:
+        return sys_settimeofday(a1, a2);
+    case SYS_ADJTIMEX:
+        return sys_adjtimex(a1);
     case SYS_CLOCK_GETRES:
         return sys_clock_getres(a1, a2);
     case SYS_CLOCK_NANOSLEEP:

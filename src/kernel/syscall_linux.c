@@ -1090,6 +1090,18 @@ static int64_t lin_clock_settime(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t
     return syscall_dispatch_internal(SYS_CLOCK_SETTIME, a1, a2, 0, 0, 0, a6);
 }
 
+static int64_t lin_settimeofday(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
+                                uint64_t a6) {
+    lin_discard4(a3, a4, a5, a6);
+    return syscall_dispatch_internal(SYS_SETTIMEOFDAY, a1, a2, 0, 0, 0, a6);
+}
+
+static int64_t lin_adjtimex(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
+                            uint64_t a6) {
+    lin_discard5(a2, a3, a4, a5, a6);
+    return syscall_dispatch_internal(SYS_ADJTIMEX, a1, 0, 0, 0, 0, a6);
+}
+
 static int64_t lin_clock_getres(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                 uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
@@ -1392,12 +1404,12 @@ __attribute__((used)) linux_syscall_t sys_call_table[__NR_syscalls] = {
     [156] = sys_ni_syscall,         /* __NR__sysctl */
     [157] = lin_prctl,              /* __NR_prctl */
     [158] = lin_arch_prctl,         /* __NR_arch_prctl */
-    [159] = sys_ni_syscall,         /* __NR_adjtimex */
+    [159] = lin_adjtimex,           /* __NR_adjtimex */
     [160] = sys_ni_syscall,         /* __NR_setrlimit */
     [161] = lin_chroot,             /* __NR_chroot */
     [162] = lin_sync,               /* __NR_sync */
     [163] = sys_ni_syscall,         /* __NR_acct */
-    [164] = sys_ni_syscall,         /* __NR_settimeofday */
+    [164] = lin_settimeofday,       /* __NR_settimeofday */
     [165] = lin_mount,              /* __NR_mount */
     [166] = lin_umount2,            /* __NR_umount2 */
     [167] = sys_ni_syscall,         /* __NR_swapon */

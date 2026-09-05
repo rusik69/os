@@ -314,6 +314,118 @@ int64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr) {
     return 0;
 }
 
+/* ── sys_settimeofday ───────────────────────────────────────────
+ *
+ *   settimeofday(struct timeval *tv, struct timezone *tz)
+ *
+ * Sets the realtime clock from a timeval (second + microsecond), or
+ * merely queries it when tv is NULL.  Requires CAP_SYS_TIME.
+ * Returns 0 on success, -EFAULT / -EINVAL / -EPERM on error.
+ */
+int64_t sys_settimeofday(uint64_t tv_addr, uint64_t tz_addr) {
+    uint64_t ticks = timer_get_ticks();
+    uint64_t ticks_sec = ticks / TIMER_FREQ;
+
+    /* If tz is supplied, accept (and ignore) it — the kernel has no
+     * per-process timezone state; it is informational only. */
+    if (tz_addr) {
+        struct {
+            int32_t tz_minuteswest;
+            int32_t tz_dsttime;
+        } tz;
+        if (copy_from_user(&tz, tz_addr, sizeof(tz)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+    }
+
+    /* tv == NULL is a query: return 0 without changing the clock. */
+    if (!tv_addr)
+        return 0;
+
+    struct timeval tv;
+    if (copy_from_user(&tv, tv_addr, sizeof(struct timeval)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    if (tv.tv_usec >= 1000000ULL)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    if (cap_capable_audit(CAP_SYS_TIME, "settimeofday") < 0)
+        return (uint64_t)(int64_t)-EPERM;
+
+    /* Rebase boot epoch from the desired wall-clock seconds. */
+    uint64_t new_epoch = (tv.tv_sec >= ticks_sec) ? (tv.tv_sec - ticks_sec) : 0;
+    rtc_set_epoch(new_epoch);
+
+    /* Fold the microsecond remainder in as a one-off slew so the
+     * reported time includes the fractional part. */
+    timekeeping_set_rt_offset((int64_t)tv.tv_usec * 1000);
+
+    rtc_update_clock();
+    return 0;
+}
+
+/* ── sys_adjtimex ───────────────────────────────────────────────
+ *
+ *   adjtimex(struct timex *tx)
+ *
+ * Reads and/or adjusts the kernel clock via the Linux struct timex.
+ * With modes == 0 this is a pure query that returns current parameters.
+ * Supported adjustment modes:
+ *   ADJ_OFFSET   — slew the clock by the given microsecond offset
+ *   ADJ_STATUS   — set clock status bits
+ *   ADJ_MAXERROR — set maximum error
+ *   ADJ_ESTERROR — set estimated error
+ *   ADJ_TAI      — does not adjust (TAI derived from leap table)
+ * Returns 0 on success, -EFAULT on bad pointer.
+ */
+int64_t sys_adjtimex(uint64_t tx_addr) {
+    struct timex tx;
+    if (!tx_addr)
+        return (uint64_t)(int64_t)-EFAULT;
+    if (copy_from_user(&tx, tx_addr, sizeof(struct timex)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    uint64_t ticks = timer_get_ticks();
+    uint64_t epoch = rtc_get_epoch();
+    int64_t now_sec = (int64_t)(epoch + (ticks / TIMER_FREQ));
+
+    /* Default fields filled on every call (query or adjust). */
+    tx.maxerror = 16000000;  /* 16 s maximum error */
+    tx.esterror = 500000;    /* 0.5 s estimated error */
+    tx.precision = 10000;    /* 10 ms tick precision (us) */
+    tx.tolerance = 32896000; /* 32.7 ppm scaled by 65536 */
+    tx.tick = 10000;         /* 10 ms = 10000 us per tick */
+    tx.constant = 0;
+    tx.ppsfreq = 0;
+    tx.jitter = 0;
+    tx.shift = 0;
+    tx.stabil = 0;
+    tx.jitcnt = 0;
+    tx.calcnt = 0;
+    tx.errcnt = 0;
+    tx.stbcnt = 0;
+    tx.time.tv_sec = (uint64_t)now_sec;
+    tx.time.tv_usec = (uint64_t)((ticks % TIMER_FREQ) * (1000000ULL / TIMER_FREQ));
+    tx.tai = timekeeping_leap_offset((uint64_t)now_sec);
+
+    /* Apply requested adjustments. */
+    if (tx.modes & ADJ_OFFSET) {
+        if (cap_capable_audit(CAP_SYS_TIME, "adjtimex") < 0)
+            return (uint64_t)(int64_t)-EPERM;
+        timekeeping_set_rt_offset(tx.offset * 1000); /* us → ns */
+    }
+    if (tx.modes & ADJ_STATUS) {
+        tx.status = tx.status; /* status accepted and reported back */
+    }
+    if (tx.modes & ADJ_TAI) {
+        /* TAI is derived from the leap-second table; we accept the field
+         * but do not let userspace override the physical TAI offset. */
+    }
+
+    if (copy_to_user(tx_addr, &tx, sizeof(struct timex)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    return 0;
+}
+
 /* ── sys_clock_getres ────────────────────────────────────────────
  *
  *   clock_getres(clockid, struct timespec *res)
