@@ -111,7 +111,8 @@
 #include "rcu.h" /* rcu_check_stall */
 #include "scheduler.h"
 #include "softirq.h"
-#include "syscall.h" /* timerfd_tick, posix_timer_tick */
+#include "syscall.h"     /* timerfd_tick, posix_timer_tick */
+#include "timekeeping.h" /* timekeeping_tick_coarse */
 #include "timers.h"
 #include "vsyscall.h"
 
@@ -137,6 +138,11 @@ static void timer_handler(struct interrupt_frame *frame) {
      * slot).  signal_send() is safe from this context — scheduler_tick's
      * RLIMIT_CPU enforcement already delivers signals from here. */
     posix_timer_tick();
+
+    /* Refresh the coarse timekeeping snapshots on the tick boundary so the
+     * coarse clocks (CLOCK_REALTIME_COARSE / CLOCK_MONOTONIC_COARSE) can
+     * serve cached times with tick-period resolution. */
+    timekeeping_tick_coarse();
 
     /* NOTE: the NIC is NOT polled from the timer.  The netd kthread
      * (telnetd_task) drains the NIC in process context — running the full

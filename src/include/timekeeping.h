@@ -39,4 +39,19 @@ int timekeeping_leap_offset(uint64_t epoch_sec);
 /* Return the TAI-UTC offset in effect for the current wall-clock time. */
 int timekeeping_leap_now(void);
 
+/* ── Coarse vs fine-grained time ────────────────────────────────── */
+
+/* Called from the timer tick (typically on the coarse jiffy boundary).
+ * Refreshes the cached coarse realtime / monotonic timestamps. */
+void timekeeping_tick_coarse(void);
+
+/* Return the coarse-grained realtime (wall-clock) clock, cached at the
+ * last timer tick.  Resolution is one tick period; cheaper than a fresh
+ * fine-grained read.  Returns 0 on success. */
+int timekeeping_coarse_realtime(struct timespec *ts);
+
+/* Return the coarse-grained monotonic (time-since-boot) clock, cached at
+ * the last timer tick.  Returns 0 on success. */
+int timekeeping_coarse_monotonic(struct timespec *ts);
+
 #endif /* TIMEKEEPING_H */

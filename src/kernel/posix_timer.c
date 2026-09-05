@@ -187,7 +187,6 @@ int64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr) {
 
     switch (clockid) {
     case CLOCK_REALTIME:
-    case CLOCK_REALTIME_COARSE:
     case CLOCK_REALTIME_ALARM:
     case CLOCK_TAI: {
         uint64_t epoch = rtc_get_epoch();
@@ -213,14 +212,23 @@ int64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr) {
         break;
     }
 
+    case CLOCK_REALTIME_COARSE:
+        /* Coarse clock: serve the per-tick cached wall-clock snapshot. */
+        timekeeping_coarse_realtime(&ts);
+        break;
+
     case CLOCK_MONOTONIC:
         ticks_to_timespec(ticks, &ts);
         apply_mono_offset(&ts, cur);
         break;
 
     case CLOCK_MONOTONIC_RAW:
-    case CLOCK_MONOTONIC_COARSE:
         ticks_to_timespec(ticks, &ts);
+        break;
+
+    case CLOCK_MONOTONIC_COARSE:
+        /* Coarse clock: serve the per-tick cached monotonic snapshot. */
+        timekeeping_coarse_monotonic(&ts);
         break;
 
     case CLOCK_BOOTTIME:

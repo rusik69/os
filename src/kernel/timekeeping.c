@@ -101,3 +101,61 @@ int timekeeping_leap_now(void) {
     uint64_t epoch = rtc_get_epoch() + (ticks / TIMER_FREQ);
     return timekeeping_leap_offset(epoch);
 }
+
+/* ── Coarse vs fine-grained time ────────────────────────────────────
+ *
+ * Fine-grained clocks (CLOCK_REALTIME / CLOCK_MONOTONIC) recompute the
+ * time on every read from the raw tick counter, folding in the sub-tick
+ * nanosecond fraction.  The coarse clocks (CLOCK_REALTIME_COARSE /
+ * CLOCK_MONOTONIC_COARSE) instead return a snapshot that is updated once
+ * per timer tick.  This gives tick-period resolution but avoids the per-
+ * call cost of a fresh fine-grained computation — the same trade-off
+ * Linux makes with ktime_get_coarse_real_time() vs ktime_get_real().
+ *
+ * The snapshots are written by the timer tick (interrupt context on one
+ * CPU) and read by syscalls; a single aligned 64-bit load/store per field
+ * makes them race-safe without locking for the typical uniprocessor or
+ * preempt-disabled read path.
+ */
+static struct {
+    int64_t real_sec;
+    int64_t real_nsec;
+    int64_t mono_sec;
+    int64_t mono_nsec;
+} g_coarse;
+
+void timekeeping_tick_coarse(void) {
+    uint64_t ticks = timer_get_ticks();
+    uint64_t epoch = rtc_get_epoch();
+    int64_t off = timekeeping_get_rt_offset();
+    int64_t real_sec = (int64_t)(epoch + (ticks / TIMER_FREQ));
+
+    /* Fold the NTP slew offset into the coarse realtime snapshot,
+     * carrying into the seconds field to keep nsec in range. */
+    int64_t ns = (int64_t)((ticks % TIMER_FREQ) * NS_PER_TICK) + off;
+    while (ns >= 1000000000LL) {
+        real_sec += 1;
+        ns -= 1000000000LL;
+    }
+    while (ns < 0) {
+        real_sec -= 1;
+        ns += 1000000000LL;
+    }
+
+    g_coarse.real_sec = real_sec;
+    g_coarse.real_nsec = ns;
+    g_coarse.mono_sec = (int64_t)(ticks / TIMER_FREQ);
+    g_coarse.mono_nsec = (int64_t)((ticks % TIMER_FREQ) * NS_PER_TICK);
+}
+
+int timekeeping_coarse_realtime(struct timespec *ts) {
+    ts->tv_sec = (uint64_t)g_coarse.real_sec;
+    ts->tv_nsec = (uint64_t)g_coarse.real_nsec;
+    return 0;
+}
+
+int timekeeping_coarse_monotonic(struct timespec *ts) {
+    ts->tv_sec = (uint64_t)g_coarse.mono_sec;
+    ts->tv_nsec = (uint64_t)g_coarse.mono_nsec;
+    return 0;
+}
