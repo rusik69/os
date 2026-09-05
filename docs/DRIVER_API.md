@@ -55,6 +55,44 @@ module_exit(my_driver_exit);
 - When building as a module (`-DMODULE`), the loader calls `init_module()` then `cleanup_module()` on unload.
 - Use `#include "module.h"` guarded by `#ifdef MODULE` if you need module-specific API (e.g., `MODULE_LICENSE`).
 
+### Init/Exit function conventions
+
+**Return code.** `module_init(fn)` must be a `static int fn(void)` returning `0`
+on success or a negative errno (`-ENODEV`, `-EIO`, `-ENOMEM`) on probe
+failure. A nonzero return rejects the driver: for a built-in initcall it
+aborts that driver's registration; for a loaded module it aborts the load
+(reverting `MODULE_LOADING` → `MODULE_ERROR`). Always `return 0` on success —
+never return a positive value or `void`.
+
+**Initcall ordering (built-in drivers).** A built-in driver's `module_init`
+expands to `device_initcall(fn)`, which places `fn` in the `.initcall.5`
+section of the kernel image. `do_initcalls()` runs every initcall once during
+boot, in section order. Use the more specific macros when a driver must run
+earlier or later than the default:
+
+| Macro | Level | When it runs |
+|-------|-------|--------------|
+| `pure_initcall(fn)` | 0 | Earliest (arch/memory essentials) |
+| `core_initcall(fn)` | 1 | Core subsystems |
+| `postcore_initcall(fn)` | 2 | Just after core |
+| `arch_initcall(fn)` | 3 | Architecture setup |
+| `subsys_initcall(fn)` | 4 | Subsystem registration |
+| `device_initcall(fn)` | 5 | Default for most drivers |
+| `late_initcall(fn)` | 5 | Latest (dependencies resolved) |
+
+**Exit / unload.** The exit function `static void fn(void)` should undo only
+what init set up: unregister IRQs, release DMA buffers, tear down state, and
+mark absence globals (e.g. `g_present = 0`). For a loadable module, the ELF
+loader calls `cleanup_module()` before freeing the module region, only when
+the module is not in use (`module_can_unload()`, refcount `== 0`). Built-in
+drivers are never unloaded, so their exit function is effectively dead code —
+keep it minimal or omit it.
+
+**Idempotency.** Guard init so a re-probe after a partial failure does not
+leak resources: free any partially-acquired DMA/timer resources on the error
+patch before returning nonzero, and use a `g_present`-style flag to record
+state that exit (or a later re-init) relies on.
+
 ---
 
 ## 2. PCI Device Discovery
