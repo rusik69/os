@@ -13,12 +13,13 @@ A practical guide for writing device drivers for the Hermes OS kernel (x86-64, C
 5. [Interrupt Registration](#5-interrupt-registration)
 6. [Network Driver API](#6-network-driver-api)
 7. [USB Driver Binding](#7-usb-driver-binding)
-8. [DMA Buffer Allocation](#8-dma-buffer-allocation)
-9. [Timer API](#9-timer-api)
-10. [Locking Requirements](#10-locking-requirements)
-11. [Exporting Symbols](#11-exporting-symbols)
-12. [Makefile Integration](#12-makefile-integration)
-13. [Module Metadata](#13-module-metadata)
+8. [VirtIO Driver API](#8-virtio-driver-api)
+9. [DMA Buffer Allocation](#9-dma-buffer-allocation)
+10. [Timer API](#10-timer-api)
+11. [Locking Requirements](#11-locking-requirements)
+12. [Exporting Symbols](#12-exporting-symbols)
+13. [Makefile Integration](#13-makefile-integration)
+14. [Module Metadata](#14-module-metadata)
 
 ---
 
@@ -358,7 +359,7 @@ idt_register_handler_named(32 + irq_line, mydrv_irq_handler, "my_driver");
 ### IRQ handler best practices
 
 - **Keep handlers fast.** Do minimal work (read status, clear source, schedule bottom-half if needed).
-- **Hold spinlocks with IRQs disabled** when touching shared state (see Section 10).
+- **Hold spinlocks with IRQs disabled** when touching shared state (see Section 11).
 - **Use `irq_ack()`** at the end to signal End-Of-Interrupt to the PIC/IOAPIC.
 - **Network drivers** should call `net_rx_signal()` after acking to wake the network poll loop.
 
@@ -484,7 +485,66 @@ device_initcall(my_usb_init);
 
 ---
 
-## 8. DMA Buffer Allocation
+## 8. VirtIO Driver API
+
+VirtIO devices are para-virtualized hardware exposed over PCI. The
+**modern PCI transport** (`src/drivers/virtio_pci_modern.c`) discovers a
+VirtIO PCI device, maps its BARs, negotiates features, and sets up
+virtqueues; per-device drivers (`virtio_blk.c`, `virtio_net.c`,
+`virtio_rng.c`, `virtio_gpu.c`, ...) use that transport to register a
+block device, NIC, or other interface.
+
+**Transport flow (driver-author view):**
+
+```c
+#include "virtio.h"
+
+static int my_virtio_driver_init(void)
+{
+    /* 1. Locate the VirtIO PCI device (vendor 0x1AF4). */
+    struct pci_device pci;
+    if (pci_find_device(PCI_VENDOR_ID_REDHAT, /*device*/, &pci) < 0)
+        return -ENODEV;
+
+    /* 2. Probe + map the modern-PCI capability BARs. */
+    struct vpci_modern_device *vdev = virtio_pci_modern_probe(&pci, /*...*/);
+    if (!vdev)
+        return -EIO;
+
+    /* 3. Negotiate feature bits (get/set feature registers). */
+    virtio_negotiate_features_ex(/*... get/set callbacks ...*/);
+
+    /* 4. Set up one or more virtqueues (descriptor rings). */
+    virtio_pci_modern_setup_queue(vdev, /*queue_idx*/, /*...*/);
+
+    /* 5. Publish the interface to the driver model:
+     *        block device  → blockdev_register(...)
+     *        network NIC   → netif_register(...) */
+    return 0;
+}
+device_initcall(my_virtio_driver_init);
+```
+
+**Key points:**
+
+- **Transport** (`virtio_pci_modern_*`): `probe` (discover + map common
+  config), `map_bars`, `init_device`, `setup_queue` (split ring),
+  `setup_packed_queue` (virtio 1.1 packed ring), `notify_queue`,
+  `enable_msix`/`disable_msix`.
+- **Feature negotiation** — `virtio_negotiate_features_ex()` and the
+  wrapper read the device feature set and write back the negotiated
+  subset; `virtio_common_features[]`, `virtio_net_features[]`,
+  `virtio_blk_features[]` describe supported bits and
+  `virtio_check_dependencies()` validates mandated feature combos.
+- **Per-device drivers** fit the same `device_initcall` pattern:
+  `virtio_blk_init()` (→ `blockdev_register(BLOCKDEV_VIRTIO0, ...)`),
+  `virtio_net_init()` (→ netdevice), `virtio_rng`, `virtio_scsi`, etc.
+- Virtqueue descriptors are split or packed rings; the driver submits
+  descriptors (with header/status chaining) and drains the used ring.
+
+---
+
+## 9. DMA Buffer Allocation
 
 Use the physical memory manager for DMA-capable buffers. The kernel provides `pmm_alloc_frame()` (single 4 KB page) and `pmm_alloc_frames()` (contiguous multi-page block).
 
@@ -550,7 +610,7 @@ cmd.prp1 = data_phys;
 
 ---
 
-## 9. Timer API
+## 10. Timer API
 
 Use the dynamic timer subsystem for delayed work, polling loops, and periodic tasks.
 
@@ -653,7 +713,7 @@ uint64_t ms_to_ticks(uint64_t ms) {
 
 ---
 
-## 10. Locking Requirements
+## 11. Locking Requirements
 
 Drivers that touch shared state (global data, device registers accessed from multiple CPUs) must use spinlocks. The kernel provides both plain and IRQ-safe variants.
 
@@ -727,7 +787,7 @@ static void e1000_irq_handler(struct interrupt_frame *frame)
 
 ---
 
-## 11. Exporting Symbols
+## 12. Exporting Symbols
 
 Drivers that are compiled as loadable modules or provide an API to other modules can export symbols using `EXPORT_SYMBOL()` and `EXPORT_SYMBOL_GPL()`.
 
@@ -775,7 +835,7 @@ EXPORT_SYMBOL(mpath_select_path);
 
 ---
 
-## 12. Makefile Integration
+## 13. Makefile Integration
 
 The kernel has two build models:
 
@@ -849,7 +909,7 @@ For built-in use, `module_init(my_driver_init)` already handles registration via
 
 ---
 
-## 13. Module Metadata
+## 14. Module Metadata
 
 Module metadata is embedded in the `.modinfo` section using macros:
 
