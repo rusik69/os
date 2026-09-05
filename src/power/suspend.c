@@ -174,6 +174,7 @@
 #include "io.h"
 #include "cpu.h"           /* read_msr, write_msr */
 #include "smp.h"
+#include "cpuhp.h"
 
 /* ── Suspend statistics struct ─────────────────────────────────── */
 struct suspend_stats {
@@ -859,6 +860,59 @@ int pm_suspend_cycle(int state)
  * @state: PM_SUSPEND_STANDBY, PM_SUSPEND_MEM, or PM_SUSPEND_DISK
  * Returns 0 on success, negative on failure (abort suspend).
  */
+
+/* Track which secondary (non-BSP) CPUs were taken offline for suspend so
+ * suspend_wakeup() can bring them back. */
+static uint64_t g_suspend_offlined_cpus;
+
+/* Offline every online secondary CPU so the sleep transition only involves
+ * the boot CPU (the ACPI S3/S4 resume path targets CPU 0).  Records each
+ * successfully-offlined CPU in g_suspend_offlined_cpus.  On failure, restores
+ * the CPUs already offlined and returns the offending error to abort the
+ * suspend cycle cleanly. */
+static int suspend_offline_secondary_cpus(void) {
+    int ncpus = smp_get_cpu_count();
+    int offlined = 0;
+
+    for (int cpu = 1; cpu < ncpus; cpu++) {
+        if (!cpuhp_is_online(cpu))
+            continue;
+
+        int ret = cpuhp_take_cpu_offline(cpu);
+        if (ret != CPUHP_OK) {
+            /* Abort — roll back the CPUs we managed to offline. */
+            kprintf("[suspend] failed to offline CPU %d (rc=%d); "
+                    "aborting suspend\n", cpu, ret);
+            for (int j = 1; j < cpu; j++) {
+                if (g_suspend_offlined_cpus & (1UL << j)) {
+                    cpuhp_bring_cpu(j);
+                    g_suspend_offlined_cpus &= ~(1UL << j);
+                }
+            }
+            return ret;
+        }
+
+        g_suspend_offlined_cpus |= (1UL << cpu);
+        offlined++;
+    }
+
+    if (offlined)
+        kprintf("[suspend] offlined %d secondary CPU(s) before suspend\n", offlined);
+    return CPUHP_OK;
+}
+
+/* Bring back online every secondary CPU offlined for suspend. */
+static void suspend_online_secondary_cpus(void) {
+    int ncpus = smp_get_cpu_count();
+
+    for (int cpu = 1; cpu < ncpus; cpu++) {
+        if (g_suspend_offlined_cpus & (1UL << cpu)) {
+            cpuhp_bring_cpu(cpu);
+            g_suspend_offlined_cpus &= ~(1UL << cpu);
+        }
+    }
+}
+
 int suspend_prepare(suspend_state_t state)
 {
     kprintf("[suspend] Preparing system for %s suspend...\n",
@@ -880,6 +934,16 @@ int suspend_prepare(suspend_state_t state)
 
     /* Step 4: Freeze processes (stub — would use process_freeze_all()) */
     /* process_freeze_all(THAW_PROCESS); */
+
+    /* Step 5: Take secondary CPUs offline so the sleep transition only
+     * involves the boot CPU.  If this fails we cannot safely enter suspend,
+     * so undo the device suspend and abort the cycle. */
+    ret = suspend_offline_secondary_cpus();
+    if (ret != CPUHP_OK) {
+        kprintf("[suspend] CPU offline failed, aborting (%d)\n", ret);
+        resume_devices();
+        return ret;
+    }
 
     kprintf("[suspend] System prepared for %s suspend\n",
             pm_state_name(state));
@@ -947,6 +1011,9 @@ void suspend_wakeup(void)
 
     /* Resume devices in reverse order */
     resume_devices();
+
+    /* Bring back online any secondary CPU offlined for suspend. */
+    suspend_online_secondary_cpus();
 
     /* Notify drivers of resume */
     /* driver_resume_notify(); */
