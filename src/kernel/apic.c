@@ -554,9 +554,13 @@ void smp_tlb_shootdown(const uint64_t *addrs, int nr) {
 
     int my_cpu = smp_get_cpu_id();
 
-    /* Write addresses to each remote CPU's info struct */
+    /* Write addresses to each online remote CPU's info struct.
+     * Offline CPUs are skipped entirely — they cannot run the handler and
+     * would never ACK, so we must neither fill nor wait on them. */
     for (int cpu = 0; cpu < cpu_count; cpu++) {
         if (cpu == my_cpu) continue;
+        if (!cpuhp_is_online(cpu))
+            continue; /* offline CPU — skip */
         struct tlb_shootdown_info *info = &tlb_info[cpu];
         while (info->active_request) __asm__ volatile("pause");
         info->active_request = 1;
@@ -566,17 +570,27 @@ void smp_tlb_shootdown(const uint64_t *addrs, int nr) {
         info->finished = 0;
     }
 
-    /* Send IPI to all other CPUs */
+    /* Send the shootdown IPI to every online CPU except this one.
+     * Targeting each online CPU individually (rather than broadcasting to
+     * all CPUs) avoids sending interrupt vectors to offlined CPUs. */
     __asm__ volatile("mfence" ::: "memory");
-    apic_send_ipi_all_except(IPI_VECTOR_TLB_SHOOT);
+    for (int cpu = 0; cpu < cpu_count; cpu++) {
+        if (cpu == my_cpu) continue;
+        if (!cpuhp_is_online(cpu))
+            continue;
+        apic_send_ipi(cpu_info_array[cpu].apic_id, IPI_VECTOR_TLB_SHOOT);
+    }
 
     /* Also invalidate local TLB (our own page tables changed too) */
     for (int i = 0; i < nr; i++)
         __asm__ volatile("invlpg (%0)" : : "r"(addrs[i]) : "memory");
 
-    /* Wait for remote ACKs */
+    /* Wait for remote ACKs from online CPUs only.
+     * Offline CPUs are skipped — waiting on them would spin forever. */
     for (int cpu = 0; cpu < cpu_count; cpu++) {
         if (cpu == my_cpu) continue;
+        if (!cpuhp_is_online(cpu))
+            continue;
         while (!tlb_info[cpu].finished) __asm__ volatile("pause");
         tlb_info[cpu].active_request = 0;
     }
