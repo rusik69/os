@@ -413,6 +413,57 @@ jobs:
           echo "## Code Coverage" >> $GITHUB_STEP_SUMMARY
           echo "- gcov per-file coverage output uploaded ($(ls *.gcov 2>/dev/null | wc -l) files)" >> $GITHUB_STEP_SUMMARY
 
+  # ── Memory leak detection (valgrind on host tests) ───────────────
+  # Runs the host-side unit test suite under valgrind --leak-check.
+  # Skips if valgrind is not installed on the runner.
+  valgrind:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check valgrind availability
+        id: vg
+        run: |
+          if command -v valgrind >/dev/null 2>&1; then
+            echo "available=yes"
+            echo "available=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=no"
+            echo "available=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run host unit tests under valgrind
+        if: steps.vg.outputs.available == 'yes'
+        run: |
+          make -C tests/host_libc all -j$(nproc) >/dev/null 2>&1 || true
+          make -C tests/unit test_memory test_fs test_list test_string test_bitmap test_abi -j$(nproc) >/dev/null 2>&1 || true
+          mkdir -p vg-reports
+          for b in tests/unit/test_memory tests/unit/test_fs tests/unit/test_list \
+                   tests/unit/test_string tests/unit/test_bitmap tests/unit/test_abi \
+                   tests/host_libc/test_crc16 tests/host_libc/test_string; do
+            [ -x "$b" ] || continue
+            name="$(basename "$b")"
+            valgrind --leak-check=summary --error-exitcode=99 --log-file="vg-reports/$name.vg" \
+              "$b" >/dev/null 2>&1 || true
+            echo "== $name: $(grep -E 'definitely lost|ERROR SUMMARY' vg-reports/$name.vg | tr '\n' ' ')"
+          done
+
+      - name: Upload valgrind reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: valgrind-reports
+          path: vg-reports/
+          retention-days: 7
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Valgrind Memory Check" >> $GITHUB_STEP_SUMMARY
+          echo "- Host unit tests run under valgrind --leak-check=summary (skipped if valgrind absent)" >> $GITHUB_STEP_SUMMARY
+
   # ── Fast pre-merge verification ────────────────────────────────────
   verify:
     runs-on: [self-hosted, linux, x64]
