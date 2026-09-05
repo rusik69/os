@@ -169,6 +169,12 @@ static int blk_mq_initialized = 0;
 
 /* ── Forward declarations of static helpers ──────────────────────── */
 
+/**
+ * blk_mq_free_request - Release a block multiqueue request
+ * @req: Request to free
+ *
+ * Returns the request's tag and clears its owned fields so the slot may be reused.
+ */
 static void blk_mq_free_request(struct blk_mq_request *req);
 
 /* ════════════════════════════════════════════════════════════════════
@@ -178,6 +184,13 @@ static void blk_mq_free_request(struct blk_mq_request *req);
 /*
  * Initialize the tag pool with all tags marked free and the request
  * array zeroed.
+ */
+/**
+ * blk_mq_tags_init - Initialise the block multiqueue tag allocator
+ * @tags: blk_mq_tags structure to initialise
+ *
+ * Zeroes the tag bitmap and clears the reserved tag count so the queue is ready to hand out request
+ * tags.
  */
 static void blk_mq_tags_init(struct blk_mq_tags *tags)
 {
@@ -209,6 +222,13 @@ static void blk_mq_tags_init(struct blk_mq_tags *tags)
  * Scans the bitmap for the first zero bit (free slot), marks it as
  * in-use, and returns the index.  Returns -1 if the pool is empty.
  */
+/**
+ * blk_mq_get_tag - Allocate a request tag from the tag map
+ * @tags: Tag allocator to draw from
+ *
+ * Finds and claims the next free tag for an incoming request. Returns the tag index or -ENOSPC if
+ * none is available.
+ */
 static int blk_mq_get_tag(struct blk_mq_tags *tags)
 {
     uint64_t irq_flags;
@@ -239,6 +259,13 @@ static int blk_mq_get_tag(struct blk_mq_tags *tags)
 /*
  * Return a tag to the pool so it can be reused.
  */
+/**
+ * blk_mq_put_tag - Release a request tag back to the tag map
+ * @tags: Tag allocator
+ * @tag: Tag index to return
+ *
+ * Clears @tag in the bitmap so it can be reused by a later request.
+ */
 static void blk_mq_put_tag(struct blk_mq_tags *tags, int tag)
 {
     uint64_t irq_flags;
@@ -254,7 +281,12 @@ static void blk_mq_put_tag(struct blk_mq_tags *tags, int tag)
     spinlock_irqsave_release(&tags->lock, irq_flags);
 }
 
-/* Allocate a request from the tag pool */
+/**
+ * blk_mq_alloc_request - Allocate a block multiqueue request
+ *
+ * Obtains a tag and returns a corresponding blk_mq_request, or NULL if the
+ * tag pool is exhausted.
+ */
 static struct blk_mq_request *blk_mq_alloc_request(void)
 {
     int tag = blk_mq_get_tag(&blk_mq_tags);
@@ -476,6 +508,13 @@ static int blk_mq_harvest_poll_completions(int hw_idx)
  * providing better queue-level parallelism than a naive CPU-based mapping
  * when multiple CPUs share a queue.
  */
+/**
+ * blk_mq_get_hw_queue - Map a sector range to a hardware queue
+ * @sector: Starting sector of the I/O
+ *
+ * Partitions the block address space across hardware queues and returns the hardware queue index
+ * that should service @sector.
+ */
 static int blk_mq_get_hw_queue(uint64_t sector)
 {
     if (blk_mq_num_hw_queues == 0)
@@ -489,6 +528,12 @@ static int blk_mq_get_hw_queue(uint64_t sector)
  *
  * Returns the preferred HW queue for requests originating from this CPU.
  * Used for direct submission when the caller doesn't specify a queue.
+ */
+/**
+ * blk_mq_map_cpu_to_hw_queue - Map a CPU to its affinity hardware queue
+ * @cpu: CPU id
+ *
+ * Returns the hardware queue index whose affinity includes @cpu.
  */
 static int blk_mq_map_cpu_to_hw_queue(int cpu)
 {
@@ -514,6 +559,13 @@ static int blk_mq_map_cpu_to_hw_queue(int cpu)
  * @hw_idx:  Hardware queue index
  * @cpu_bitmap: Bitmask of CPUs that should submit to this queue
  * Returns 0 on success, -EINVAL if the queue index is out of range.
+ */
+/**
+ * blk_mq_set_hw_queue_affinity - Set the CPU affinity of a hardware queue
+ * @hw_idx: Hardware queue index
+ * @cpu_bitmap: CPU bitmask to bind
+ *
+ * Assigns the set of CPUs serviced by hardware queue @hw_idx.
  */
 static int blk_mq_set_hw_queue_affinity(int hw_idx, unsigned long cpu_bitmap)
 {
@@ -583,6 +635,15 @@ static void blk_mq_hw_queue_init(int hw_idx)
  * Returns 0 on success, -EINVAL if @submit_fn is NULL or @hw_idx is
  * out of range, -EALREADY if the queue already has a submit callback.
  */
+/**
+ * blk_mq_init_hw_queue - Initialise a hardware queue
+ * @hw_idx: Hardware queue index
+ * @submit_fn: Driver submit callback
+ * @is_poll: Non-zero to enable polling mode
+ *
+ * Sets up the request ring and submit/poll callbacks for hardware queue @hw_idx. Returns 0 on
+ * success or a negative error code.
+ */
 static int blk_mq_init_hw_queue(int hw_idx, blk_mq_hw_submit_fn submit_fn,
                           void *priv, int use_polling)
 {
@@ -622,6 +683,12 @@ static int blk_mq_init_hw_queue(int hw_idx, blk_mq_hw_submit_fn submit_fn,
  * Returns 0 on success, -EINVAL if out of range, -EBUSY if the queue
  * still has pending requests (caller must drain first).
  */
+/**
+ * blk_mq_exit_hw_queue - Tear down a hardware queue
+ * @hw_idx: Hardware queue index
+ *
+ * Drains and releases all resources owned by hardware queue @hw_idx.
+ */
 static int blk_mq_exit_hw_queue(int hw_idx)
 {
     if (hw_idx < 0 || hw_idx >= BLK_MQ_MAX_HW_QUEUES)
@@ -656,6 +723,12 @@ static int blk_mq_exit_hw_queue(int hw_idx)
  * Start a hardware queue, allowing it to accept and dispatch requests.
  * Queues are started by default after initialisation.
  */
+/**
+ * blk_mq_start_hw_queue - Start a hardware queue
+ * @hw_idx: Hardware queue index
+ *
+ * Marks the hardware queue enabled so it may begin dispatching requests.
+ */
 static int blk_mq_start_hw_queue(int hw_idx)
 {
     if (hw_idx < 0 || hw_idx >= blk_mq_num_hw_queues)
@@ -679,6 +752,12 @@ static int blk_mq_start_hw_queue(int hw_idx)
  * Stop a hardware queue.  Requests may still be enqueued but will
  * not be dispatched until start is called again.
  */
+/**
+ * blk_mq_stop_hw_queue - Stop a hardware queue
+ * @hw_idx: Hardware queue index
+ *
+ * Marks the hardware queue disabled, halting further dispatch until it is started again.
+ */
 static int blk_mq_stop_hw_queue(int hw_idx)
 {
     if (hw_idx < 0 || hw_idx >= blk_mq_num_hw_queues)
@@ -701,6 +780,12 @@ static int blk_mq_stop_hw_queue(int hw_idx)
  * The queue is placed in DRAINING state, preventing new submissions.
  * All requests still in the ring buffer are completed with -EIO and
  * freed back to the tag pool.  Returns the number of requests drained.
+ */
+/**
+ * blk_mq_drain_hw_queue - Drain in-flight requests on a hardware queue
+ * @hw_idx: Hardware queue index
+ *
+ * Runs the queue to completion, waiting for all outstanding requests to finish before returning.
  */
 static int blk_mq_drain_hw_queue(int hw_idx)
 {
@@ -742,6 +827,14 @@ static int blk_mq_drain_hw_queue(int hw_idx)
  * waiting for an IRQ to complete requests.  This is used by devices
  * that support NVMe-style completion polling.
  */
+/**
+ * blk_mq_set_hw_queue_poll - Enable polling for a hardware queue
+ * @hw_idx: Hardware queue index
+ * @poll_fn: Driver poll callback
+ * @timeout_us: Poll timeout in microseconds
+ *
+ * Registers the poll callback for hardware queue @hw_idx and enables poll-mode completion.
+ */
 static int blk_mq_set_hw_queue_poll(int hw_idx, blk_mq_hw_poll_fn poll_fn,
                               void *priv)
 {
@@ -771,6 +864,14 @@ static int blk_mq_set_hw_queue_poll(int hw_idx, blk_mq_hw_poll_fn poll_fn,
  *
  * Returns 0 on success, -EAGAIN if the HW queue is full, -EIO if the
  * queue is stopped/offline.
+ */
+/**
+ * blk_mq_direct_dispatch - Dispatch a request directly to a hardware queue
+ * @req: Request to dispatch
+ * @hw_idx: Target hardware queue index
+ *
+ * Bypasses the software queue and hands @req straight to the hardware queue submit callback.
+ * Returns 0 on success.
  */
 static int blk_mq_direct_dispatch(struct blk_mq_request *req, int hw_idx)
 {
@@ -831,6 +932,14 @@ static int blk_mq_direct_dispatch(struct blk_mq_request *req, int hw_idx)
  *
  * Returns 0 on success, negative errno on failure.  On partial
  * failure, successfully enqueued requests remain in the HW ring.
+ */
+/**
+ * blk_mq_batch_dispatch - Dispatch a batch of requests to a hardware queue
+ * @reqs: Array of requests
+ * @count: Number of requests
+ * @hw_idx: Target hardware queue index
+ *
+ * Submits an array of requests to the hardware queue as a batch. Returns the number dispatched.
  */
 static int blk_mq_batch_dispatch(struct blk_mq_request **reqs, int count,
                                   int hw_idx)
@@ -1032,6 +1141,15 @@ static int blk_mq_sw_queue_front_merge(struct blk_mq_sw_queue *swq,
  *
  * Returns 0 on success, -EAGAIN if the SW queue is full.
  */
+/**
+ * blk_mq_sw_queue_insert - Insert a request into a software queue
+ * @swq: Software queue
+ * @req: Request to insert
+ * @req_start: Starting sector
+ *
+ * Adds @req to the software queue's pending list, attempting back/front merge with adjacent
+ * requests when possible.
+ */
 static int blk_mq_sw_queue_insert(struct blk_mq_sw_queue *swq,
                                    struct blk_mq_request *req)
 {
@@ -1074,6 +1192,12 @@ static int blk_mq_sw_queue_insert(struct blk_mq_sw_queue *swq,
  *
  * @cpu: CPU index identifying the SW queue
  */
+/**
+ * blk_mq_plug_sw_queue - Plug a CPU's software queue
+ * @cpu: CPU id
+ *
+ * Temporarily stops software queue @cpu from dispatching so requests batch into larger I/O.
+ */
 static void blk_mq_plug_sw_queue(int cpu)
 {
     if (cpu < 0 || cpu >= BLK_MQ_MAX_SW_QUEUES)
@@ -1095,6 +1219,12 @@ static void blk_mq_plug_sw_queue(int cpu)
  * after unplugging.
  *
  * @cpu: CPU index identifying the SW queue
+ */
+/**
+ * blk_mq_unplug_sw_queue - Unplug a CPU's software queue
+ * @cpu: CPU id
+ *
+ * Resumes dispatch on software queue @cpu, flushing any batched requests.
  */
 static void blk_mq_unplug_sw_queue(int cpu)
 {
@@ -1201,6 +1331,14 @@ static int blk_mq_get_sw_queue_stats(int cpu, int *occupancy, int *peak,
  * Returns the number of requests drained (0 if plugged or empty).
  * The caller must release the SW queue lock before dispatching the
  * drained requests.
+ */
+/**
+ * blk_mq_drain_sw_queue_locked - Drain a software queue under lock
+ * @swq: Software queue to drain
+ * @force: Non-zero to run even when plugged
+ *
+ * Runs all pending requests in @swq to the hardware layer, holding the queue lock. Returns the
+ * number flushed.
  */
 static int blk_mq_drain_sw_queue_locked(struct blk_mq_sw_queue *swq,
                                          struct blk_mq_request **buf,
@@ -1696,6 +1834,14 @@ static void __init blk_mq_init(void)
 }
 
 /* ── Stub: blk_mq_init_queue ─────────────────────────────────────── */
+/**
+ * blk_mq_init_queue - Create a block multiqueue request queue
+ * @dev: Device-specific context
+ * @tag_set: Shared tag set configuration
+ *
+ * Allocates and initialises a multiqueue request queue bound to @dev, using the passed tag set.
+ * Returns the queue handle or NULL on failure.
+ */
 static int blk_mq_init_queue(void *dev, void *tag_set)
 {
     (void)dev;
@@ -1704,6 +1850,12 @@ static int blk_mq_init_queue(void *dev, void *tag_set)
 }
 
 /* ── Stub: blk_mq_exit_queue ─────────────────────────────────────── */
+/**
+ * blk_mq_exit_queue - Destroy a block multiqueue request queue
+ * @q: Request queue to destroy
+ *
+ * Drains and releases the request queue and its associated queues.
+ */
 static int blk_mq_exit_queue(void *q)
 {
     (void)q;
@@ -1711,6 +1863,13 @@ static int blk_mq_exit_queue(void *q)
 }
 
 /* ── Stub: blk_mq_submit_bio ─────────────────────────────────────── */
+/**
+ * blk_mq_submit_bio - Submit a bio through the block multiqueue layer
+ * @bio: Block I/O descriptor to submit
+ *
+ * Converts the high-level bio into one or more blk_mq requests and dispatches them to the
+ * appropriate queue. Returns 0 on success.
+ */
 static int blk_mq_submit_bio(void *bio)
 {
     (void)bio;
