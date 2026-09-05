@@ -531,6 +531,67 @@ uint32_t cgroup_controllers(int cg_id) {
 }
 EXPORT_SYMBOL(cgroup_controllers);
 
+/* ── cpuset controller (cpuset.cpus) ──────────────────────────────── */
+
+int cgroup_cpuset_set(int cg_id, const cpuset_t *set) {
+    if (!set || cpuset_empty(set))
+        return -EINVAL;
+    if (cg_id < 0 || cg_id >= CGROUP_MAX || !g_cgroups[cg_id].in_use)
+        return -EINVAL;
+
+    spinlock_acquire(&g_cgroup_lock);
+    struct cgroup *cg = &g_cgroups[cg_id];
+    cg->cpuset = *set;
+    cg->cpuset_valid = 1;
+
+    /* Apply the affinity to every member process. */
+    for (int i = 0; i < CGROUP_MAX_PIDS; i++) {
+        int pid = cg->members[i];
+        if (pid > 0)
+            sched_setaffinity((uint32_t)pid, &cg->cpuset);
+    }
+    spinlock_release(&g_cgroup_lock);
+
+    kprintf("[cgroup] cpuset[%d] set to 0x%llx (%d cpu%s)\n", cg_id,
+            (unsigned long long)cg->cpuset.bits, cpuset_weight(&cg->cpuset),
+            cpuset_weight(&cg->cpuset) == 1 ? "" : "s");
+    return 0;
+}
+EXPORT_SYMBOL(cgroup_cpuset_set);
+
+int cgroup_cpuset_get(int cg_id, cpuset_t *set) {
+    if (!set)
+        return -EINVAL;
+    if (cg_id < 0 || cg_id >= CGROUP_MAX || !g_cgroups[cg_id].in_use)
+        return -EINVAL;
+
+    spinlock_acquire(&g_cgroup_lock);
+    if (g_cgroups[cg_id].cpuset_valid)
+        *set = g_cgroups[cg_id].cpuset;
+    else
+        cpuset_zero(set);
+    spinlock_release(&g_cgroup_lock);
+    return 0;
+}
+EXPORT_SYMBOL(cgroup_cpuset_get);
+
+/* Apply the cgroup's cpuset to a single task (called on attach). */
+void cgroup_cpuset_apply_member(int cg_id, int pid) {
+    if (pid <= 0)
+        return;
+    if (cg_id < 0 || cg_id >= CGROUP_MAX || !g_cgroups[cg_id].in_use)
+        return;
+    if (!g_cgroups[cg_id].cpuset_valid)
+        return;
+
+    spinlock_acquire(&g_cgroup_lock);
+    cpuset_t set = g_cgroups[cg_id].cpuset;
+    spinlock_release(&g_cgroup_lock);
+
+    sched_setaffinity((uint32_t)pid, &set);
+}
+EXPORT_SYMBOL(cgroup_cpuset_apply_member);
+
 /* Destroy a cgroup. All member processes are moved to the root cgroup.
  * Returns 0 on success. */
 int cgroup_destroy(int cg_id) {
@@ -622,6 +683,9 @@ found:
     cg->members[slot] = pid;
     cg->num_pids++;
     spinlock_release(&g_cgroup_lock);
+
+    /* Apply the destination cgroup's cpuset to the new member. */
+    cgroup_cpuset_apply_member(cg_id, pid);
     return 0;
 }
 EXPORT_SYMBOL(cgroup_attach);
@@ -1147,6 +1211,13 @@ int cgroup_write_control(int cg_id, const char *controller, const char *key, con
             return cgroup_freeze(cg_id);
         if (strcmp(value, "THAWED") == 0)
             return cgroup_unfreeze(cg_id);
+    } else if (strcmp(controller, "cpuset") == 0 || strcmp(key, "cpuset.cpus") == 0) {
+        /* cpuset controller: "cpuset cpus <list>" or "cpuset.cpus <list>" */
+        cpuset_t set;
+        int pr = cpuset_parse(value, &set);
+        if (pr < 0)
+            return pr;
+        return cgroup_cpuset_set(cg_id, &set);
     }
 
     return 0;

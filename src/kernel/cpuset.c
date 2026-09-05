@@ -1,16 +1,17 @@
 #include "cpuset.h"
-#include "process.h"
-#include "printf.h"
-#include "string.h"
+
 #include "errno.h"
 #include "kernel.h"
+#include "printf.h"
+#include "process.h"
+#include "string.h"
 
 /* Per-process CPU affinity table. */
-#define CPUSET_TABLE_SIZE  64
+#define CPUSET_TABLE_SIZE 64
 
 static cpuset_t cpuset_table[CPUSET_TABLE_SIZE];
-static int      cpuset_used[CPUSET_TABLE_SIZE];
-static int      cpuset_initialised;
+static int cpuset_used[CPUSET_TABLE_SIZE];
+static int cpuset_initialised;
 
 /* Global cpuset representing all available CPUs */
 static cpuset_t cpuset_all;
@@ -19,8 +20,7 @@ static cpuset_t cpuset_all;
 static struct cpu_cgroup cpu_cgroups[CPU_CGROUP_MAX];
 static int cpu_cgroup_initialised = 0;
 
-void __init cpuset_init(void)
-{
+void __init cpuset_init(void) {
     if (cpuset_initialised)
         return;
 
@@ -45,18 +45,15 @@ void __init cpuset_init(void)
 }
 
 /* Return a reference to the "all CPUs" cpuset */
-static const cpuset_t *cpuset_get_all(void)
-{
+static const cpuset_t *cpuset_get_all(void) {
     return &cpuset_all;
 }
 
-static int cpuset_index(uint32_t pid)
-{
+static int cpuset_index(uint32_t pid) {
     return pid % CPUSET_TABLE_SIZE;
 }
 
-int sched_setaffinity(uint32_t pid, const cpuset_t *cpuset)
-{
+int sched_setaffinity(uint32_t pid, const cpuset_t *cpuset) {
     if (!cpuset)
         return -EFAULT;
 
@@ -64,7 +61,7 @@ int sched_setaffinity(uint32_t pid, const cpuset_t *cpuset)
     if (cpuset_empty(cpuset))
         return -EINVAL;
 
-    /* Validate no bits beyond max CPUs */
+        /* Validate no bits beyond max CPUs */
 #if CPUSET_MAX_CPUS < 64
     if (cpuset->bits & ~((1ULL << CPUSET_MAX_CPUS) - 1))
         return -EINVAL;
@@ -85,8 +82,7 @@ int sched_setaffinity(uint32_t pid, const cpuset_t *cpuset)
     return 0;
 }
 
-int sched_getaffinity(uint32_t pid, cpuset_t *cpuset)
-{
+int sched_getaffinity(uint32_t pid, cpuset_t *cpuset) {
     if (!cpuset)
         return -EFAULT;
 
@@ -110,8 +106,7 @@ int sched_getaffinity(uint32_t pid, cpuset_t *cpuset)
  * cpuset_mems_allowed — return the memory nodes allowed for the current process.
  * If the current process has no mems_allowed set, returns default (all nodes).
  */
-static cpuset_t cpuset_mems_allowed(void)
-{
+static cpuset_t cpuset_mems_allowed(void) {
     struct process *current = process_get_current();
     cpuset_t all_nodes;
     (void)current;
@@ -131,8 +126,7 @@ static cpuset_t cpuset_mems_allowed(void)
  * cpuset_cpus_allowed — return the CPU affinity mask for the current process.
  * If the current process has no cpus_allowed set, returns default (all CPUs).
  */
-static cpuset_t cpuset_cpus_allowed(void)
-{
+static cpuset_t cpuset_cpus_allowed(void) {
     struct process *current = process_get_current();
     cpuset_t mask;
 
@@ -159,8 +153,7 @@ static cpuset_t cpuset_cpus_allowed(void)
  */
 
 /* Return the cgroup structure for the given ID, or NULL if invalid. */
-struct cpu_cgroup *cpu_cgroup_get(int cg_id)
-{
+struct cpu_cgroup *cpu_cgroup_get(int cg_id) {
     if (cg_id < 0 || cg_id >= CPU_CGROUP_MAX)
         return NULL;
     if (cg_id > 0 && !cpu_cgroups[cg_id].in_use)
@@ -170,19 +163,18 @@ struct cpu_cgroup *cpu_cgroup_get(int cg_id)
 
 /* Allocate a new CPU cgroup slot, returning its ID (1..CPU_CGROUP_MAX-1)
  * or -1 if all slots are exhausted. */
-int cpu_cgroup_alloc(void)
-{
+int cpu_cgroup_alloc(void) {
     if (!cpu_cgroup_initialised)
         return -EINVAL;
 
     for (int i = 1; i < CPU_CGROUP_MAX; i++) {
         if (!cpu_cgroups[i].in_use) {
-            cpu_cgroups[i].in_use    = 1;
-            cpu_cgroups[i].cg_id     = i;
-            cpu_cgroups[i].usage_ticks   = 0;
-            cpu_cgroups[i].limit_ticks   = 0;  /* unlimited */
-            cpu_cgroups[i].throttled      = 0;
-            cpu_cgroups[i].member_count   = 0;
+            cpu_cgroups[i].in_use = 1;
+            cpu_cgroups[i].cg_id = i;
+            cpu_cgroups[i].usage_ticks = 0;
+            cpu_cgroups[i].limit_ticks = 0; /* unlimited */
+            cpu_cgroups[i].throttled = 0;
+            cpu_cgroups[i].member_count = 0;
             return i;
         }
     }
@@ -191,8 +183,7 @@ int cpu_cgroup_alloc(void)
 
 /* Set the per-window CPU limit for a cgroup (in timer ticks).
  * A limit of 0 means unlimited. */
-int cpu_cgroup_set_limit(int cg_id, uint64_t limit_ticks)
-{
+int cpu_cgroup_set_limit(int cg_id, uint64_t limit_ticks) {
     struct cpu_cgroup *cg = cpu_cgroup_get(cg_id);
     if (!cg)
         return -EINVAL;
@@ -207,8 +198,7 @@ int cpu_cgroup_set_limit(int cg_id, uint64_t limit_ticks)
 
 /* Account 'ticks' of CPU time to the given cgroup.  If the group now
  * exceeds its limit, mark it throttled. */
-void cpu_cgroup_account(int cg_id, uint64_t ticks)
-{
+void cpu_cgroup_account(int cg_id, uint64_t ticks) {
     struct cpu_cgroup *cg = cpu_cgroup_get(cg_id);
     if (!cg)
         return;
@@ -222,8 +212,7 @@ void cpu_cgroup_account(int cg_id, uint64_t ticks)
 
 /* Return 1 if the cgroup is currently throttled, 0 otherwise.
  * Group 0 (the default) is never throttled. */
-int cpu_cgroup_is_throttled(int cg_id)
-{
+int cpu_cgroup_is_throttled(int cg_id) {
     if (cg_id <= 0 || cg_id >= CPU_CGROUP_MAX)
         return 0;
     struct cpu_cgroup *cg = cpu_cgroup_get(cg_id);
@@ -234,42 +223,88 @@ int cpu_cgroup_is_throttled(int cg_id)
 
 /* Reset usage counters for all cgroups (end of accounting window).
  * Clears throttled status so that groups may run again. */
-void cpu_cgroup_reset_window(void)
-{
+void cpu_cgroup_reset_window(void) {
     for (int i = 1; i < CPU_CGROUP_MAX; i++) {
         if (cpu_cgroups[i].in_use) {
             cpu_cgroups[i].usage_ticks = 0;
-            cpu_cgroups[i].throttled   = 0;
+            cpu_cgroups[i].throttled = 0;
         }
     }
 }
 
+/* Parse a CPU-list string ("0-3,5", "1,4", "0-2") into a cpuset.
+ * Returns 0 on success, -EINVAL on malformed or out-of-range input. */
+int cpuset_parse(const char *str, cpuset_t *set) {
+    if (!str || !set)
+        return -EINVAL;
+
+    cpuset_zero(set);
+
+    const char *p = str;
+    int any = 0;
+
+    while (1) {
+        while (*p == ' ' || *p == '\t' || *p == ',')
+            p++;
+        if (*p == '\0')
+            break;
+
+        /* Parse a number (start of a singleton or a range) */
+        if (*p < '0' || *p > '9')
+            return -EINVAL;
+        int start = 0;
+        while (*p >= '0' && *p <= '9') {
+            start = start * 10 + (int)(*p - '0');
+            p++;
+        }
+
+        int end = start;
+        if (*p == '-') {
+            p++;
+            if (*p < '0' || *p > '9')
+                return -EINVAL;
+            end = 0;
+            while (*p >= '0' && *p <= '9') {
+                end = end * 10 + (int)(*p - '0');
+                p++;
+            }
+            if (end < start)
+                return -EINVAL;
+        }
+
+        if (start >= CPUSET_MAX_CPUS || end >= CPUSET_MAX_CPUS)
+            return -EINVAL;
+
+        for (int c = start; c <= end; c++)
+            cpuset_set_cpu(c, set);
+        any = 1;
+    }
+
+    return any ? 0 : -EINVAL;
+}
+
 /* ── Stub: cpuset_create ─────────────────────────────── */
-static int cpuset_create(const char *name, void *parent)
-{
+static int cpuset_create(const char *name, void *parent) {
     (void)name;
     (void)parent;
     kprintf("[cpuset] cpuset_create: not yet implemented\n");
     return 0;
 }
 /* ── Stub: cpuset_delete ─────────────────────────────── */
-static int cpuset_delete(const char *name)
-{
+static int cpuset_delete(const char *name) {
     (void)name;
     kprintf("[cpuset] cpuset_delete: not yet implemented\n");
     return 0;
 }
 /* ── Stub: cpuset_attach ─────────────────────────────── */
-static int cpuset_attach(const char *name, void *task)
-{
+static int cpuset_attach(const char *name, void *task) {
     (void)name;
     (void)task;
     kprintf("[cpuset] cpuset_attach: not yet implemented\n");
     return 0;
 }
 /* ── Stub: cpuset_migrate ─────────────────────────────── */
-static int cpuset_migrate(const char *name, const void *cpus)
-{
+static int cpuset_migrate(const char *name, const void *cpus) {
     (void)name;
     (void)cpus;
     kprintf("[cpuset] cpuset_migrate: not yet implemented\n");

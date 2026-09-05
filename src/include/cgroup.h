@@ -1,6 +1,7 @@
 #ifndef CGROUP_H
 #define CGROUP_H
 
+#include "cpuset.h"
 #include "process.h"
 #include "types.h"
 
@@ -96,6 +97,10 @@ struct cgroup {
     /* Controller enable/disable mask (cgroup.subtree_control) */
     uint32_t ctrl_mask;
 
+    /* cpuset controller: CPUs on which tasks in this cgroup may run */
+    cpuset_t cpuset;
+    int cpuset_valid; /* 1 = cpuset active for this cgroup */
+
     /* Controller states */
     struct cgroup_cpu_state cpu;
     struct cgroup_mem_state mem;
@@ -159,5 +164,24 @@ int cgroup_set_controller(int cg_id, const char *name, int enable);
 
 /* Return the current controller enable mask for a cgroup. */
 uint32_t cgroup_controllers(int cg_id);
+
+/* ── cpuset controller (cpuset.cpus) ────────────────────────────────
+ * Each cgroup may restrict its tasks to a subset of CPUs.  Setting the
+ * cpuset immediately applies the affinity to every member process. */
+
+/* Set the CPUs allowed for a cgroup and apply to all its members.
+ * Returns 0 on success, negative errno on error. */
+int cgroup_cpuset_set(int cg_id, const cpuset_t *set);
+
+/* Read the CPUs currently allowed for a cgroup into @set. */
+int cgroup_cpuset_get(int cg_id, cpuset_t *set);
+
+/* Apply a cgroup's cpuset to a single (newly attached) task.
+ * Used by cgroup_attach(). */
+void cgroup_cpuset_apply_member(int cg_id, int pid);
+
+/* Parse a CPU-list string ("0-3,5") into a cpuset.  Returns 0 on
+ * success, -EINVAL on malformed input. */
+int cpuset_parse(const char *str, cpuset_t *set);
 
 #endif /* CGROUP_H */
