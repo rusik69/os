@@ -171,7 +171,16 @@ static inline uint64_t make_redzone_pattern(void) {
     return pat;
 }
 
-/* Per-CPU slab cache — small array of objects for lockless fast path */
+/**
+ * struct cpu_slab - Per-CPU object cache for the lockless fast path.
+ * @objects: Array of cached free-object pointers (holds up to @SLAB_CPU_CACHE_SIZE).
+ * @count: Number of valid entries currently in @objects.
+ *
+ * Each kmem_cache keeps one of these per CPU so that allocations and frees
+ * on a hot path can be served from a per-CPU stack without taking the global
+ * cache @kmem_cache.lock.  When the cache underflows or overflows, the slow
+ * path refills or drains it under the cache lock.
+ */
 struct cpu_slab {
     void *objects[SLAB_CPU_CACHE_SIZE]; /* cached free object pointers */
     int   count;                         /* number of valid entries */
@@ -185,6 +194,21 @@ enum slab_state {
 
 /* ── Slab header (at the start of each slab's first page) ────────────── */
 
+/**
+ * struct slab - Slab header stored at the start of each slab's first page.
+ * @next: Next slab in the cache list the slab is linked into.
+ * @prev: Previous slab in the cache list.
+ * @free_list: Head of the linked list of free objects within this slab.
+ * @free_count: Number of free objects currently in this slab.
+ * @total: Total number of objects this slab can hold.
+ * @state: Which cache list (SLAB_FULL/PARTIAL/FREE) this slab is linked into.
+ *
+ * A slab is a run of physically-contiguous pages from which fixed-size
+ * objects are carved.  Because allocations may span a non-power-of-two
+ * object size the slab base address is always PAGE_SIZE-aligned, which is
+ * the assumption relied on by the object-to-slab reverse mapping formula
+ * `(struct slab *)((uint64_t)obj & ~(slab_size - 1))`.
+ */
 struct slab {
     struct slab    *next;          /* linked list in cache */
     struct slab    *prev;
@@ -194,8 +218,24 @@ struct slab {
     enum slab_state state;         /* which list this slab is linked into */
 };
 
-/* ── Cache descriptor ────────────────────────────────────────────────── */
-
+/**
+ * struct kmem_cache - Per-type cache descriptor.
+ * @name: Human-readable cache name (used in diagnostics).
+ * @obj_size: Actual object size (rounded + aligned), includes the redzone.
+ * @user_size: Caller-requested object size (without the redzone).
+ * @align: Requested object alignment (power of two, minimum 8).
+ * @gfporder: Order of the physically-contiguous pages backing each slab (2^gfporder pages).
+ * @num: Number of objects per slab.
+ * @colour_off: Maximum colour offset (leftover bytes) for cache-line coloring.
+ * @colour_next: Next colour to use (cycles per slab).
+ * @ctor: Constructor invoked on freshly allocated slab objects (may be NULL).
+ * @slabs_full: List of slabs with no free objects.
+ * @slabs_partial: List of slabs with some free objects.
+ * @slabs_free: List of slabs whose objects are all free.
+ * @lock: Spinlock serialising slab growth, drain, and teardown.
+ * @cpu_slab: Per-CPU object caches for the lockless fast path.
+ * @next: Next cache in the global cache_list (for the reaper and stats).
+ */
 struct kmem_cache {
     const char       *name;
     size_t            obj_size;   /* actual object size (rounded + aligned), includes redzone */
@@ -357,6 +397,17 @@ static void slab_relink(struct kmem_cache *cache, struct slab *slab,
 
 /* ── Helper: compute slab size and order for a given object size ─────── */
 
+/**
+ * slab_sizing - Compute slab geometry for a given object size.
+ * @obj_size: Requested object size (includes redzone overhead already).
+ * @out_order: On success, receives the slab page order (2^order pages per slab).
+ * @out_num: On success, receives the number of objects per slab.
+ *
+ * Return: 0 on success, or -EINVAL if @obj_size is too large to fit in a
+ * single-page slab.  Multi-page slabs are rejected because the object-to-slab
+ * reverse mapping relies on a PAGE_SIZE-aligned slab base.  Callers should
+ * refuse cache creation and fall back to the page/heap allocator.
+ */
 static int slab_sizing(size_t obj_size, int *out_order, int *out_num) {
     /* Align object size to the minimum alignment (16 bytes for cacheline safety) */
     size_t aligned = (obj_size + 15) & ~15ULL;
@@ -391,6 +442,17 @@ static int slab_sizing(size_t obj_size, int *out_order, int *out_num) {
 
 /* ── Create a new slab and add it to the cache's free list ───────────── */
 
+/**
+ * slab_grow - Allocate a new slab and add it to the cache's partial list.
+ * @cache: The cache to grow.
+ * @gfp_flags: GFP flags propagated to the page allocator (GFP_KERNEL, GFP_ATOMIC, ...).
+ *
+ * Allocates 2^gfporder contiguous pages, initialises the slab header, and
+ * populates the free object list (optionally applying object coloring to
+ * spread objects across distinct cache-line alignments).
+ *
+ * Return: 0 on success, or -ENOMEM if the page allocation fails.
+ */
 static int slab_grow(struct kmem_cache *cache, int gfp_flags) {
     size_t slab_size = PAGE_SIZE * (1ULL << cache->gfporder);
     size_t aligned   = (cache->obj_size + 15) & ~15ULL;
@@ -486,15 +548,21 @@ static int slab_grow(struct kmem_cache *cache, int gfp_flags) {
 
 /* ── Public API ──────────────────────────────────────────────────────── */
 
-/* Refill the current CPU's object cache from the slab freelist.
- * Must be called with cache->lock held and IRQs disabled.
- * Returns one object for immediate use, and fills cpu_slab with extras.
+/**
+ * cpu_slab_refill - Refill the current CPU's object cache from the slab freelist.
+ * @cache: The cache to refill from.
+ * @gfp_flags: GFP flags passed through to slab_grow if a new slab is needed.
  *
- * NOTE: Must check the per-CPU cache *first*, because an interrupt handler
- * may have fast-path freed an object into it during the IRQ window between
- * the fast-path check in kmem_cache_alloc() and acquiring the cache lock
- * (see kmem_cache_alloc for the window).  Resetting count unconditionally
- * would leak that object. */
+ * Caller must hold @cache->lock with IRQs disabled.
+ *
+ * A note on ordering: the per-CPU cache must be checked *first* because an
+ * interrupt handler may have fast-path freed an object into it during the IRQ
+ * window between the fast-path check in kmem_cache_alloc() and acquiring the
+ * cache lock.  Resetting count unconditionally would leak that object.
+ *
+ * Return: A freshly obtained object for immediate use, or NULL on OOM.  Any
+ * surplus objects are stashed in the caller's per-CPU cache.
+ */
 static void *cpu_slab_refill(struct kmem_cache *cache, int gfp_flags) {
     int cpu = smp_get_cpu_id();
     struct cpu_slab *cpu_s = &cache->cpu_slab[cpu];
@@ -572,8 +640,14 @@ static void *cpu_slab_refill(struct kmem_cache *cache, int gfp_flags) {
     return ret;
 }
 
-/* Drain the current CPU's object cache back into the slab freelist.
- * Must be called with cache->lock held and IRQs disabled. */
+/**
+ * cpu_slab_drain - Drain the current CPU's object cache back into the slab freelist.
+ * @cache: The cache whose per-CPU cache is to be emptied.
+ *
+ * Caller must hold @cache->lock with IRQs disabled.  Objects are returned to
+ * their slabs' free lists at a random depth (see slab_freelist_insert_random)
+ * to scramble allocation order for heap-exploit hardening.
+ */
 static void cpu_slab_drain(struct kmem_cache *cache) {
     int cpu = smp_get_cpu_id();
     struct cpu_slab *cpu_s = &cache->cpu_slab[cpu];
@@ -600,6 +674,20 @@ static void cpu_slab_drain(struct kmem_cache *cache) {
     }
 }
 
+/**
+ * kmem_cache_create - Create a cache for fixed-size objects.
+ * @name: Human-readable name for the cache (used in diagnostics; may be NULL).
+ * @obj_size: Size in bytes of each object.
+ * @align: Desired object alignment (power of two).  Zero selects a default of 16;
+ *         the value is clamped to at least 8 so the redzone canary stays aligned.
+ * @ctor: Constructor invoked once per freshly allocated slab object; may be NULL.
+ *
+ * On success the cache pre-allocates one slab and registers itself in the
+ * global cache list so it is visible to slab_get_stats() and the reaper.
+ *
+ * Return: A pointer to the new cache, or NULL on invalid input, overflow, or
+ * out-of-memory.  A cache larger than a single page can hold is rejected.
+ */
 struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
                                      size_t align, kmem_cache_ctor_t ctor) {
     if (obj_size == 0) {
@@ -691,6 +779,18 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
     return cache;
 }
 
+/**
+ * kmem_cache_alloc - Allocate an object from a cache.
+ * @cache: The cache to allocate from.
+ * @gfp_flags: GFP flags propagated to the page allocator when the slab grows.
+ *
+ * Serves the fast path from the caller's per-CPU object cache without taking
+ * the cache lock; falls back to cpu_slab_refill() under lock when the cache
+ * is empty.  The returned object is zero-free-poison-checked for UAF, freshly
+ * poisoned, redzoned, and tracked by KASAN and kmemleak.
+ *
+ * Return: A pointer to the allocated object, or NULL on OOM or an invalid cache.
+ */
 void *kmem_cache_alloc(struct kmem_cache *cache, int gfp_flags) {
     /* Validate that the cache is valid and initialized.
      * A NULL cache pointer or a cache with obj_size == 0 indicates
@@ -759,6 +859,18 @@ void *kmem_cache_alloc(struct kmem_cache *cache, int gfp_flags) {
     return obj;
 }
 
+/**
+ * kmem_cache_free - Return an object to its cache.
+ * @cache: The cache the object was allocated from.
+ * @obj: Pointer to the object to free.
+ *
+ * The object must have been allocated from @cache.  The redzone is checked
+ * first for double-free detection; the object is then KASAN-poisoned, untracked
+ * from kmemleak, and returned to the per-CPU cache (fast path) or drained back
+ * into its slab's freelist under lock (slow path).
+ *
+ * Return: None; an invalid cache or object is logged and otherwise ignored.
+ */
 void kmem_cache_free(struct kmem_cache *cache, void *obj) {
     if (!obj || !cache) return;
 
@@ -832,6 +944,16 @@ void kmem_cache_free(struct kmem_cache *cache, void *obj) {
     spinlock_irqsave_release(&cache->lock, lock_flags);
 }
 
+/**
+ * kmem_cache_destroy - Destroy a cache and free all its slabs.
+ * @cache: The cache to tear down.
+ *
+ * Unregisters the cache from the global list, drains every CPU's per-CPU cache
+ * back into the slab freelists, and returns all slab pages to the page
+ * allocator before freeing the cache descriptor itself.
+ *
+ * Return: None.  Only safe when every object from the cache has been freed.
+ */
 void kmem_cache_destroy(struct kmem_cache *cache) {
     if (!cache) return;
 
@@ -900,6 +1022,17 @@ void kmem_cache_destroy(struct kmem_cache *cache) {
 
 /* ── Built-in caches ─────────────────────────────────────────────────── */
 
+/**
+ * slab_init - Initialise the slab subsystem.
+ *
+ * Idempotently marks the slab subsystem as initialised.  No built-in caches
+ * are currently created at boot because process and socket structures use
+ * static tables, and kobject/inode/dentry types are not yet defined.  When
+ * those types gain dynamic allocators, their caches should be created here
+ * with sizes validated by BUILD_BUG_ON.
+ *
+ * Return: None.
+ */
 void __init slab_init(void) {
     if (slab_initialized) return;
 
@@ -954,6 +1087,15 @@ static int slab_free(void *cache, void *obj)
     kprintf("[slab] slab_free: not yet implemented\n");
     return 0;
 }
+/**
+ * slab_get_stats - Collect aggregate statistics across every registered cache.
+ * @s: Out-parameter filled with the aggregated totals.
+ *
+ * Walks the global cache list under the list lock and per-cache locks, summing
+ * object counts and memory used across all full/partial/free slabs.
+ *
+ * Return: None; @s is zeroed and filled in place (a NULL pointer is ignored).
+ */
 void slab_get_stats(struct slab_stats *s) {
     if (!s) return;
     memset(s, 0, sizeof(*s));
@@ -982,6 +1124,17 @@ void slab_get_stats(struct slab_stats *s) {
     }
     spinlock_irqsave_release(&cache_list_lock, list_irq_flags);
 }
+/**
+ * kmem_cache_reap - Return all empty (completely free) slabs to the page allocator.
+ *
+ * Called by the kernel when memory is tight.  Walks the global cache list and,
+ * for each cache, uses a trylock so it cannot self-deadlock when invoked from
+ * the slab allocation slow path (via pmm_alloc_frame -> reclaim) which already
+ * holds the current cache's non-recursive lock.  Empty slabs skipped this call
+ * are freed on a subsequent reap from a non-recursive context.
+ *
+ * Return: None.
+ */
 void kmem_cache_reap(void) {
     uint64_t list_irq_flags;
     spinlock_irqsave_acquire(&cache_list_lock, &list_irq_flags);
@@ -1020,11 +1173,17 @@ void kmem_cache_reap(void) {
 
 /* ── CPU hotplug: drain per-CPU slab cache ───────────────────────────── */
 
-/* Drain the per-CPU slab cache for @cpu_id across ALL caches.
- * Called from cpuhp_take_cpu_offline() when a CPU goes offline.
- * The target CPU must be stopped (scheduler disabled, tasks migrated away),
- * so no new objects can arrive in its per-CPU cache during this drain.
- * Returns the number of objects drained, or -EINVAL on bad @cpu_id. */
+/**
+ * slab_cpu_offline - Drain the per-CPU slab cache for a CPU across all caches.
+ * @cpu_id: The CPU being taken offline.
+ *
+ * Called from cpuhp_take_cpu_offline() once the target CPU has been stopped
+ * (scheduler disabled, tasks migrated), so no new objects can reach its
+ * per-CPU cache during the drain.  Every cached object is returned to its
+ * slab's freelist.
+ *
+ * Return: The number of objects drained, or -EINVAL on an out-of-range @cpu_id.
+ */
 int slab_cpu_offline(int cpu_id) {
     if (cpu_id < 0 || cpu_id >= SMP_MAX_CPUS)
         return -EINVAL;
@@ -1069,10 +1228,17 @@ int slab_cpu_offline(int cpu_id) {
     return drained;
 }
 
-/* Clear the per-CPU slab cache for @cpu_id across ALL caches.
- * Called from cpuhp_bring_cpu() when a CPU comes back online.
- * The cache is expected to be already empty (drained by slab_cpu_offline),
- * but we clear it for safety — analogous to pmm_cpu_online(). */
+/**
+ * slab_cpu_online - Clear the per-CPU slab cache for a CPU across all caches.
+ * @cpu_id: The CPU being brought back online.
+ *
+ * Called from cpuhp_bring_cpu() when a CPU comes back online.  The cache is
+ * expected to already be empty (drained by slab_cpu_offline()) but is cleared
+ * for safety, analogous to pmm_cpu_online().  No lock is taken: the target
+ * CPU is not yet online and the list is stable under the caller's cpuhp_lock.
+ *
+ * Return: None.
+ */
 void slab_cpu_online(int cpu_id) {
     if (cpu_id < 0 || cpu_id >= SMP_MAX_CPUS)
         return;
