@@ -307,6 +307,146 @@ static void cpuhp_drain_pending(int cpu_id) {
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * CPU hotplug state machine (CPUHP_* states)
+ *
+ * Each CPU is driven through an ordered sequence of states between the
+ * OFFLINE and ONLINE terminals.  Every intermediate state owns at most one
+ * startup callback (run while bringing the CPU online) and one teardown
+ * callback (run while taking it offline).  The sequence is derived from the
+ * numeric ordering of the state enum: ascending for bring-up, descending
+ * for take-down — mirroring Linux's cpuhp_up()/cpuhp_down() at this kernel's
+ * scale.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* One step in the bring-up/tear-down sequence.  A NULL callback means that
+ * particular state has no work to do on that side of a transition. */
+struct cpuhp_step {
+    enum cpuhp_state state; /* state this step represents */
+    const char *name;
+    int (*startup)(int cpu);  /* run bringing CPU online */
+    int (*teardown)(int cpu); /* run taking CPU offline */
+};
+
+static int cpuhp_step_irqwork_online(int cpu) {
+    irq_work_cpu_online(cpu);
+    return CPUHP_OK;
+}
+static int cpuhp_step_irqwork_offline(int cpu) {
+    irq_work_cpu_offline(cpu);
+    return CPUHP_OK;
+}
+static int cpuhp_step_slab_online(int cpu) {
+    slab_cpu_online(cpu);
+    return CPUHP_OK;
+}
+static int cpuhp_step_pmm_online(int cpu) {
+    pmm_cpu_online(cpu);
+    return CPUHP_OK;
+}
+static int cpuhp_step_pmm_offline(int cpu) {
+    pmm_cpu_offline(cpu);
+    return CPUHP_OK;
+}
+
+static int cpuhp_step_slab_offline(int cpu) {
+    return slab_cpu_offline(cpu) == 0 ? CPUHP_OK : CPUHP_ERR_BUSY;
+}
+
+/* Take-down step 3: stop scheduling new tasks on @cpu and migrate the
+ * runnable ones to other online CPUs.  Re-enables scheduling if migrated
+ * tasks could not all be moved, so a failed offline never strands the CPU
+ * with its scheduler permanently disabled. */
+static int cpuhp_step_migrate(int cpu) {
+    cpu_info_array[cpu].scheduler_enabled = 0;
+    int ret = cpuhp_migrate_tasks_away(cpu);
+    if (ret != CPUHP_OK)
+        cpu_info_array[cpu].scheduler_enabled = 1;
+    return ret;
+}
+
+static int cpuhp_step_drain(int cpu) {
+    cpuhp_drain_pending(cpu);
+    return CPUHP_OK;
+}
+
+/* Take-down step 1: refuse to accept new tasks on @cpu. */
+static int cpuhp_step_sched_offline(int cpu) {
+    cpu_info_array[cpu].scheduler_enabled = 0;
+    return CPUHP_OK;
+}
+
+/* The transition table, in ascending state order.  Bring-up runs each step's
+ * startup callback (skipping NULLs) as it walks upward to ONLINE; take-down
+ * walks downward from ONLINE running each step's teardown callback. */
+static const struct cpuhp_step cpuhp_steps[] = {
+    {CPUHP_STATE_PMM, "pmm", cpuhp_step_pmm_online, cpuhp_step_pmm_offline},
+    {CPUHP_STATE_SLAB, "slab", cpuhp_step_slab_online, cpuhp_step_slab_offline},
+    {CPUHP_STATE_IRQWORK, "irq_work", cpuhp_step_irqwork_online, cpuhp_step_irqwork_offline},
+    {CPUHP_STATE_MIGRATE, "migrate", NULL, cpuhp_step_migrate},
+    {CPUHP_STATE_DRAIN, "drain", NULL, cpuhp_step_drain},
+    {CPUHP_STATE_SCHED, "sched", NULL, cpuhp_step_sched_offline},
+    {CPUHP_STATE_ONLINE, "online", NULL, NULL},
+};
+#define CPUHP_STEP_COUNT (sizeof(cpuhp_steps) / sizeof(cpuhp_steps[0]))
+
+/* Walk a CPU from its current state upward to ONLINE, running each step's
+ * startup callback in sequence.  Called with cpuhp_lock held and interrupts
+ * disabled.  Returns CPUHP_OK on success, or the failing step's error. */
+static int cpuhp_bringup(int cpu_id) {
+    enum cpuhp_state cur = cpuhp_cpu_state[cpu_id];
+    int i;
+
+    if (cur >= CPUHP_STATE_ONLINE)
+        return CPUHP_OK;
+
+    for (i = 0; i < (int)CPUHP_STEP_COUNT; i++) {
+        const struct cpuhp_step *s = &cpuhp_steps[i];
+        if (s->state <= cur || s->state >= CPUHP_STATE_ONLINE)
+            continue;
+        if (s->startup) {
+            int r = s->startup(cpu_id);
+            if (r != CPUHP_OK) {
+                kprintf("[CPU] bring CPU %d online: step %s failed (err=%d)\n", cpu_id, s->name, r);
+                return r;
+            }
+        }
+        cpuhp_cpu_state[cpu_id] = s->state;
+    }
+
+    cpuhp_cpu_state[cpu_id] = CPUHP_STATE_ONLINE;
+    return CPUHP_OK;
+}
+
+/* Walk a CPU downward from its current state to OFFLINE, running each step's
+ * teardown callback in reverse order.  On failure the CPU is left at the last
+ * successfully-reached state (never counted as online).  Called with
+ * cpuhp_lock held and interrupts disabled. */
+static int cpuhp_teardown(int cpu_id) {
+    enum cpuhp_state cur = cpuhp_cpu_state[cpu_id];
+    int i;
+
+    if (cur < CPUHP_STATE_ONLINE)
+        return CPUHP_OK; /* already offline or below */
+
+    for (i = (int)CPUHP_STEP_COUNT - 1; i >= 0; i--) {
+        const struct cpuhp_step *s = &cpuhp_steps[i];
+        if (s->state >= cur)
+            continue;
+        if (s->teardown) {
+            int r = s->teardown(cpu_id);
+            if (r != CPUHP_OK) {
+                kprintf("[CPU] take CPU %d offline: step %s failed (err=%d)\n", cpu_id, s->name, r);
+                return r;
+            }
+        }
+        cpuhp_cpu_state[cpu_id] = s->state;
+    }
+
+    cpuhp_cpu_state[cpu_id] = CPUHP_STATE_OFFLINE;
+    return CPUHP_OK;
+}
+
 /* ── Public API ─────────────────────────────────────────────────────── */
 
 int cpuhp_bring_cpu(int cpu_id) {
@@ -333,24 +473,13 @@ int cpuhp_bring_cpu(int cpu_id) {
         goto out;
     }
 
-    /* ── Re-initialise IRQ work state for this CPU ──────────────────── */
-    irq_work_cpu_online(cpu_id);
+    /* Drive the CPU through the bring-up sequence (OFFLINE → ONLINE),
+     * running each step's startup callback. */
+    ret = cpuhp_bringup(cpu_id);
 
-    /* Transition OFFLINE → ONLINE */
-    cpuhp_cpu_state[cpu_id] = CPUHP_STATE_ONLINE;
-    kprintf("[CPU] CPU %d brought online (now %d online)\n", cpu_id, cpuhp_online_count());
+    if (ret == CPUHP_OK)
+        kprintf("[CPU] CPU %d brought online (now %d online)\n", cpu_id, cpuhp_online_count());
     cpuhp_notify();
-
-    /* Clear the per-CPU PMM hot cache so stale entries from before
-     * the offline period do not get handed out on the new online
-     * incarnation.  Frames still cached were already leaked; this
-     * just prevents them from being used. */
-    pmm_cpu_online(cpu_id);
-
-    /* Clear the per-CPU slab cache for this CPU.  The cache should
-     * already be empty (drained by slab_cpu_offline), but clearing
-     * count to 0 is a safety measure against stale cached objects. */
-    slab_cpu_online(cpu_id);
 
 out:
     spinlock_irqsave_release(&cpuhp_lock, irq_flags);
@@ -394,38 +523,14 @@ int cpuhp_take_cpu_offline(int cpu_id) {
         goto out;
     }
 
-    /* ── Step 1: prevent new tasks from being scheduled on this CPU ── */
-    cpu_info_array[cpu_id].scheduler_enabled = 0;
+    /* Drive the CPU down through the teardown sequence (ONLINE → OFFLINE),
+     * running each step's teardown callback in reverse order.  The machine
+     * disables scheduling, drains pending ops, migrates tasks, then drains
+     * the per-CPU irq-work, slab and PMM caches. */
+    ret = cpuhp_teardown(cpu_id);
 
-    /* ── Step 2: drain pending operations ──────────────────────────── */
-    cpuhp_drain_pending(cpu_id);
-
-    /* ── Step 3: migrate all runnable tasks away ───────────────────── */
-    ret = cpuhp_migrate_tasks_away(cpu_id);
-    if (ret != CPUHP_OK) {
-        /* Migration failed — re-enable scheduling on this CPU */
-        cpu_info_array[cpu_id].scheduler_enabled = 1;
-        goto out;
-    }
-
-    /* ── Step 4: drain pending IRQ work queued to this CPU ──────────── */
-    irq_work_cpu_offline(cpu_id);
-
-    /* ── Step 5: drain the per-CPU slab cache ─────────────────────────
-     * Objects cached in this CPU's per-CPU slab cache would otherwise
-     * be stranded (freed by the user but never returned to slab freelists).
-     * Drain them back to their respective slab freelists so the accounting
-     * stays correct and empty slabs are reclaimable. */
-    slab_cpu_offline(cpu_id);
-
-    /* ── Step 6: drain the per-CPU PMM hot cache ─────────────────────
-     * Pages cached on the going-offline CPU would otherwise be stranded
-     * (marked used in the bitmap but inaccessible to other CPUs). */
-    pmm_cpu_offline(cpu_id);
-
-    /* ── Step 6: transition state ──────────────────────────────────── */
-    cpuhp_cpu_state[cpu_id] = CPUHP_STATE_OFFLINE;
-    kprintf("[CPU] CPU %d taken offline (now %d online)\n", cpu_id, cpuhp_online_count());
+    if (ret == CPUHP_OK)
+        kprintf("[CPU] CPU %d taken offline (now %d online)\n", cpu_id, cpuhp_online_count());
     cpuhp_notify();
 
 out:
