@@ -60,32 +60,33 @@
  * procfs_read propagates these directly to the VFS layer.
  */
 
-#include "vfs.h"
-#include "timer.h"
-#include "process.h"
-#include "scheduler.h"
-#include "pmm.h"
+#include "cgroup_namespace.h"
+#include "config_gz.h"
+#include "cpu_topology.h"
+#include "export.h"
 #include "heap.h"
-#include "printf.h"
-#include "string.h"
-#include "types.h"
+#include "idt.h"
+#include "kptr_restrict.h"
+#include "module.h"
 #include "net.h"
 #include "net_internal.h"
-#include "smp.h"
-#include "vmm.h"
-#include "slab.h"
-#include "sysctl.h"
-#include "config_gz.h"
+#include "pmm.h"
+#include "printf.h"
+#include "process.h"
 #include "process_rlimit.h"
-#include "idt.h"
 #include "psi.h"
-#include "cgroup_namespace.h"
-#include "cpu_topology.h"
-#include "sysrq.h"
-#include "module.h"
-#include "kptr_restrict.h"
+#include "scheduler.h"
+#include "slab.h"
+#include "smp.h"
 #include "sndstat.h"
-#include "export.h"
+#include "string.h"
+#include "sysctl.h"
+#include "sysrq.h"
+#include "timer.h"
+#include "types.h"
+#include "user_namespace.h"
+#include "vfs.h"
+#include "vmm.h"
 
 /* ── kallsyms support ──────────────────────────────────────────────── */
 /* Comprehensive kallsyms section (all global symbols), sorted at boot. */
@@ -902,9 +903,34 @@ static int procfs_gen_pid_ns(uint32_t pid, char *buf, int max) {
     }
     /* Time namespace */
     proc_str("ns\t4026531834\t/time\n", buf, &pos, max);
+    /* User namespace (present when the process has unshared CLONE_NEWUSER) */
+    if (p->user_ns && !user_ns_is_root(p->user_ns)) {
+        uint64_t usr_inode = 4026531837ULL + (uint64_t)p->user_ns->id;
+        proc_str("ns\t", buf, &pos, max);
+        proc_u64_to_str(usr_inode, buf, &pos, max);
+        proc_str("\t/user\n", buf, &pos, max);
+    }
 
     buf[pos] = '\0';
     return pos;
+}
+
+/* /proc/<pid>/uid_map — UID mapping in the process's user namespace */
+static int procfs_gen_pid_uid_map(uint32_t pid, char *buf, int max) {
+    struct process *p = process_get_by_pid(pid);
+    if (!p || p->state == PROCESS_UNUSED)
+        return -EINVAL;
+    const struct user_namespace *ns = p->user_ns ? p->user_ns : &init_user_ns;
+    return user_ns_read_uid_map(ns, buf, max);
+}
+
+/* /proc/<pid>/gid_map — GID mapping in the process's user namespace */
+static int procfs_gen_pid_gid_map(uint32_t pid, char *buf, int max) {
+    struct process *p = process_get_by_pid(pid);
+    if (!p || p->state == PROCESS_UNUSED)
+        return -EINVAL;
+    const struct user_namespace *ns = p->user_ns ? p->user_ns : &init_user_ns;
+    return user_ns_read_gid_map(ns, buf, max);
 }
 
 /* /proc/<pid>/maps — memory mappings */
@@ -1429,6 +1455,16 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
             }
             len = snprintf(buf, (size_t)max_size, "0::%s\n", vpath);
             if (len < 0) return -ENOSPC;
+        } else if (got && strcmp(p, "/uid_map") == 0) {
+            /* /proc/<pid>/uid_map — read UID mapping of the user ns */
+            len = procfs_gen_pid_uid_map(pid, buf, (int)max_size);
+            if (len < 0)
+                return -EINVAL;
+        } else if (got && strcmp(p, "/gid_map") == 0) {
+            /* /proc/<pid>/gid_map — read GID mapping of the user ns */
+            len = procfs_gen_pid_gid_map(pid, buf, (int)max_size);
+            if (len < 0)
+                return -EINVAL;
         } else if (got && strcmp(p, "/ns") == 0) {
             /* /proc/<pid>/ns — list available namespace types */
             len = procfs_gen_pid_ns(pid, buf, (int)max_size);
@@ -1464,6 +1500,12 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
                                (unsigned long long)cg_inode);
             } else if (strcmp(ns_type, "time") == 0) {
                 len = snprintf(buf, (size_t)max_size, "time:[4026531834]\n");
+            } else if (strcmp(ns_type, "user") == 0) {
+                /* User namespace inode derived from the namespace id */
+                uint64_t usr_inode =
+                    4026531837ULL + (uint64_t)((proc->user_ns) ? proc->user_ns->id : 0);
+                len =
+                    snprintf(buf, (size_t)max_size, "user:[%llu]\n", (unsigned long long)usr_inode);
             } else {
                 return -EINVAL;
             }
@@ -1532,6 +1574,32 @@ static int procfs_write(void *priv, const char *path, const void *data, uint32_t
             return 0;
         }
         return -EINVAL;
+    }
+
+    /* /proc/<pid>/uid_map and /proc/<pid>/gid_map — write a user
+     * namespace ID mapping (Item 114).  The map is applied to the
+     * target process's user namespace. */
+    if (strncmp(path, "/proc/", 6) == 0) {
+        const char *pp = path + 6;
+        uint32_t pid = 0;
+        int got_pid = 0;
+        while (*pp >= '0' && *pp <= '9') {
+            pid = pid * 10 + (uint32_t)(*pp - '0');
+            pp++;
+            got_pid = 1;
+        }
+        if (got_pid) {
+            struct process *proc = process_get_by_pid(pid);
+            if (!proc || proc->state == PROCESS_UNUSED)
+                return -EINVAL;
+            struct user_namespace *ns = proc->user_ns ? proc->user_ns : &init_user_ns;
+            if (strcmp(pp, "/uid_map") == 0) {
+                return user_ns_write_uid_map(ns, buf, size) == 0 ? 0 : -EINVAL;
+            }
+            if (strcmp(pp, "/gid_map") == 0) {
+                return user_ns_write_gid_map(ns, buf, size) == 0 ? 0 : -EINVAL;
+            }
+        }
     }
 
     return -EINVAL;
@@ -1682,6 +1750,15 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
         struct process *proc = process_get_by_pid(pid);
         if (proc && proc->state != PROCESS_UNUSED) {
             st->type = 1; st->size = 512; return 0;
+        }
+    }
+    /* /proc/<pid>/uid_map and /proc/<pid>/gid_map */
+    if (got && (strcmp(p, "/uid_map") == 0 || strcmp(p, "/gid_map") == 0)) {
+        struct process *proc = process_get_by_pid(pid);
+        if (proc && proc->state != PROCESS_UNUSED) {
+            st->type = 1;
+            st->size = 256;
+            return 0;
         }
     }
     return -EINVAL;
