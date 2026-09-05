@@ -148,7 +148,7 @@ static int cgroup_v2_read(void *priv, const char *path, void *buf, uint32_t max,
     {
         int n = snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
                          "# Cgroup v2 unified hierarchy\n"
-                         "# Controllers: cpu memory io pids freezer rdma\n"
+                         "# Controllers: cpu memory io pids freezer rdma misc\n"
                          "# /sys/fs/cgroup/ mounted\n\n");
         if (n > 0 && pos + n < (int)sizeof(tmp))
             pos += n;
@@ -173,6 +173,8 @@ static int cgroup_v2_read(void *priv, const char *path, void *buf, uint32_t max,
             strlcat(ctrl, "freezer", sizeof(ctrl));
         if (mask & CG_CTRL_RDMA)
             strlcat(ctrl, " rdma", sizeof(ctrl));
+        if (mask & CG_CTRL_MISC)
+            strlcat(ctrl, " misc", sizeof(ctrl));
         if (ctrl[0] == '\0')
             strlcpy(ctrl, "-", sizeof(ctrl));
 
@@ -504,6 +506,8 @@ static uint32_t controller_name_to_mask(const char *name) {
         return CG_CTRL_FREEZER;
     if (strcmp(name, "rdma") == 0)
         return CG_CTRL_RDMA;
+    if (strcmp(name, "misc") == 0)
+        return CG_CTRL_MISC;
     return 0;
 }
 
@@ -1441,6 +1445,114 @@ int cgroup_rdma_find(int cg_id, const char *hca_name, struct cgroup_rdma_device 
 }
 EXPORT_SYMBOL(cgroup_rdma_find);
 
+/* ── Misc controller (D315 task 13) ──────────────────────────────── */
+
+/* Locate (or create) a named resource record in a cgroup's misc state.
+ * Caller holds g_cgroup_lock.  Returns index or -1 if full. */
+static int cgroup_misc_slot(struct cgroup *cg, const char *res_name) {
+    if (!res_name)
+        return -1;
+    int slot = -1;
+    for (int i = 0; i < CGROUP_MISC_MAX_RES; i++) {
+        if (cg->misc.resources[i].in_use && strcmp(cg->misc.resources[i].name, res_name) == 0)
+            return i;
+        if (slot < 0 && !cg->misc.resources[i].in_use)
+            slot = i;
+    }
+    if (slot < 0)
+        return -1;
+    memset(&cg->misc.resources[slot], 0, sizeof(cg->misc.resources[slot]));
+    strlcpy(cg->misc.resources[slot].name, res_name, sizeof(cg->misc.resources[slot].name));
+    cg->misc.resources[slot].in_use = 1;
+    return slot;
+}
+
+/* Set the misc.max limit for a named resource in a cgroup.  0 = unlimited. */
+int cgroup_misc_set_max(int cg_id, const char *res_name, uint64_t max) {
+    if (!cgroup_valid(cg_id))
+        return -EINVAL;
+    struct cgroup *cg = &g_cgroups[cg_id];
+    spinlock_acquire(&g_cgroup_lock);
+    int slot = cgroup_misc_slot(cg, res_name);
+    if (slot < 0) {
+        spinlock_release(&g_cgroup_lock);
+        return -ENOSPC;
+    }
+    cg->misc.resources[slot].max = max;
+    spinlock_release(&g_cgroup_lock);
+    return 0;
+}
+EXPORT_SYMBOL(cgroup_misc_set_max);
+
+/* Charge (+) or decharge (-) a named resource.  A positive charge that
+ * would push current past misc.max is rejected with -EAGAIN. */
+int cgroup_misc_charge(int cg_id, const char *res_name, int64_t amount) {
+    if (!res_name || !cgroup_valid(cg_id))
+        return -EINVAL;
+    struct cgroup *cg = &g_cgroups[cg_id];
+    spinlock_acquire(&g_cgroup_lock);
+    int slot = -1;
+    for (int i = 0; i < CGROUP_MISC_MAX_RES; i++) {
+        if (cg->misc.resources[i].in_use && strcmp(cg->misc.resources[i].name, res_name) == 0) {
+            slot = i;
+            break;
+        }
+    }
+    int rc = 0;
+    if (slot >= 0) {
+        struct cgroup_misc_resource *r = &cg->misc.resources[slot];
+        if (amount > 0 && r->max > 0 && r->current + (uint64_t)amount > r->max) {
+            rc = -EAGAIN; /* would breach misc.max */
+        } else {
+            int64_t nu = (int64_t)r->current + amount;
+            r->current = nu > 0 ? (uint64_t)nu : 0;
+            if (r->current > r->max_usage)
+                r->max_usage = r->current;
+        }
+    }
+    /* No record → not limited → allow and don't track. */
+    spinlock_release(&g_cgroup_lock);
+    return rc;
+}
+EXPORT_SYMBOL(cgroup_misc_charge);
+
+/* Copy the misc resource records for a cgroup (up to @max).  Returns count. */
+int cgroup_misc_stat(int cg_id, struct cgroup_misc_resource *resources, int max) {
+    if (!cgroup_valid(cg_id))
+        return -EINVAL;
+    if (!resources || max <= 0)
+        return 0;
+    struct cgroup *cg = &g_cgroups[cg_id];
+    int count = 0;
+    spinlock_acquire(&g_cgroup_lock);
+    for (int i = 0; i < CGROUP_MISC_MAX_RES && count < max; i++) {
+        if (cg->misc.resources[i].in_use)
+            resources[count++] = cg->misc.resources[i];
+    }
+    spinlock_release(&g_cgroup_lock);
+    return count;
+}
+EXPORT_SYMBOL(cgroup_misc_stat);
+
+/* Look up one resource's misc record; returns 1 if found, 0 if not. */
+int cgroup_misc_find(int cg_id, const char *res_name, struct cgroup_misc_resource *out) {
+    if (!res_name || !out || !cgroup_valid(cg_id))
+        return 0;
+    struct cgroup *cg = &g_cgroups[cg_id];
+    int found = 0;
+    spinlock_acquire(&g_cgroup_lock);
+    for (int i = 0; i < CGROUP_MISC_MAX_RES; i++) {
+        if (cg->misc.resources[i].in_use && strcmp(cg->misc.resources[i].name, res_name) == 0) {
+            *out = cg->misc.resources[i];
+            found = 1;
+            break;
+        }
+    }
+    spinlock_release(&g_cgroup_lock);
+    return found;
+}
+EXPORT_SYMBOL(cgroup_misc_find);
+
 /* ── Sysfs/proc interface helpers ─────────────────────────────────── */
 
 /* Write a cgroup control file value.
@@ -1621,6 +1733,33 @@ int cgroup_write_control(int cg_id, const char *controller, const char *key, con
                 v++;
         }
         return cgroup_rdma_set_limit(cg_id, name, hlimit, olimit);
+    } else if (strcmp(controller, "misc") == 0 || strcmp(key, "misc.max") == 0) {
+        /* Misc controller (D315 task 13).  Real cgroup v2 misc.max:
+         *   "misc.max" → "<res_name> <max>"   e.g. "sgx_epc 1048576"
+         * Here <controller>=<"misc"|"misc.max">, <key>=<resource name
+         * unless "max">, <value>=<limit|"max">. */
+        const char *res = key;
+        if (strcmp(res, "misc.max") == 0 || strcmp(key, "max") == 0)
+            res = value;
+        char name[CGROUP_MISC_RES_NAME_LEN];
+        const char *v = res;
+        int nlen = 0;
+        while (*v && *v != ' ' && *v != '\t' && nlen < CGROUP_MISC_RES_NAME_LEN - 1)
+            name[nlen++] = *v++;
+        name[nlen] = '\0';
+        if (nlen == 0)
+            return -EINVAL;
+        /* Skip to the limit token (after resource name). */
+        while (*v == ' ' || *v == '\t')
+            v++;
+        uint64_t limit = 0;
+        if (strncmp(v, "max", 3) == 0) {
+            limit = 0; /* unlimited */
+        } else {
+            while (*v >= '0' && *v <= '9')
+                limit = limit * 10 + (uint64_t)(*v++ - '0');
+        }
+        return cgroup_misc_set_max(cg_id, name, limit);
     }
 
     return 0;
@@ -1657,7 +1796,7 @@ void cgroup_init(void) {
         kprintf("[OK] cgroup v2 mounted at /sys/fs/cgroup/\n");
     }
 
-    kprintf("[OK] Cgroup v2 initialized (cpu, memory, io, pids, freezer, rdma)\n");
+    kprintf("[OK] Cgroup v2 initialized (cpu, memory, io, pids, freezer, rdma, misc)\n");
     g_cgroup_initialized = 1;
 }
 EXPORT_SYMBOL(cgroup_init);

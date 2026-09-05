@@ -91,6 +91,25 @@ struct cgroup_pids_state {
     uint64_t max;     /* pids.max (0 = unlimited) */
 };
 
+/* ── Misc controller state ───────────────────────────────────────── */
+#define CGROUP_MISC_MAX_RES 8
+#define CGROUP_MISC_RES_NAME_LEN 24
+/* The cgroup v2 "misc" controller accounts a set of device/vendor
+ * resources that are not covered by the mainstream controllers (e.g.
+ * SGX encaps, SEV/SEV-ES process counts, etc).  Each named resource has
+ * a max limit (0 = unlimited) and a live current usage tracked here so
+ * resource allocations can be charged in units of arbitrary size. */
+struct cgroup_misc_resource {
+    char name[CGROUP_MISC_RES_NAME_LEN]; /* e.g. "sgx_epc" */
+    uint64_t max;                        /* misc.max (0 = unlimited) */
+    uint64_t current;                    /* misc.current usage */
+    uint64_t max_usage;                  /* high-water mark */
+    int in_use;
+};
+struct cgroup_misc_state {
+    struct cgroup_misc_resource resources[CGROUP_MISC_MAX_RES];
+};
+
 /* Freezer state */
 struct cgroup_freezer_state {
     int state; /* CGROUP_THAWED or CGROUP_FROZEN */
@@ -103,8 +122,10 @@ struct cgroup_freezer_state {
 #define CG_CTRL_PIDS (1U << 3)
 #define CG_CTRL_FREEZER (1U << 4)
 #define CG_CTRL_RDMA (1U << 5)
+#define CG_CTRL_MISC (1U << 6)
 #define CG_CTRL_ALL \
-    (CG_CTRL_CPU | CG_CTRL_MEMORY | CG_CTRL_IO | CG_CTRL_PIDS | CG_CTRL_FREEZER | CG_CTRL_RDMA)
+    (CG_CTRL_CPU | CG_CTRL_MEMORY | CG_CTRL_IO | CG_CTRL_PIDS | CG_CTRL_FREEZER | CG_CTRL_RDMA | \
+     CG_CTRL_MISC)
 
 /* ── Cgroup structure ────────────────────────────────────────────── */
 
@@ -141,6 +162,7 @@ struct cgroup {
     struct cgroup_pids_state pids;
     struct cgroup_freezer_state freezer;
     struct cgroup_rdma_state rdma;
+    struct cgroup_misc_state misc;
 };
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -202,6 +224,14 @@ int cgroup_rdma_set_limit(int cg_id, const char *hca_name, uint64_t handle_limit
 int cgroup_rdma_account(int cg_id, const char *hca_name, int is_object, int delta);
 int cgroup_rdma_stat(int cg_id, struct cgroup_rdma_device *devices, int max);
 int cgroup_rdma_find(int cg_id, const char *hca_name, struct cgroup_rdma_device *out);
+
+/* Misc controller: set a named resource's max limit (0 = unlimited) */
+int cgroup_misc_set_max(int cg_id, const char *res_name, uint64_t max);
+/* Charge/decharge a named resource in @amount units.
+ * Returns -EAGAIN if a charge would breach misc.max. */
+int cgroup_misc_charge(int cg_id, const char *res_name, int64_t amount);
+int cgroup_misc_stat(int cg_id, struct cgroup_misc_resource *resources, int max);
+int cgroup_misc_find(int cg_id, const char *res_name, struct cgroup_misc_resource *out);
 
 /* Control file interface */
 int cgroup_write_control(int cg_id, const char *controller, const char *key, const char *value);
