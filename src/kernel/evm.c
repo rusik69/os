@@ -13,15 +13,17 @@
  * Item S102 — EVM
  */
 
-#include "types.h"
-#include "string.h"
-#include "printf.h"
-#include "sha256.h"
-#include "hmac.h"
-#include "xattr.h"
-#include "vfs.h"
+#include "evm.h"
+
 #include "errno.h"
 #include "heap.h"
+#include "hmac.h"
+#include "printf.h"
+#include "sha256.h"
+#include "string.h"
+#include "types.h"
+#include "vfs.h"
+#include "xattr.h"
 
 /* ── EVM key (16 bytes, stored in kernel keyring) ────────────────── */
 #define EVM_KEY_SIZE  16
@@ -162,6 +164,63 @@ static int evm_verify_xattr(const char *path)
         return 1;  /* Integrity verified */
 
     return 0;  /* HMAC mismatch */
+}
+
+/* Re-entrancy guard: evm_compute_hmac() reads the protected security.*
+ * xattrs via vfs_getxattr(), which re-enters evm_verify_get().  This
+ * flag short-circuits that re-entry so verification does not recurse. */
+static int evm_verify_reentrant = 0;
+
+/*
+ * evm_verify_get — EVM integrity verification on xattr read (D312 item 9).
+ *
+ * Called from vfs_getxattr() before returning a protected security.*
+ * xattr value.  Only files that actually carry a security.evm xattr are
+ * verified; a tampered (HMAC mismatch) file is denied when enforcement
+ * is enabled.  Un-protected files pass through untouched.
+ *
+ * Returns 0 to allow the read, -EACCES to deny, matching EVM policy.
+ */
+int evm_verify_get(const char *path, const char *xattr_name) {
+    uint8_t present[SHA256_DIGEST_SIZE];
+    int ret;
+
+    if (!path || !xattr_name)
+        return 0;
+
+    /* Only the security.* xattrs EVM protects are subject to verification. */
+    if (strncmp(xattr_name, "security.", 9) != 0)
+        return 0;
+
+    /* The security.evm attribute itself is never self-verified. */
+    if (strcmp(xattr_name, "security.evm") == 0)
+        return 0;
+
+    if (!g_evm_initialized || !g_evm_key_set)
+        return 0;
+
+    /* Re-entrancy guard (see above). */
+    if (evm_verify_reentrant)
+        return 0;
+
+    /* A file with no security.evm xattr is not protected — allow it. */
+    if (vfs_getxattr(path, "security.evm", present, sizeof(present)) < 0)
+        return 0;
+
+    evm_verify_reentrant = 1;
+    ret = evm_verify_xattr(path);
+    evm_verify_reentrant = 0;
+
+    if (ret == 1)
+        return 0; /* integrity verified */
+
+    if (g_evm_enforce) {
+        kprintf("[EVM] getxattr %s denied on %s (integrity check failed)\n", xattr_name, path);
+        return -EACCES;
+    }
+
+    kprintf("[EVM] Warning: integrity check failed reading %s on %s\n", xattr_name, path);
+    return 0;
 }
 
 /*

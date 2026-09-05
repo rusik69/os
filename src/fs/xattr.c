@@ -15,12 +15,14 @@
 
 #define KERNEL_INTERNAL
 #include "xattr.h"
-#include "vfs.h"
-#include "string.h"
+
+#include "errno.h"
+#include "evm.h"
+#include "heap.h"
 #include "printf.h"
 #include "process.h"
-#include "heap.h"
-#include "errno.h"
+#include "string.h"
+#include "vfs.h"
 
 /* Extended attributes stored in a simple global table (path-indexed) */
 #define XATTR_MAX_FILES 64
@@ -297,6 +299,10 @@ int vfs_getxattr(const char *path, const char *name, void *value, int size)
 
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
+
+    /* EVM: verify file integrity before exposing a protected xattr. */
+    if (evm_verify_get(ap, name) < 0)
+        return -EACCES;
 
     for (int i = 0; i < num_mounts; i++) {
         size_t mlen = strlen(mounts[i].mountpoint);
