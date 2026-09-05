@@ -48,6 +48,14 @@ static inline int hrtimer_cur_cpu(void)
     return cpu;
 }
 
+/**
+ * hrtimer_init - Initialise a high-resolution timer
+ * @timer: hrtimer structure to initialise
+ * @function: Callback invoked on expiry
+ * @data: Opaque argument passed to @function
+ *
+ * Prepares @timer for use with the given expiry callback.
+ */
 void hrtimer_init(struct hrtimer *timer, void (*function)(void *), void *data)
 {
     if (!timer) return;
@@ -118,6 +126,14 @@ static void hrtimer_dispatch(void *arg)
     spinlock_irqsave_release(&timer->lock, irq_flags);
 }
 
+/**
+ * hrtimer_start - Start a high-resolution timer
+ * @timer: hrtimer to arm
+ * @ns: Expiry delay in nanoseconds
+ *
+ * Arms @timer to fire its callback after @ns nanoseconds. Returns 0 on success or a negative error
+ * code.
+ */
 int hrtimer_start(struct hrtimer *timer, uint64_t ns)
 {
     if (!timer || !timer->function) return -1;
@@ -255,6 +271,13 @@ retry_arm:
     return 0;
 }
 
+/**
+ * hrtimer_cancel - Cancel and deactivate an hrtimer
+ * @timer: hrtimer to cancel
+ *
+ * Deactivates @timer so its callback will not fire and waits for any in-flight expiry to complete.
+ * Returns 0 on success.
+ */
 int hrtimer_cancel(struct hrtimer *timer)
 {
     if (!timer) return -1;
@@ -318,6 +341,12 @@ int hrtimer_cancel(struct hrtimer *timer)
     return 0;
 }
 
+/**
+ * hrtimer_get_remaining - Return the time left on an hrtimer
+ * @timer: hrtimer to query
+ *
+ * Returns the remaining nanoseconds until @timer expires, or 0 if it is not active.
+ */
 uint64_t hrtimer_get_remaining(struct hrtimer *timer)
 {
     if (!timer) return 0;
@@ -329,6 +358,12 @@ uint64_t hrtimer_get_remaining(struct hrtimer *timer)
     return rem;
 }
 
+/**
+ * hrtimer_active - Test whether an hrtimer is armed
+ * @timer: hrtimer to query
+ *
+ * Returns non-zero if @timer is currently scheduled and pending.
+ */
 int hrtimer_active(struct hrtimer *timer)
 {
     if (!timer) return 0;

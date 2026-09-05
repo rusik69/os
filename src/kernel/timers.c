@@ -23,6 +23,12 @@ static struct {
 static spinlock_t g_timers_lock;
 static int g_timers_initialized = 0;
 
+/**
+ * timers_init - Initialise the software timer subsystem
+ *
+ * Zeroes the timer table and plugs the timer softirq handler. Called once
+ * during kernel bring-up.
+ */
 void __init timers_init(void) {
     memset(g_timers, 0, sizeof(g_timers));
     spinlock_init(&g_timers_lock);
@@ -35,11 +41,24 @@ void __init timers_init(void) {
     kprintf("[OK] Dynamic timers initialized (%d slots)\n", TIMER_MAX);
 }
 
+/**
+ * timer_available - Check whether a timer slot is available
+ * Returns non-zero if the timer table has a free slot for a new timer.
+ */
 int timer_available(void)
 {
     return g_timers_initialized;
 }
 
+/**
+ * timer_schedule - Schedule a software timer
+ * @fn: Callback invoked when the timer fires
+ * @arg: Opaque argument passed to @fn
+ * @delay_ticks: Delay before firing, in timer ticks
+ *
+ * Registers a one-shot timer and returns a timer id (>= 0) that can be passed to timer_cancel, or a
+ * negative error code if the table is full.
+ */
 int timer_schedule(timer_callback_t fn, void *arg, uint64_t delay_ticks) {
     if (!fn || !g_timers_initialized) return -1;
     if (delay_ticks == 0) delay_ticks = 1;
@@ -73,6 +92,12 @@ int timer_schedule(timer_callback_t fn, void *arg, uint64_t delay_ticks) {
     return timer_id;
 }
 
+/**
+ * timer_cancel - Cancel a pending software timer
+ * @timer_id: Timer id returned by timer_schedule
+ *
+ * Removes the timer so its callback will not fire. Safe to call for an already-expired timer.
+ */
 void timer_cancel(int timer_id) {
     if (timer_id < 0 || timer_id >= TIMER_MAX || !g_timers_initialized) return;
 
@@ -102,6 +127,13 @@ void timer_cancel(int timer_id) {
  * invisible to the hrtimer's own running flag, so without this check a
  * cancel could return while the dispatch is about to dereference a freed
  * timer. */
+/**
+ * timer_callback_pending - Test whether a timer callback is queued
+ * @timer_id: Timer id to inspect
+ * @expected_arg: Expected callback argument
+ *
+ * Returns non-zero if a timer with the given id/arg is still pending execution.
+ */
 int timer_callback_pending(int timer_id, void *expected_arg) {
     if (timer_id < 0 || timer_id >= TIMER_MAX || !g_timers_initialized)
         return 0;
@@ -113,6 +145,11 @@ int timer_callback_pending(int timer_id, void *expected_arg) {
     return pending;
 }
 
+/**
+ * timer_handler_soft - Run due software timer callbacks
+ * Softirq handler that walks the timer table and invokes the callbacks of all expired timers.
+ * Called from the timer interrupt context.
+ */
 void timer_handler_soft(void) {
     if (!g_timers_initialized) return;
 

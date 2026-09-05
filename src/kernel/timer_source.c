@@ -16,6 +16,10 @@ static struct clockevent  *clockevent_list[MAX_CLOCKEVENTS];
 struct clocksource *current_clocksource;
 struct clockevent  *current_clockevent;
 
+/**
+ * clocksource_read_ns - Read the current time from the best clocksource
+ * Returns the current monotonic time in nanoseconds from the selected clocksource.
+ */
 uint64_t clocksource_read_ns(void)
 {
     if (!current_clocksource)
@@ -24,6 +28,13 @@ uint64_t clocksource_read_ns(void)
     return clocksource_cyc2ns(cycles, current_clocksource->freq_hz);
 }
 
+/**
+ * clocksource_cyc2ns - Convert cycles to nanoseconds
+ * @cycles: Cycle count
+ * @freq_hz: Clocksource frequency in Hz
+ *
+ * Converts a raw cycle count to nanoseconds using @freq_hz.
+ */
 uint64_t clocksource_cyc2ns(uint64_t cycles, uint64_t freq_hz)
 {
     if (freq_hz == 0)
@@ -43,6 +54,13 @@ uint64_t clocksource_cyc2ns(uint64_t cycles, uint64_t freq_hz)
     return ns;
 }
 
+/**
+ * clocksource_register - Register a clocksource
+ * @cs: clocksource to register
+ *
+ * Adds @cs to the clocksource list and optionally re-selects the best source. Returns 0 on success
+ * or a negative error code.
+ */
 int clocksource_register(struct clocksource *cs)
 {
     if (clocksource_count >= MAX_CLOCKSOURCES)
@@ -59,6 +77,13 @@ int clocksource_register(struct clocksource *cs)
     return clocksource_count - 1;
 }
 
+/**
+ * clockevent_register - Register a clockevent device
+ * @ce: clockevent to register
+ *
+ * Adds @ce to the clockevent list and re-selects the best event device. Returns 0 on success or a
+ * negative error code.
+ */
 int clockevent_register(struct clockevent *ce)
 {
     if (clockevent_count >= MAX_CLOCKEVENTS)
@@ -74,6 +99,10 @@ int clockevent_register(struct clockevent *ce)
     return clockevent_count - 1;
 }
 
+/**
+ * clocksource_select_best - Select the highest-quality clocksource
+ * Picks the registered clocksource with the best rating/frequency as the active time source.
+ */
 void clocksource_select_best(void)
 {
     int i;
@@ -87,6 +116,10 @@ void clocksource_select_best(void)
         current_clocksource = best;
 }
 
+/**
+ * clockevent_select_best - Select the highest-quality clockevent device
+ * Picks the registered clockevent with the best rating as the active interrupt-driven timer.
+ */
 void clockevent_select_best(void)
 {
     int i;
@@ -100,6 +133,11 @@ void clockevent_select_best(void)
         current_clockevent = best;
 }
 
+/**
+ * timer_source_init - Initialise the timer source framework
+ * Registers the architecture's base clocksource and clockevent and selects the defaults. Called
+ * once during bring-up.
+ */
 void timer_source_init(void)
 {
     clocksource_count = 0;
