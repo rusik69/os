@@ -862,6 +862,46 @@ Path resolution:
 
 Mounted filesystems are tracked in a mount table with propagation types (SHARED/SLAVE/PRIVATE) for namespace support. The VFS supports: file locks (POSIX advisory), inotify/fanotify, xattr, O_NONBLOCK, O_DIRECT, fallocate, splice, POSIX ACLs, per-user quotas.
 
+A layered view of the VFS architecture:
+
+```
+┌────────────────────────────────────────────────────────────┐
+│ Syscall Layer  (sys_open/sys_read/sys_write/sys_mount/...) │
+│ syscalls.c, syscall_new.c                                  │
+└──────────────────────────┬─────────────────────────────────┘
+                           │ fd / inode translation
+┌──────────────────────────▼─────────────────────────────────┐
+│ VFS Core  (src/kernel/vfs.c)                               │
+│   vfs_open/read/write/close/stat/create/unlink/rename/...  │
+│   path resolution → resolve() walks mount table + dcache   │
+│   mount/umount mgmt, mount namespaces, POSIX locks,        │
+│   xattr table, file locks, quotas                          │
+└──────────────────────────┬─────────────────────────────────┘
+                           │ dispatches on vfs_mount.ops
+┌──────────────────────────▼─────────────────────────────────┐
+│ Per-Filesystem vfs_ops Dispatch Table                      │
+│   read/write/stat/create/unlink/readdir + optional ops     │
+│   (truncate/fallocate/dedup/resize/journal/link/symlink/   │
+│    mknod/rename/tmpfile/ioctl/seek/xattr)                  │
+└──────────────────────────┬─────────────────────────────────┘
+                           │ priv → driver instance
+┌──────────────────────────▼─────────────────────────────────┐
+│ Filesystem Drivers                                        │
+│  tmpfs  fat32  ext2  ext4  btrfs  ntfs  cifs  nfs  ...     │
+└──────────────────────────┬─────────────────────────────────┘
+                           │ block I/O
+┌──────────────────────────▼─────────────────────────────────┐
+│ Block Layer + Cache  (blockdev, blk_mq, page_cache, bcache)│
+└────────────────────────────────────────────────────────────┘
+```
+
+Each `struct vfs_mount` binds one `vfs_ops` table and a private driver
+instance to a mountpoint; `resolve()` picks the mount whose mountpoint
+is the longest matching prefix of the requested path, then calls the
+corresponding op with the mount's `priv`. Per-process mount namespaces
+(`CLONE_NEWNS`) swap in a private copy of the mount table so containers
+see an isolated view.
+
 ### Supported Filesystems
 
 | FS | Type | Read/Write | Key Features |
