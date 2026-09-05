@@ -262,6 +262,21 @@ extern struct vfs_ops devfs_ops;
  * If path already starts with '/', copies it verbatim.
  * Normalises "." and ".." components.
  */
+/**
+ * vfs_abs_path - Resolve and normalize a path to absolute form
+ * @path: Input path (absolute or relative)
+ * @out: Buffer to receive the absolute path
+ * @out_max: Size of the @out buffer in bytes
+ *
+ * Converts @path into a normalized absolute path by applying the current
+ * process's working directory prefix to relative inputs, resolving '.'
+ * and '..' components, collapsing duplicate slashes, and trimming a
+ * trailing slash.  The result is always NUL-terminated within @out.
+ *
+ * Context: Does not sleep.  Reads the calling process's cwd.
+ * Return: 0 on success, or -ENAMETOOLONG if the normalized path does not
+ *         fit in @out.
+ */
 int vfs_abs_path(const char *path, char *out, int out_max) {
     char tmp[128];
     int wpos = 0;
@@ -567,6 +582,21 @@ int vfs_mount(const char *mountpoint, const struct vfs_ops *ops, void *priv) {
 /* Find the best-matching mount for a path */
 static struct vfs_mount *resolve(const char *path);
 
+/**
+ * vfs_mount_ex - Register a filesystem mount with flags
+ * @mountpoint: Path where the filesystem is to be mounted
+ * @ops: VFS operations for the filesystem driver
+ * @priv: Private driver data passed to each @ops callback
+ * @flags: Mount flags (e.g. MS_BIND, MS_RDONLY)
+ *
+ * Inserts a new mount entry at @mountpoint in the global mount table and
+ * mirrors it into the root mount namespace so resolve() can find it.
+ * When MS_BIND is set, the new entry aliases the source mount's ops/priv
+ * and is flagged as a bind mount.
+ *
+ * Context: Caller must ensure the mount table has room.
+ * Return: 0 on success, or -1 if the mount table is full.
+ */
 int vfs_mount_ex(const char *mountpoint, const struct vfs_ops *ops, void *priv, int flags) {
     spinlock_acquire(&mount_lock);
 
@@ -747,6 +777,19 @@ static struct vfs_mount *resolve_bind(const char *path, char *out_path, size_t o
 }
 
 /* Check if a mountpoint has any open files (used by umount to return EBUSY) */
+/**
+ * vfs_umount_check_busy - Check whether a mount is in use by any process
+ * @mountpoint: Path of the mount to check
+ *
+ * Scans every live process's file-descriptor table and returns -EBUSY if
+ * any open descriptor resolves to the given mount.  Callers should use
+ * this before vfs_umount() to avoid unmounting a filesystem with open
+ * files on it.
+ *
+ * Context: Takes no locks on the process table beyond reads.
+ * Return: 0 if the mount is not busy, -EBUSY if busy, -EINVAL if there
+ *         is no matching mount.
+ */
 int vfs_umount_check_busy(const char *mountpoint) {
     struct vfs_mount *m = resolve(mountpoint);
     if (!m)
@@ -769,7 +812,17 @@ int vfs_umount_check_busy(const char *mountpoint) {
     return 0;
 }
 
-/* Remove a mount entry from the global mount table */
+/**
+ * vfs_umount - Remove a mount entry from the global mount table
+ * @mountpoint: Path of the mount to remove
+ *
+ * Finds the mount whose mountpoint matches @mountpoint and removes it,
+ * compacting the table to close the gap and dropping the reference so
+ * the underlying filesystem can be torn down.  Logs the event.
+ *
+ * Context: Takes the global mount spinlock.
+ * Return: 0 on success, or -EINVAL if no such mount exists.
+ */
 int vfs_umount(const char *mountpoint) {
     spinlock_acquire(&mount_lock);
     for (int i = 0; i < num_mounts; i++) {
@@ -789,6 +842,18 @@ int vfs_umount(const char *mountpoint) {
     return -EINVAL;
 }
 
+/**
+ * vfs_register_filesystem - Register a filesystem type with the VFS
+ * @name: NUL-terminated filesystem type name (e.g. "ext2")
+ * @ops: VFS operations implementing the filesystem
+ *
+ * Adds a filesystem type to the global filesystem-type table for later
+ * use by mount-by-name lookups.  Multiple filesystems (SMFS, ext2,
+ * FAT32, etc.) register here at driver init.
+ *
+ * Context: Any context.
+ * Return: 0 on success, or -1 if the filesystem-type table is full.
+ */
 int vfs_register_filesystem(const char *name, const struct vfs_ops *ops) {
     if (num_fs_types >= VFS_MAX_FS_TYPES)
         return -1;
@@ -800,6 +865,18 @@ int vfs_register_filesystem(const char *name, const struct vfs_ops *ops) {
     return 0;
 }
 
+/**
+ * vfs_list_filesystems - Enumerate registered filesystem types
+ * @names: Array of up to @max 32-byte name buffers to fill
+ * @max: Maximum number of names to write
+ *
+ * Copies the names of registered filesystem types into @names, filling
+ * no more than @max entries.  Used by tools that enumerate supported
+ * filesystems (e.g. mount -t Help).
+ *
+ * Context: Any context.
+ * Return: Number of filesystem names copied.
+ */
 int vfs_list_filesystems(char names[][32], int max) {
     int n = num_fs_types < max ? num_fs_types : max;
     for (int i = 0; i < n; i++) {
@@ -982,17 +1059,20 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
     return r;
 }
 
-/*
- * vfs_append — Append data to the end of a file.
+/**
+ * vfs_append - Append data to the end of a file
+ * @path: Path to the file
+ * @data: Pointer to the bytes to append
+ * @size: Number of bytes to append
  *
  * Reads the existing file content, concatenates the new data, and writes
  * the combined result back.  This is used by the O_APPEND open flag.
+ * For large files a filesystem-level append or pwrite would be more
+ * efficient than this read-modify-write approach.
  *
- * For small files this read-modify-write approach is acceptable; for
- * production use with large files a filesystem-level append or pwrite
- * operation would be more efficient.
- *
- * Returns 0 on success, or a negative errno on failure.
+ * Context: May sleep.  Allocates memory.
+ * Return: 0 on success, or a negative errno (-EINVAL, -ENOMEM, -EIO) on
+ *         failure.
  */
 int vfs_append(const char *path, const void *data, uint32_t size) {
     if (!path || !data || size == 0)
@@ -1041,15 +1121,19 @@ int vfs_append(const char *path, const void *data, uint32_t size) {
     return 0;
 }
 
-/*
- * vfs_create — create a new file or directory.
- * @path:  absolute path for the new entry.
- * @type:  1 = file, 2 = directory.
- * the byte range to page cache blocks and prefetches them from the
- * backing store.  For memory-backed filesystems (tmpfs, procfs, etc.)
- * this is a no-op since there is no backing store to prefetch from.
+/**
+ * vfs_readahead - Prefetch file data into the page cache
+ * @path: Path to the file
+ * @offset: Starting byte offset of the range to prefetch
+ * @count: Number of bytes to prefetch
  *
- * Returns 0 on success, or negative on error.
+ * Maps the @offset..@offset+@count byte range onto page-cache blocks and
+ * prefetches them from the backing store so subsequent reads hit the
+ * cache.  For memory-backed filesystems this is a no-op.
+ *
+ * Context: May sleep.  Performs a Landlock read check and mandatory-lock
+ *          check.
+ * Return: 0 on success, or a negative errno on error.
  */
 int vfs_readahead(const char *path, uint32_t offset, uint32_t count) {
     char ap[128];
@@ -1087,6 +1171,19 @@ int vfs_readahead(const char *path, uint32_t offset, uint32_t count) {
     return 0;
 }
 
+/**
+ * vfs_stat - Get metadata for a path
+ * @path: Path to stat
+ * @st: Structure to receive the metadata
+ *
+ * Resolves @path, checks the dentry cache first, and on a miss queries
+ * the backing filesystem's stat op, caching the result for later
+ * lookups.  Performs a Landlock read-file check on the resolved path.
+ *
+ * Context: May sleep.
+ * Return: 0 on success, -EACCES if denied, -1 if the mount provides no
+ *         stat op, or a negative errno otherwise.
+ */
 int vfs_stat(const char *path, struct vfs_stat *st) {
     if (!path)
         return -EINVAL;
@@ -1122,6 +1219,20 @@ int vfs_stat(const char *path, struct vfs_stat *st) {
     return r;
 }
 
+/**
+ * vfs_create - Create a new file or directory
+ * @path: Absolute path for the new entry
+ * @type: 1 = regular file, 2 = directory, 3 = symbolic link
+ *
+ * Resolves the parent mount and calls its create op.  Enforces the
+ * Landlock write-file permission, read-only mount check, inode-quota,
+ * and updates the dentry cache on success.
+ *
+ * Context: May sleep.
+ * Return: 0 on success, -EACCES if denied, -EROFS_KERNEL on a read-only
+ *         mount, -1 if the mount provides no create op, or a negative
+ *         errno otherwise.
+ */
 int vfs_create(const char *path, uint8_t type) {
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
@@ -1177,6 +1288,20 @@ int vfs_create(const char *path, uint8_t type) {
     return r;
 }
 
+/**
+ * vfs_unlink - Remove a file
+ * @path: Path to the file to remove
+ *
+ * Resolves the parent mount and calls its unlink op.  Enforces the
+ * Landlock write-file permission, read-only mount check, adjusts the
+ * block quota for the freed size, notifies fsnotify, and invalidates the
+ * relevant dentry-cache entries.
+ *
+ * Context: May sleep.
+ * Return: 0 on success, -EACCES if denied, -EROFS_KERNEL on a read-only
+ *         mount, -1 if the mount provides no unlink op, or a negative
+ *         errno otherwise.
+ */
 int vfs_unlink(const char *path) {
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
@@ -1229,15 +1354,22 @@ int vfs_unlink(const char *path) {
     return r;
 }
 
-/*
- * vfs_rename — Move/rename a file or directory.
+/**
+ * vfs_rename - Rename or move a file or directory
+ * @old_path: Current path
+ * @new_path: Destination path
  *
- * Uses the filesystem's native rename operation if available.  Otherwise
- * falls back to create+copy+delete for regular files, or a recursive
- * copy+delete for directories.
+ * Resolves both paths, requiring them to be on the same filesystem, and
+ * calls the filesystem's native rename op when available.  Falls back to
+ * a create+copy+delete for files without native rename, and a recursive
+ * copy for directories.  Enforces Landlock write-file checks and
+ * read-only mounts, refuses when @new_path already exists, and
+ * invalidates the affected dentry-cache entries.
  *
  * Both paths must resolve to the same mounted filesystem.
- * Returns 0 on success or negative errno on error.
+ * Context: May sleep.
+ * Return: 0 on success, or a negative errno (-ENOENT, -EEXIST, -EXDEV,
+ *         -EACCES, -EROFS_KERNEL, ...) on failure.
  */
 int vfs_rename(const char *old_path, const char *new_path) {
     char old_ap[128], new_ap[128];
@@ -1408,6 +1540,18 @@ int vfs_rename(const char *old_path, const char *new_path) {
     return 0;
 }
 
+/**
+ * vfs_readdir - List a directory's entries, printing them
+ * @path: Directory path
+ *
+ * Resolves @path and calls the backing filesystem's readdir op, which
+ * prints the directory's entries (SMFS-style).  Performs a Landlock
+ * read-dir permission check.
+ *
+ * Context: May sleep.
+ * Return: 0 on success, -EACCES if denied, or -1 if the mount provides
+ *         no readdir op.
+ */
 int vfs_readdir(const char *path) {
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
@@ -1426,6 +1570,20 @@ int vfs_readdir(const char *path) {
     return m->ops->readdir(m->priv, rp);
 }
 
+/**
+ * vfs_readdir_names - Collect directory entry names
+ * @path: Directory path
+ * @names: Array of up to @max 64-byte buffers to fill
+ * @max: Maximum number of names to return
+ *
+ * Fills @names with the entry names of @path, up to @max entries.  For
+ * the root and ''/mnt'' mounts it delegates to the underlying SMFS or
+ * FAT32 directory listing.  Performs a Landlock read-dir permission
+ * check.
+ *
+ * Context: May sleep.  Allocates a temporary name table.
+ * Return: Number of names written, -EACCES if denied, or -1 on error.
+ */
 int vfs_readdir_names(const char *path, char names[][64], int max) {
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
@@ -1475,6 +1633,18 @@ int vfs_readdir_names(const char *path, char names[][64], int max) {
     return -1;
 }
 
+/**
+ * vfs_list_mountpoints - Enumerate current mountpoints
+ * @mounts_out: Array of up to @max 64-byte buffers to fill
+ * @max: Maximum number of mountpoints to return
+ *
+ * Fills @mounts_out with the mountpoints visible to the calling process,
+ * preferring the process's mount namespace and falling back to the
+ * global mount table.
+ *
+ * Context: Any context.
+ * Return: Number of mountpoints written.
+ */
 int vfs_list_mountpoints(char mounts_out[][64], int max) {
     /* Try process namespace first */
     struct mnt_namespace *ns = mnt_ns_current();
@@ -1493,16 +1663,53 @@ int vfs_list_mountpoints(char mounts_out[][64], int max) {
 
 /* ── File locking ──────────────────────────────────────────────── */
 
+/**
+ * vfs_setlk - Set (or test) a POSIX file lock
+ * @path: Path of the file to lock
+ * @flk: Lock descriptor (range, type, pid)
+ * @wait: Nonzero to block until the lock is available
+ *
+ * Delegates to the file-lock subsystem's set operation.  A wait value of
+ * zero performs a non-blocking try-lock / test.
+ *
+ * Context: May sleep if @wait is set.
+ * Return: 0 on success, or a negative errno on failure.
+ */
 int vfs_setlk(const char *path, struct file_lock *flk, int wait) {
     return file_lock_set(path, flk, wait);
 }
 
+/**
+ * vfs_getlk - Inspect the lock currently held on a byte range
+ * @path: Path of the file
+ * @flk: Lock descriptor to fill with the owner of the conflicting range
+ *
+ * Delegates to the file-lock subsystem's get operation, returning the
+ * lock (if any) that would conflict with @flk's range.
+ *
+ * Context: Any context.
+ * Return: 0 on success, or a negative errno on failure.
+ */
 int vfs_getlk(const char *path, struct file_lock *flk) {
     return file_lock_get(path, flk);
 }
 
 /* ── Extended attributes ───────────────────────────────────────── */
 
+/**
+ * vfs_bind_mount - Bind-mount a directory onto another path
+ * @src: Source path (the directory to re-publish)
+ * @target: Destination path where @src becomes visible
+ *
+ * Creates a new mount entry at @target that aliases the source mount's
+ * ops/priv and records @src as its bind source, so both paths expose the
+ * same filesystem content.  Mirrors the entry into the root mount
+ * namespace for visibility.
+ *
+ * Context: May sleep.
+ * Return: 0 on success, or -1 if arguments are invalid, the source is
+ *         not mounted, or the mount table is full.
+ */
 int vfs_bind_mount(const char *src, const char *target) {
     if (!src || !target)
         return -1;
@@ -1578,6 +1785,16 @@ int vfs_bind_mount(const char *src, const char *target) {
     return 0;
 }
 
+/**
+ * vfs_is_bind_mount - Test whether a path is a bind-mounted entry
+ * @path: Path to test
+ *
+ * Returns nonzero if @path's normalized absolute form matches the target
+ * of a registered bind mount.
+ *
+ * Context: Any context.
+ * Return: 1 if @path is a bind mount target, 0 otherwise.
+ */
 int vfs_is_bind_mount(const char *path) {
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
@@ -1669,6 +1886,20 @@ static int vfs_do_set_time(const char *abs_path, const struct timespec times[2])
     return ret;
 }
 
+/**
+ * vfs_set_time - Set atime/mtime on a file by path
+ * @path: Path to the file
+ * @times: Array of two timespecs (atime, mtime); NULL means "now", and
+ *         UTIME_OMIT leaves a field unchanged
+ *
+ * Resolves @path and delegates to the filesystem's set_time op,
+ * invalidating the dentry-cache entry on success.
+ *
+ * Context: May sleep.
+ * Return: 0 on success, -EINVAL on a bad path, -ENOENT if unmounted,
+ *         -EOPNOTSUPP if the filesystem lacks set_time, or a negative
+ *         errno otherwise.
+ */
 int vfs_set_time(const char *path, const struct timespec times[2]) {
     if (!path || !path[0])
         return -EINVAL;
@@ -1677,6 +1908,19 @@ int vfs_set_time(const char *path, const struct timespec times[2]) {
     return vfs_do_set_time(ap, times);
 }
 
+/**
+ * vfs_fset_time - Set atime/mtime on an open file by descriptor
+ * @fd: Open file descriptor
+ * @times: Array of two timespecs (atime, mtime); NULL means "now"
+ *
+ * Resolves @fd to its registered path in the calling process and applies
+ * vfs_set_time() to it.
+ *
+ * Context: May sleep.
+ * Return: 0 on success, -EBADF if @fd is not a valid open descriptor,
+ *         -EPERM outside a process context, or a negative errno from
+ *         vfs_set_time() otherwise.
+ */
 int vfs_fset_time(int fd, const struct timespec times[2]) {
     struct process *proc = process_get_current();
     if (!proc)
@@ -1701,6 +1945,18 @@ static int vfs_utimes(const char *path, const uint64_t atime, const uint64_t mti
 
 /* ── Filesystem statistics ──────────────────────────────────────── */
 
+/**
+ * vfs_statfs - Query filesystem statistics for a path
+ * @path: Path on the filesystem to query
+ * @st: Structure to receive the statistics
+ *
+ * Fills @st with block/filesystem statistics.  The current
+ * implementation returns sensible defaults (ext2 magic, 4096-byte
+ * blocks, 255-char name limit) rather than per-mount values.
+ *
+ * Context: Any context.
+ * Return: 0 on success, or -EINVAL if @path or @st is NULL.
+ */
 int vfs_statfs(const char *path, struct vfs_statfs *st) {
     if (!path || !st)
         return -EINVAL;
@@ -1718,6 +1974,18 @@ int vfs_statfs(const char *path, struct vfs_statfs *st) {
     return 0;
 }
 
+/**
+ * vfs_fstatfs - Query filesystem statistics for an open descriptor
+ * @fd: Open file descriptor
+ * @st: Structure to receive the statistics
+ *
+ * Resolves @fd to its path on the calling process and delegates to
+ * vfs_statfs().
+ *
+ * Context: Any context.
+ * Return: 0 on success, -EBADF if @fd is invalid/closed, -EPERM outside
+ *         a process context, or -EINVAL if @st is NULL.
+ */
 int vfs_fstatfs(int fd, struct vfs_statfs *st) {
     if (!st)
         return -EINVAL;
@@ -1732,6 +2000,20 @@ int vfs_fstatfs(int fd, struct vfs_statfs *st) {
     return vfs_statfs(pfd->path, st);
 }
 
+/**
+ * vfs_truncate - Resize a file by path
+ * @path: Path to the file
+ * @len: New length in bytes
+ *
+ * Resolves @path and calls the filesystem's truncate op.  Enforces the
+ * Landlock write-file permission and read-only mount check, adjusts the
+ * block quota for the size delta, and invalidates the dentry cache.
+ *
+ * Context: May sleep.
+ * Return: 0 on success, -EACCES if denied, -EROFS_KERNEL on a read-only
+ *         mount, -1 if the file is unmounted, or a negative errno
+ *         otherwise.
+ */
 int vfs_truncate(const char *path, uint32_t len) {
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
@@ -1814,6 +2096,20 @@ static void vfs_inc_nlink(const char *path) {
 
 
 /* ── vfs_link: create a hard link ────────────────────────────────── */
+/**
+ * vfs_link - Create a hard link
+ * @oldpath: Existing path
+ * @newpath: New hard-link path to create
+ *
+ * Requires @oldpath to exist, @newpath to not exist, both to be on the
+ * same filesystem, and @oldpath's link count below VFS_LINK_MAX.  Uses
+ * the filesystem's native link op, or falls back to a data copy.  Enforces
+ * Landlock checks and updates the dentry cache on success.
+ *
+ * Context: May sleep.
+ * Return: 0 on success, or a negative errno (-EINVAL, -ENOENT, -EEXIST,
+ *         -EMLINK, -EXDEV, -EACCES, -ENOMEM, ...) on failure.
+ */
 int vfs_link(const char *oldpath, const char *newpath) {
     if (!oldpath || !newpath)
         return -EINVAL;
@@ -1939,6 +2235,20 @@ int vfs_link(const char *oldpath, const char *newpath) {
 }
 
 /* ── vfs_symlink / vfs_readlink ──────────────────────────────── */
+/**
+ * vfs_symlink - Create a symbolic link
+ * @target: Contents (target path) of the new link
+ * @linkpath: Path of the symbolic link to create
+ *
+ * Resolves the link's parent mount and calls the filesystem's symlink op
+ * when available; otherwise creates a link inode (type 3) and writes
+ * @target into it.  Enforces Landlock and read-only checks and
+ * invalidates the dentry cache.
+ *
+ * Context: May sleep.
+ * Return: 0 on success, or a negative errno (-EINVAL, -ENOENT,
+ *         -EROFS_KERNEL, -EACCES, ...) on failure.
+ */
 int vfs_symlink(const char *target, const char *linkpath) {
     if (!target || !linkpath)
         return -EINVAL;
@@ -1983,6 +2293,19 @@ int vfs_symlink(const char *target, const char *linkpath) {
     return vfs_write(ap, target, (uint32_t)strlen(target));
 }
 
+/**
+ * vfs_readlink - Read a symbolic link's target
+ * @path: Path to the symbolic link
+ * @buf: Buffer to receive the target string
+ * @bufsize: Size of @buf in bytes
+ *
+ * Resolves @path and calls the filesystem's readlink op to fill @buf,
+ * which is always NUL-terminated.
+ *
+ * Context: May sleep.
+ * Return: Length of the target on success (>= 0), or -EINVAL on a bad
+ *         argument, -ENOENT if unmounted/absent, or a negative errno.
+ */
 int vfs_readlink(const char *path, char *buf, int bufsize) {
     if (!path || !buf || bufsize <= 0)
         return -EINVAL;
@@ -2012,6 +2335,21 @@ int vfs_readlink(const char *path, char *buf, int bufsize) {
 }
 
 /* ── vfs_mknod ────────────────────────────────────────────────── */
+/**
+ * vfs_mknod - Create a special file (device node)
+ * @path: Path of the node to create
+ * @mode: File mode bits (S_IFCHR/S_IFBLK in the type bits)
+ * @dev_major: Major device number
+ * @dev_minor: Minor device number
+ *
+ * Resolves the parent mount, performs a Landlock write-file check, and
+ * delegates to the filesystem's mknod op to create a character or block
+ * device node.
+ *
+ * Context: May sleep.
+ * Return: 0 on success, or a negative errno (-EINVAL, -EACCES, ...) on
+ *         failure.
+ */
 int vfs_mknod(const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_minor) {
     if (!path)
         return -EINVAL;
@@ -2054,6 +2392,18 @@ int vfs_mknod(const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_
 
 /* ── vfs_flush: flush cached writes for a filesystem identified by path ── */
 
+/**
+ * vfs_flush - Flush cached writes for a filesystem
+ * @path: Any path within the filesystem to flush
+ *
+ * Calls the filesystem's flush op, then flushes the global buffer cache
+ * and the dirty pages of the page cache to their backing store.
+ *
+ * Context: May sleep; waits on storage I/O.
+ * Return: 0 on success, -EINVAL if @path is NULL, -ENOENT if the path is
+ *         not mounted, or a negative errno from the filesystem's flush
+ *         op.
+ */
 int vfs_flush(const char *path) {
     if (!path)
         return -EINVAL;
@@ -2088,6 +2438,16 @@ int vfs_flush(const char *path) {
 
 /* ── vfs_sync_all: sync all mounted filesystems ───────────────────── */
 
+/**
+ * vfs_sync_all - Flush all mounted filesystems to disk
+ *
+ * Calls each mounted filesystem's flush op and then flushes the global
+ * buffer and page caches.  Used by sync(2) and shutdown paths.
+ *
+ * Context: May sleep; waits on storage I/O.
+ * Return: 0 on success, or the (negative) error of the first flush op
+ *         that failed.
+ */
 int vfs_sync_all(void) {
     int ret = 0;
     spinlock_acquire(&mount_lock);
@@ -2142,19 +2502,21 @@ static int root_mount_index(void) {
     return -1;
 }
 
-/* ── pivot_root — swap root mount (Item 118) ─────────────────────────
+/**
+ * vfs_pivot_root - Change the root mount and detach the old one
+ * @new_root: Path of the new root (must be a mount point)
+ * @put_old: Path under @new_root where the old root is mounted
  *
- * pivot_root(new_root, put_old):
- *   Makes new_root the process's root filesystem.
- *   Moves the current root to put_old (which must be under new_root).
+ * Makes @new_root the process's root filesystem and relocates the current
+ * root under @put_old.  Both @new_root and @put_old must be directories,
+ * @new_root must be a mount point, and @put_old must lie beneath
+ * @new_root.  After the call the root mount entry serves @new_root's
+ * filesystem at "/", and the old root's mount entry is served at
+ * @put_old.  Used by container init to establish a private root.
  *
- * Both new_root and put_old must be directories.
- * put_old must be underneath new_root.
- * new_root must be a mount point.
- *
- * After pivot_root:
- *   - The root mount entry serves new_root's filesystem at "/".
- *   - The new_root mount entry serves the old root at "put_old".
+ * Context: May sleep.  Takes the global mount lock.
+ * Return: 0 on success, or a negative errno (-EINVAL, -ENOENT) on
+ *         failure.
  */
 int vfs_pivot_root(const char *new_root, const char *put_old) {
     if (!new_root || !put_old || !new_root[0] || !put_old[0])
