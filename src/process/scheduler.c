@@ -242,17 +242,22 @@ static inline uint64_t eevdf_eligible_deadline(struct process *p) {
     }
 }
 
-/*
- * Pure EEVDF ordering primitive: return the process with the SMALLEST
- * eligible deadline from an explicit list.  This is exactly the selection
- * rule eevdf_pick_next() applies to the live runqueue (which there is a
- * linear scan over the multilevel queue; an rb_tree keyed by
- * eevdf_eligible_deadline would encode the same total order).  Exposing
- * the ordering rule apart from the runqueue lets the kunit suite verify
- * the CFS pick-order invariant deterministically, without mutating the
- * live runqueue.  The list must be non-NULL-terminated and @n must be its
- * length; caller passes only processes it owns.  Returns NULL if n<=0 or
- * every element is NULL.
+/**
+ * sched_eevdf_pick_best() - Pure EEVDF pick-order primitive.
+ * @list: Array of candidate &process pointers (may contain NULLs).
+ * @n: Number of entries in @list; the list is not required to be
+ *     NULL-terminated and must hold exactly @n owned processes.
+ *
+ * Computes, over an explicit caller-supplied list, the candidate with the
+ * minimum eligible deadline (EEVDF vruntime-based selection key).  This is
+ * exactly the ordering rule eevdf_pick_next() applies to the live runqueue,
+ * exposed apart from it so the KUnit suite can verify the CFS pick-order
+ * invariant deterministically without mutating the runqueue.  It takes no
+ * locks and never touches the live runqueue.  NULL entries in @list
+ * (withdrawn processes) are skipped.
+ *
+ * Return: Pointer to the winning process, or NULL if @list is NULL, @n is
+ * not positive, or every entry is NULL.
  */
 struct process *sched_eevdf_pick_best(struct process **list, int n) {
     struct process *best = NULL;
@@ -519,14 +524,19 @@ static inline uint16_t slice_for_prio(int lvl) {
     return s;
 }
 
-/*
- * Pure SCHED_RR timeslice primitive: the round-robin quantum (in ticks)
- * for a task at the given priority LEVEL, i.e. slice_for_prio(lvl).
+/**
+ * sched_rr_slice_ticks() - Return the SCHED_RR quantum for a priority level.
+ * @priority_level: Priority level whose round-robin slice is requested.
+ *
+ * Pure SCHED_RR timeslice primitive: returns the round-robin quantum (in
+ * ticks) for a task at the given priority level, i.e. slice_for_prio(lvl).
  * This is the value the RR path replenishes ticks_remaining to on slice
- * expiry — it sets the rotation cadence.  Lower priority value (higher
+ * expiry — it sets the rotation cadence.  A lower priority value (higher
  * priority) gets a larger quantum, so a higher-priority RR task is
- * preempted less often.  Exposed for the kunit suite; does NOT touch
- * the live runqueue.
+ * preempted less often.  Pure helper exposed for the KUnit suite; does NOT
+ * touch the live runqueue.
+ *
+ * Return: Number of ticks for the requested level.
  */
 int sched_rr_slice_ticks(int priority_level) {
     return (int)slice_for_prio(priority_level);
@@ -792,6 +802,18 @@ static void scheduler_add_locked(struct process *proc) {
 }
 
 /* ── Add process to its CPU's runqueue (public API, acquires lock) ─── */
+
+/**
+ * scheduler_add() - Enqueue a process on its CPU's runqueue.
+ * @proc: Process to make runnable.
+ *
+ * Acquires the global scheduler lock and links @proc into the per-CPU
+ * multilevel runqueue at the level indicated by its current priority
+ * (CFS weight is used for the EEVDF ordering within the level).  Must be
+ * called with the process in a runnable (READY) state.
+ *
+ * Return: 0 on success, -EINVAL if @proc is NULL.
+ */
 int scheduler_add(struct process *proc) {
     if (!proc)
         return -EINVAL;
@@ -803,6 +825,15 @@ int scheduler_add(struct process *proc) {
 }
 
 /* ── Remove process from its queue ──────────────────────────────────── */
+/**
+ * scheduler_remove() - Remove a process from its runqueue if queued.
+ * @proc: Process to dequeue.
+ *
+ * Scans every CPU's runqueue for @proc (a queued process may live on any
+ * per-CPU queue) and unlinks it once found, updating the associated queue
+ * head/tail and the EEVDF lag bookkeeping.  If @proc is not on a queue the
+ * call is a no-op.  The scheduler lock is held across the search-and-unlink.
+ */
 void scheduler_remove(struct process *proc) {
     if (!proc->on_queue)
         return;
@@ -845,6 +876,20 @@ void scheduler_remove(struct process *proc) {
 }
 
 /* ── Priority change ────────────────────────────────────────────────── */
+
+/**
+ * scheduler_set_priority() - Change a process's runqueue priority level.
+ * @proc: Target process.
+ * @priority: New multilevel priority (0 = highest .. SCHED_LEVELS-1).
+ *
+ * Updates the process's legacy priority level.  If the process is READY and
+ * hence on a runqueue, it is removed and re-added so it lands in the queue
+ * corresponding to the new level.  The EEVDF weight field is left untouched;
+ * use scheduler_set_nice() to change the CFS weight.
+ *
+ * Return: 0 on success, -EINVAL if @proc is NULL or @priority is out of
+ * range.
+ */
 int scheduler_set_priority(struct process *proc, uint8_t priority) {
     if (!proc || priority >= SCHED_LEVELS)
         return -EINVAL;
@@ -860,10 +905,13 @@ int scheduler_set_priority(struct process *proc, uint8_t priority) {
     return 0;
 }
 
-/* ── Set process nice value and update CFS weight ─────────────────────
+/**
+ * scheduler_set_nice() - Set a process's nice value and update CFS weight.
+ * @proc: Target process.
+ * @nice: Desired nice value; clamped to the valid range [-20, +19].
  *
- * POSIX setpriority(which, who, prio) should call this function
- * instead of manually updating fields.  It:
+ * This is what POSIX setpriority(which, who, prio) should call instead of
+ * manually updating fields.  It:
  *   1. Clamps @nice to the valid range [-20, +19]
  *   2. Updates proc->nice and proc->sched_weight (CFS weight from table)
  *   3. Maps the nice value to the legacy priority (0-3) for the
@@ -871,7 +919,10 @@ int scheduler_set_priority(struct process *proc, uint8_t priority) {
  *   4. If the process is on the runqueue, re-inserts it so the new
  *      weight takes effect immediately.
  *
- * Returns 0 on success, -1 on error.
+ * Context: May acquire sched_lock internally via scheduler_remove()/add()
+ * when the process is currently runnable.
+ *
+ * Return: 0 on success, -EINVAL if @proc is NULL.
  */
 int scheduler_set_nice(struct process *proc, int nice) {
     if (!proc)
@@ -939,8 +990,20 @@ static int calculate_cpu_load(struct cpu_info *ci) {
 /* Pure helpers for the load-balance decision, exposed so the kunit suite can
  * validate the balancing arithmetic without touching the live runqueues. */
 
-/* Sum weighted load over an explicit list of processes (the same rule
- * calculate_cpu_load() applies to a CPU's queues).  NULL entries skip. */
+/**
+ * sched_balance_weighted_load() - Sum weighted load over an explicit list.
+ * @list: Array of candidate &process pointers (may contain NULLs).
+ * @n: Number of entries in @list.
+ *
+ * Pure helper for the load-balance decision: returns the total CFS weighted
+ * load of the given processes, using the same rule calculate_cpu_load()
+ * applies to a CPU's queues (each process contributes its sched_weight, or
+ * the nice-0 baseline when weight is 0).  NULL entries are skipped.  Exposed
+ * so the KUnit suite can validate the balancing arithmetic without touching
+ * the live runqueues.
+ *
+ * Return: Sum of weighted loads.
+ */
 int sched_balance_weighted_load(struct process **list, int n) {
     int load = 0;
     for (int i = 0; i < n; i++) {
@@ -951,14 +1014,32 @@ int sched_balance_weighted_load(struct process **list, int n) {
     return load;
 }
 
-/* Whether a CPU should attempt to pull work: only when it is idle/lightly
- * loaded (no more than two nice-0 tasks' worth of weight). */
+/**
+ * sched_balance_should_pull() - Decide whether a CPU should pull work.
+ * @this_load: Current weighted load of the candidate (idle) CPU.
+ *
+ * Pure helper for the load-balance decision.  Returns true when the CPU is
+ * idle or lightly loaded — no more than two nice-0 tasks' worth of weight —
+ * and should therefore attempt to pull work from a busier CPU.
+ *
+ * Return: Non-zero if the CPU should attempt to pull work.
+ */
 int sched_balance_should_pull(int this_load) {
     return this_load <= CFS_NICE_0_WEIGHT * 2;
 }
 
-/* Whether pulling from @other_load is worthwhile: the other CPU must beat
- * us by more than one nice-0 task's weight (threshold from load_balance). */
+/**
+ * sched_balance_diff_significant() - Whether pulling from another CPU is worthwhile.
+ * @other_load: Weighted load of the source (busier) CPU.
+ * @this_load: Weighted load of the destination (currently idle) CPU.
+ *
+ * Pure helper for the load-balance decision.  Returns true only when the
+ * source CPU beats us by more than one nice-0 task's weight, i.e. the
+ * difference is significant enough to justify a migration (threshold from
+ * load_balance).
+ *
+ * Return: Non-zero if the difference is significant.
+ */
 int sched_balance_diff_significant(int other_load, int this_load) {
     return (other_load - this_load) > CFS_NICE_0_WEIGHT;
 }
@@ -1720,6 +1801,14 @@ void scheduler_stats_inc_yield(void) {
     sched_stats_data.yields++;
 }
 
+/**
+ * scheduler_get_stats() - Snapshot global scheduler statistics.
+ * @stats: Output buffer to fill with the current counters.
+ *
+ * Copies the global cumulative scheduler counters — context switches,
+ * preemptions, yields, and total idle ticks — into @stats.  No-op if
+ * @stats is NULL.
+ */
 void scheduler_get_stats(struct sched_stats *stats) {
     if (!stats)
         return;
@@ -1731,6 +1820,16 @@ void scheduler_get_stats(struct sched_stats *stats) {
 
 /* ── Per-CPU runqueue statistics ─────────────────────────────── */
 
+/**
+ * scheduler_get_runqueue_stats() - Snapshot a CPU's runqueue statistics.
+ * @cpu: Target CPU index.
+ * @s: Output buffer, zeroed and filled with the runqueue survey.
+ *
+ * Fills @s with the number of runnable processes, their per-priority-level
+ * distribution, the aggregate load weight, plus whole-system PROCESS_RUNNING/
+ * PROCESS_BLOCKED counts (per the process table).  No-op if @s is NULL or
+ * @cpu is out of range.
+ */
 void scheduler_get_runqueue_stats(int cpu, struct runqueue_stats *s) {
     if (!s || cpu < 0 || cpu >= smp_cpu_count)
         return;
@@ -1762,6 +1861,18 @@ void scheduler_get_runqueue_stats(int cpu, struct runqueue_stats *s) {
 
 /* ── Autogroup implementation ───────────────────────────────── */
 
+/**
+ * sched_autogroup_get() - Get or create an autogroup for a session.
+ * @session_id: Session identifier to resolve to an autogroup index.
+ *
+ * Maps @session_id to one of the SCHED_AUTOGROUP_MAX autogroup slots,
+ * creating (and resetting to zero vruntime) an empty slot on first use or
+ * returning the existing group that already owns the session.  Returns the
+ * autogroup index used as the group handle.
+ *
+ * Return: Autogroup index (0..SCHED_AUTOGROUP_MAX-1), or -EINVAL if all
+ * slots are occupied by live groups.
+ */
 int sched_autogroup_get(int session_id) {
     /* Session ID maps to autogroup index via simple hash */
     int target = session_id % SCHED_AUTOGROUP_MAX;
@@ -1786,6 +1897,15 @@ int sched_autogroup_get(int session_id) {
     return -EINVAL;
 }
 
+/**
+ * sched_autogroup_assign() - Assign a process to an autogroup.
+ * @proc: Target process.
+ * @group_id: Autogroup index to join, or a negative value to detach.
+ *
+ * Moves @proc into the named autogroup, decrementing the member count of its
+ * previous group (if any) and incrementing the new group's.  A negative
+ * @group_id detaches @proc.  Out-of-range @group_id is ignored.
+ */
 void sched_autogroup_assign(struct process *proc, int group_id) {
     if (group_id < 0 || group_id >= SCHED_AUTOGROUP_MAX)
         return;
@@ -1798,6 +1918,15 @@ void sched_autogroup_assign(struct process *proc, int group_id) {
         autogroups[group_id].member_count++;
 }
 
+/**
+ * sched_autogroup_max_vruntime() - Highest vruntime among group members.
+ * @group_id: Autogroup index to scan.
+ *
+ * Returns the maximum vruntime over all non-unused processes currently
+ * assigned to the given autogroup, or 0 if the group is empty/invalid.
+ *
+ * Return: Maximum member vruntime, or 0.
+ */
 uint64_t sched_autogroup_max_vruntime(int group_id) {
     if (group_id < 0 || group_id >= SCHED_AUTOGROUP_MAX)
         return 0;
@@ -1841,8 +1970,12 @@ static inline int sched_class_rank(uint8_t policy) {
     return 4; /* unknown — treated as lowest */
 }
 
-/*
- * Pure SCHED_FIFO priority-selection comparator.  Returns 1 if task @a is
+/**
+ * sched_fifo_prefer_a() - SCHED_FIFO priority-selection comparator.
+ * @a: First candidate process.
+ * @b: Second candidate process.
+ *
+ * Pure SCHED_FIFO priority-selection comparator: returns 1 if task @a is
  * selected ahead of task @b, 0 otherwise, using the same class hierarchy
  * the scheduler applies when picking the next runnable task:
  *   - a higher-priority class wins (RT > CFS > IDLE, by sched_class_rank)
@@ -1850,7 +1983,9 @@ static inline int sched_class_rank(uint8_t policy) {
  *     (SCHED_LEVELS: 0 = highest, matching SCHED_FIFO static priority)
  *   - equal class and equal priority: a wins (first-in-list, matches the
  *     queue's head-first ordering)
- * Exposed for the kunit suite; does NOT touch the live runqueue.
+ * Exposed for the KUnit suite; does NOT touch the live runqueue.
+ *
+ * Return: 1 if @a is preferred, 0 otherwise.
  */
 int sched_fifo_prefer_a(struct process *a, struct process *b) {
     if (!a)
@@ -1999,13 +2134,30 @@ static void scheduler_wakeup_locked(struct process *proc) {
         proc->eevdf_deadline = 0;
 }
 
-/* Public API: acquires sched_lock, applies CFS sleeper fairness, adds to runqueue. */
+/**
+ * scheduler_wakeup() - Wake a sleeping process with CFS sleeper fairness.
+ * @proc: Process to make runnable.
+ *
+ * Acquires sched_lock, applies CFS sleeper fairness (adjusting vruntime so
+ * a long-sleeping task catches up), and adds @proc to its runqueue via
+ * scheduler_wakeup_locked().
+ */
 void scheduler_wakeup(struct process *proc) {
     uint64_t flags;
     spinlock_irqsave_acquire(&sched_lock, &flags);
     scheduler_wakeup_locked(proc);
     spinlock_irqsave_release(&sched_lock, flags);
 }
+/**
+ * update_vruntime() - Advance a process's CFS vruntime by a number of ticks.
+ * @p: Target process.
+ * @ticks: Number of CPU ticks to account for.
+ *
+ * Transforms a CPU-time slice into a vruntime increment scaled by the
+ * process's CFS weight: vruntime += ticks * 1,000,000 * NICE_0_WEIGHT /
+ * weight.  Higher-weight (lower-nice) tasks accumulate vruntime slower,
+ * which is what gives them a scheduling share.  No-op if @p is NULL.
+ */
 void update_vruntime(struct process *p, int ticks) {
     if (!p)
         return;
@@ -2030,18 +2182,23 @@ void update_vruntime(struct process *p, int ticks) {
  */
 /* ── CPU hotplug: migrate all tasks away from a CPU ──────── */
 
-/*
- * Migrate every runnable process from @from_cpu to other online CPUs.
- * This is called by cpuhp_migrate_tasks_away() while holding the hotplug
- * lock. It iterates the per-CPU runqueue of @from_cpu, removes each
- * process, and distributes them across the remaining online CPUs.
+/**
+ * scheduler_migrate_tasks_from() - Migrate all runnable tasks off a CPU.
+ * @from_cpu: CPU being taken offline whose tasks must be migrated away.
  *
- * Returns the number of tasks migrated (0 if none).
+ * Called by cpuhp_migrate_tasks_away() during CPU hotplug (offline) while
+ * holding the hotplug lock.  Iterates the per-CPU runqueue of @from_cpu
+ * (distributing SCHED_DEADLINE tasks from the per-CPU deadline array and
+ * the remaining tasks from the general priority queues), removes each
+ * process, and re-queues them across the other online CPUs, respecting CPU
+ * affinity and spreading by pseudo-random seed.
  *
- * NOTE: This function expects cpuhp_lock to already be held by the caller
- * and interrupts to be disabled. It does NOT acquire sched_lock itself
- * since the hotplug lock serialises all scheduling modifications during
- * the offline transition.
+ * NOTE: The caller holds cpuhp_lock and has interrupts disabled, but this
+ * function ALSO acquires sched_lock to safely serialize against normal
+ * scheduler operations modifying the destination CPUs' runqueues.  It is
+ * safe to call with only cpuhp_lock held.
+ *
+ * Return: The number of tasks migrated (0 if none or no destination CPUs).
  */
 int scheduler_migrate_tasks_from(int from_cpu) {
     struct cpu_info *ci;
