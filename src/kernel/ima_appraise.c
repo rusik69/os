@@ -13,17 +13,103 @@
  * Item S101 — IMA appraisal
  */
 
-#include "types.h"
-#include "string.h"
-#include "printf.h"
-#include "sha256.h"
-#include "xattr.h"
-#include "vfs.h"
 #include "errno.h"
 #include "heap.h"
+#include "ima.h"
+#include "printf.h"
+#include "sha256.h"
+#include "string.h"
+#include "types.h"
+#include "vfs.h"
+#include "xattr.h"
 
-/* ── Enforcement mode ────────────────────────────────────────────── */
-static int ima_appraise_enforce = 1;   /* 1 = deny on mismatch */
+/* ── Enforcement policy mode ─────────────────────────────────────── */
+
+/* Appraisal policy: 0=off, 1=fix, 2=log, 3=enforce.
+ * Default is enforce (deny on mismatch). */
+static int ima_appraise_mode = IMA_APPRAISE_ENFORCE;
+
+const char *ima_appraise_mode_name(int mode) {
+    switch (mode) {
+    case IMA_APPRAISE_OFF:
+        return "off";
+    case IMA_APPRAISE_FIX:
+        return "fix";
+    case IMA_APPRAISE_LOG:
+        return "log";
+    case IMA_APPRAISE_ENFORCE:
+        return "enforce";
+    default:
+        break;
+    }
+    return "off";
+}
+
+int ima_appraise_set_mode(const char *name, int len) {
+    static const char off[] = "off";
+    static const char fix[] = "fix";
+    static const char log[] = "log";
+    static const char enforce[] = "enforce";
+
+    if (!name || len <= 0)
+        return -EINVAL;
+
+    if (len == (int)sizeof(off) - 1 && strncmp(name, off, (size_t)len) == 0)
+        ima_appraise_mode = IMA_APPRAISE_OFF;
+    else if (len == (int)sizeof(fix) - 1 && strncmp(name, fix, (size_t)len) == 0)
+        ima_appraise_mode = IMA_APPRAISE_FIX;
+    else if (len == (int)sizeof(log) - 1 && strncmp(name, log, (size_t)len) == 0)
+        ima_appraise_mode = IMA_APPRAISE_LOG;
+    else if (len == (int)sizeof(enforce) - 1 && strncmp(name, enforce, (size_t)len) == 0)
+        ima_appraise_mode = IMA_APPRAISE_ENFORCE;
+    else
+        return -EINVAL;
+
+    return 0;
+}
+
+int ima_appraise_get_mode(void) {
+    return ima_appraise_mode;
+}
+
+/* Hex-encode a file hash for storage in the security.ima xattr (the
+ * format ima.c's ima_appraise reads back: 64 lowercase hex chars). */
+static void ima_appraise_hash_to_hex(const uint8_t *hash, char *hex, int hex_len) {
+    static const char hex_chars[] = "0123456789abcdef";
+    int i;
+    for (i = 0; i < SHA256_DIGEST_SIZE && (i * 2 + 1) < hex_len; i++) {
+        hex[i * 2] = hex_chars[(hash[i] >> 4) & 0x0F];
+        hex[i * 2 + 1] = hex_chars[hash[i] & 0x0F];
+    }
+    hex[hex_len - 1] = '\0';
+}
+
+int ima_appraise_eval(int match, const char *path, const uint8_t *hash) {
+    if (match)
+        return 0; /* integral — allow */
+
+    /* Hash mismatch or missing/invalid xattr. */
+    switch (ima_appraise_mode) {
+    case IMA_APPRAISE_FIX:
+        /* Allow access and repair: rewrite security.ima with the correct
+         * hash so the file is integral on the next appraisal. */
+        kprintf("[IMA-APPRAISE] Fix: %s (rewriting security.ima)\n", path ? path : "?");
+        if (path && hash) {
+            char hex[SHA256_DIGEST_SIZE * 2 + 1];
+            ima_appraise_hash_to_hex(hash, hex, (int)sizeof(hex));
+            (void)vfs_setxattr(path, "security.ima", hex, SHA256_DIGEST_SIZE * 2);
+        }
+        return 0;
+    case IMA_APPRAISE_LOG:
+        /* Allow access but log the failure. */
+        kprintf("[IMA-APPRAISE] LOG: %s failed appraisal (permissive)\n", path ? path : "?");
+        return 0;
+    case IMA_APPRAISE_ENFORCE:
+    default:
+        kprintf("[IMA-APPRAISE] Denied access to %s (appraisal failed)\n", path ? path : "?");
+        return -EACCES;
+    }
+}
 
 /*
  * ima_appraise_file — Verify a file's integrity.
@@ -46,18 +132,6 @@ static int ima_appraise_file(const char *path)
     /* Get the security.ima xattr */
     uint8_t xattr_hash[SHA256_DIGEST_SIZE];
     int ret = vfs_getxattr(path, "security.ima", xattr_hash, sizeof(xattr_hash));
-
-    if (ret < 0) {
-        /* No extended attribute — cannot appraise */
-        kprintf("[IMA-APPRAISE] No security.ima xattr on %s\n", path);
-
-        if (ima_appraise_enforce) {
-            kprintf("[IMA-APPRAISE] Denied access to %s (no hash)\n", path);
-            return 0;
-        }
-        /* In permissive mode, allow without xattr */
-        return 1;
-    }
 
     /* Compute hash of file contents */
     struct vfs_stat st;
@@ -89,48 +163,25 @@ static int ima_appraise_file(const char *path)
         kfree(buf);
     }
 
-    /* Compare hashes */
-    if (memcmp(computed, xattr_hash, SHA256_DIGEST_SIZE) == 0) {
-        /* Hash matches — file is integral */
+    /* Compare hashes; a missing xattr counts as a mismatch so the
+     * policy mode (enforce/log/fix) decides the outcome. */
+    int match = (ret >= 0 && memcmp(computed, xattr_hash, SHA256_DIGEST_SIZE) == 0);
+
+    /* Apply policy mode: eval==0 allows access (return 1), deny otherwise. */
+    if (ima_appraise_eval(match, path, computed) == 0)
         return 1;
-    }
-
-    /* Hash mismatch */
-    kprintf("[IMA-APPRAISE] Hash mismatch on %s\n", path);
-
-    if (ima_appraise_enforce) {
-        kprintf("[IMA-APPRAISE] Denied access to %s (hash mismatch)\n", path);
-        return 0;
-    }
-
     return 0;
 }
 
 /*
- * ima_appraise_set_enforce — Set enforcement mode.
- * @enforce: 1 = deny on mismatch, 0 = warn only.
- */
-static void ima_appraise_set_enforce(int enforce)
-{
-    ima_appraise_enforce = enforce ? 1 : 0;
-}
-
-/*
- * ima_appraise_get_enforce — Get current enforcement mode.
- */
-static int ima_appraise_get_enforce(void)
-{
-    return ima_appraise_enforce;
-}
-
-/*
  * ima_appraise_init — Initialize the IMA appraisal subsystem.
+ * Default policy mode is enforce (deny on mismatch).
  */
 static void ima_appraise_init(void)
 {
-    ima_appraise_enforce = 1;
-    kprintf("[OK] IMA appraisal initialized (%s enforcement)\n",
-            ima_appraise_enforce ? "with" : "without");
+    ima_appraise_mode = IMA_APPRAISE_ENFORCE;
+    kprintf("[OK] IMA appraisal initialized (mode=%s)\n",
+            ima_appraise_mode_name(ima_appraise_mode));
 }
 #include "module.h"
 module_init(ima_appraise_init);

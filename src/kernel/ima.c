@@ -281,7 +281,7 @@ int ima_appraise(const char *path) {
         /* No xattr — file has not been signed/measured. Log as warning. */
         kprintf_level(KERN_WARNING, "[IMA] No security.ima xattr on %s\n", path);
         ima_log_add(path, hash, IMA_FILE_READ, 1, 0);
-        return -EACCES;
+        return ima_appraise_eval(0, path, hash);
     }
 
     /*
@@ -299,14 +299,14 @@ int ima_appraise(const char *path) {
                       "(expected %d hex chars, got %d)\n",
                       path, SHA256_DIGEST_SIZE * 2, ret);
         ima_log_add(path, hash, IMA_FILE_READ, 1, 0);
-        return -EINVAL;
+        return ima_appraise_eval(0, path, hash);
     }
 
     /* Validate the algorithm identifier for future extensibility */
     if (ima_validate_hash_algorithm("sha256") < 0) {
         /* Should never happen — kept as a safety check */
         ima_log_add(path, hash, IMA_FILE_READ, 1, 0);
-        return -EINVAL;
+        return ima_appraise_eval(0, path, hash);
     }
 
     /* Null-terminate the xattr value using the actual bytes read */
@@ -319,7 +319,7 @@ int ima_appraise(const char *path) {
     if (hex_to_hash(stored_hex, stored_hash) < 0) {
         kprintf_level(KERN_WARNING, "[IMA] Invalid security.ima hash on %s\n", path);
         ima_log_add(path, hash, IMA_FILE_READ, 1, 0);
-        return -EACCES;
+        return ima_appraise_eval(0, path, hash);
     }
 
     /* Compare hashes */
@@ -328,7 +328,7 @@ int ima_appraise(const char *path) {
 
     if (!match) {
         kprintf_level(KERN_WARNING, "[IMA] Appraisal FAILED for %s\n", path);
-        return -EACCES;
+        return ima_appraise_eval(match, path, hash);
     }
 
     return 0; /* hash matches */
@@ -427,6 +427,24 @@ static int ima_fmt_write_cb(const char *data, uint32_t size, void *priv) {
     return ima_template_select(data, (int)size);
 }
 
+/* ima_appraise_mode — read/select the appraisal policy (fix/log/enforce). */
+static int ima_appraise_mode_read_cb(char *buf, uint32_t max_size, void *priv) {
+    const char *name;
+    int n;
+
+    (void)priv;
+    name = ima_appraise_mode_name(ima_appraise_get_mode());
+    n = snprintf(buf, (size_t)max_size, "%s\n", name ? name : "enforce");
+    return n;
+}
+
+static int ima_appraise_mode_write_cb(const char *data, uint32_t size, void *priv) {
+    (void)priv;
+    if (!data || size == 0)
+        return -EINVAL;
+    return ima_appraise_set_mode(data, (int)size);
+}
+
 /* ── Boot-time kernel measurement ────────────────────────────────── */
 
 /*
@@ -475,6 +493,10 @@ void __init ima_init(void) {
     /* Create template selection file (defaults to ima-ng) */
     sysfs_create_writable_file("/sys/kernel/security/ima_fmt", "ima-ng\n", NULL, ima_fmt_read_cb,
                                ima_fmt_write_cb);
+
+    /* Create appraisal policy mode file (defaults to enforce) */
+    sysfs_create_writable_file("/sys/kernel/security/ima_appraise_mode", "enforce\n", NULL,
+                               ima_appraise_mode_read_cb, ima_appraise_mode_write_cb);
 
     /* Measure the kernel image at boot */
     ima_measure_kernel();

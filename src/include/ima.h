@@ -61,4 +61,34 @@ void ima_init(void);
  */
 int ima_buf_read(char *buf, int size);
 
+/* ── Appraisal enforcement policy (fix / log / enforce) ──────────── */
+
+/* Appraisal policy modes (D312 item 6). */
+enum ima_appraise_mode {
+    IMA_APPRAISE_OFF = 0,     /* appraisal disabled */
+    IMA_APPRAISE_FIX = 1,     /* allow access + rewrite correct hash */
+    IMA_APPRAISE_LOG = 2,     /* allow access + log failure */
+    IMA_APPRAISE_ENFORCE = 3, /* deny access on failure (default) */
+};
+
+/* Select the appraisal mode by name ("off"/"fix"/"log"/"enforce").
+ * Returns 0 on success, -EINVAL for an unknown name. */
+int ima_appraise_set_mode(const char *name, int len);
+
+/* Return the current appraisal mode. */
+int ima_appraise_get_mode(void);
+
+/* Return a canonical name for an appraisal mode. */
+const char *ima_appraise_mode_name(int mode);
+
+/* Apply the current appraisal mode to a hash-comparison result.
+ * @match: 1 if the computed hash matched the stored one, 0 otherwise.
+ * @path:  path of the appraised file.
+ * @hash:  computed file hash (used by fix mode to rewrite security.ima).
+ *
+ * Returns 0 to allow access, -EACCES to deny.  In log mode failures are
+ * logged but access is granted; in fix mode the corrected hash is written
+ * back to the security.ima xattr. */
+int ima_appraise_eval(int match, const char *path, const uint8_t *hash);
+
 #endif /* IMA_H */
