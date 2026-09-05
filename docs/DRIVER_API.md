@@ -15,12 +15,13 @@ A practical guide for writing device drivers for the Hermes OS kernel (x86-64, C
 7. [USB Driver Binding](#7-usb-driver-binding)
 8. [VirtIO Driver API](#8-virtio-driver-api)
 9. [Character Device (devfs) Driver API](#9-character-device-devfs-driver-api)
-10. [DMA Buffer Allocation](#10-dma-buffer-allocation)
-11. [Timer API](#11-timer-api)
-12. [Locking Requirements](#12-locking-requirements)
-13. [Exporting Symbols](#13-exporting-symbols)
-14. [Makefile Integration](#14-makefile-integration)
-15. [Module Metadata](#15-module-metadata)
+10. [Platform Device Driver API](#10-platform-device-driver-api)
+11. [DMA Buffer Allocation](#11-dma-buffer-allocation)
+12. [Timer API](#12-timer-api)
+13. [Locking Requirements](#13-locking-requirements)
+14. [Exporting Symbols](#14-exporting-symbols)
+15. [Makefile Integration](#15-makefile-integration)
+16. [Module Metadata](#16-module-metadata)
 
 ---
 
@@ -360,7 +361,7 @@ idt_register_handler_named(32 + irq_line, mydrv_irq_handler, "my_driver");
 ### IRQ handler best practices
 
 - **Keep handlers fast.** Do minimal work (read status, clear source, schedule bottom-half if needed).
-- **Hold spinlocks with IRQs disabled** when touching shared state (see Section 12).
+- **Hold spinlocks with IRQs disabled** when touching shared state (see Section 13).
 - **Use `irq_ack()`** at the end to signal End-Of-Interrupt to the PIC/IOAPIC.
 - **Network drivers** should call `net_rx_signal()` after acking to wake the network poll loop.
 
@@ -594,7 +595,65 @@ device_initcall(mydrv_init);
 
 ---
 
-## 10. DMA Buffer Allocation
+## 10. Platform Device Driver API
+
+Platform (system-integration) devices — ACPI-enumerated peripherals
+(fans, thermal, cpufreq), system timers, and other non-PCI/non-USB
+hardware — are handled here without a Linux-style
+`platform_driver_register()`. Instead, each platform driver binds by
+probing the ACPI namespace or fixed hardware directly from a
+`device_initcall`, then exposes its interface through the **devfs**
+and/or **cpufreq** registration APIs. A `sysfs_bus.c` creates the
+`/sys/bus/platform/` `/devices/` + `/drivers/` skeleton for visibility.
+
+**Common platform-driver pattern:**
+
+```c
+#include "acpi.h"
+#include "devfs.h"
+
+static int fan_probe_device(int idx)
+{
+    /* Use ACPI namespace/PNP id (e.g. PNP0C0B) to locate the device. */
+    if (!acpi_device_present(/* pnp_id */, idx))
+        return -ENODEV;
+    /* Register the control interface (devfs node, cpufreq state, ...). */
+    return devfs_register_device("fan", /*priv*/, fan_read, fan_write);
+}
+
+static int my_platform_init(void)
+{
+    int found = 0;
+    for (int i = 0; i < MAX_INSTANCES; i++) {
+        if (fan_probe_device(i) >= 0)
+            found++;
+    }
+    return found ? 0 : -ENODEV;
+}
+device_initcall(my_platform_init);
+```
+
+**Key points:**
+
+- **No bus registration call.** Binding is direct: the driver's initcall
+  walks the ACPI namespace or probes fixed hardware addresses and
+  attaches itself to whatever is found. There is no discover-and-match
+  step between an abstract "platform bus" and the driver.
+- **ACPI binding.** `acpi.c` parses the FADT/MADT/DSDT and drives
+  enumeration. Sub-drivers target specific `_HID`/`_PNP` ids — e.g.
+  `acpi_fan.c` probes `PNP0C0B` fan devices, `acpi_cpufreq.c` reads
+  `_PSS`/`_PDC` and registers P-states via
+  `cpufreq_register_acpi_states()`, `acpi_thermal.c` handles `_TMP`
+  temperature zone methods.
+- **Interface exposure** then goes through a concrete API: a devfs node
+  for control/status, or `cpufreq_register_acpi_states()` for DVFS.
+- **sysfs visibility** is provided by `sysfs_bus.c` which creates
+  `/sys/bus/platform/{devices,drivers}`; drivers/devices are not yet
+  individually bound through it (it is a naming/representation layer).
+
+---
+
+## 11. DMA Buffer Allocation
 
 Use the physical memory manager for DMA-capable buffers. The kernel provides `pmm_alloc_frame()` (single 4 KB page) and `pmm_alloc_frames()` (contiguous multi-page block).
 
@@ -660,7 +719,7 @@ cmd.prp1 = data_phys;
 
 ---
 
-## 11. Timer API
+## 12. Timer API
 
 Use the dynamic timer subsystem for delayed work, polling loops, and periodic tasks.
 
@@ -763,7 +822,7 @@ uint64_t ms_to_ticks(uint64_t ms) {
 
 ---
 
-## 12. Locking Requirements
+## 13. Locking Requirements
 
 Drivers that touch shared state (global data, device registers accessed from multiple CPUs) must use spinlocks. The kernel provides both plain and IRQ-safe variants.
 
@@ -837,7 +896,7 @@ static void e1000_irq_handler(struct interrupt_frame *frame)
 
 ---
 
-## 13. Exporting Symbols
+## 14. Exporting Symbols
 
 Drivers that are compiled as loadable modules or provide an API to other modules can export symbols using `EXPORT_SYMBOL()` and `EXPORT_SYMBOL_GPL()`.
 
@@ -885,7 +944,7 @@ EXPORT_SYMBOL(mpath_select_path);
 
 ---
 
-## 14. Makefile Integration
+## 15. Makefile Integration
 
 The kernel has two build models:
 
@@ -959,7 +1018,7 @@ For built-in use, `module_init(my_driver_init)` already handles registration via
 
 ---
 
-## 15. Module Metadata
+## 16. Module Metadata
 
 Module metadata is embedded in the `.modinfo` section using macros:
 
