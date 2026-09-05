@@ -94,10 +94,27 @@ VERMAGIC_FLAGS += -DCONFIG_SMP
 # -Wformat-security violations exist — zero instances of non-constant format
 # strings without arguments were found across the entire kernel. The check-full
 # target (-Wformat=2) catches any future format-security regressions.
-CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
-         -fstack-protector-strong -fstack-clash-protection -mstack-protector-guard=global -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
-         -Wall -Wextra -Werror -Wstrict-prototypes -Wmisleading-indentation -Wshadow -Wcast-qual -Wundef -Wimplicit-fallthrough=5 -Wtautological-compare -Wduplicated-branches -Wduplicated-cond -Wlogical-op -Wmaybe-uninitialized -Wrestrict -Wstringop-truncation -Warray-bounds=2 -Wno-format -Wno-sign-conversion -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom -mcmodel=large -g \
-         -Wa,--noexecstack -O2 -MMD -MP \
+# ── Centralized compiler flag definitions ────────────────────────────
+# Standard freestanding kernel flags applied to all kernel C translations.
+KERNEL_STD = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
+            -fstack-protector-strong -fstack-clash-protection -mstack-protector-guard=global \
+            -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
+            -mcmodel=large -g -Wa,--noexecstack
+
+# Kernel warning policy: zero-warning (-Werror) plus a broad hardening set.
+# -Wno-format retained because the kernel's size_t is uint64_t (= unsigned long
+# on LP64, so %lx/%llx are equivalent) and -Wno-* unused suppressions match the
+# freestanding style.
+KERNEL_WARN = -Wall -Wextra -Werror -Wstrict-prototypes -Wmisleading-indentation \
+             -Wshadow -Wcast-qual -Wundef -Wimplicit-fallthrough=5 \
+             -Wtautological-compare -Wduplicated-branches -Wduplicated-cond \
+             -Wlogical-op -Wmaybe-uninitialized -Wrestrict -Wstringop-truncation \
+             -Warray-bounds=2 -Wno-format -Wno-sign-conversion -Wno-unused-function \
+             -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable
+
+CFLAGS = $(KERNEL_STD) $(KERNEL_WARN) \
+         -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom \
+         -O2 -MMD -MP \
          -include kernel_pch.h \
          -DKVERSION=\"$(KVERSION)\" \
          -DBUILD_TIME=\"$(shell date -u '+%Y-%m-%d_%H:%M:%S_UTC')\" \
