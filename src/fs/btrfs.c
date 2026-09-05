@@ -2097,14 +2097,14 @@ static int btrfs_readdir(void *priv, const char *path)
 	return 0;
 }
 
-static struct vfs_ops btrfs_ops = {
-	.read          = btrfs_read,
-	.write         = btrfs_write,
-	.stat          = btrfs_stat,
-	.create        = btrfs_create,
-	.unlink        = btrfs_unlink,
-	.readdir       = btrfs_readdir,
-	.readdir_names = btrfs_readdir_names,
+static const struct vfs_ops btrfs_ops = {
+    .read = btrfs_read,
+    .write = btrfs_write,
+    .stat = btrfs_stat,
+    .create = btrfs_create,
+    .unlink = btrfs_unlink,
+    .readdir = btrfs_readdir,
+    .readdir_names = btrfs_readdir_names,
 };
 
 /* ── Probe ─────────────────────────────────────────────────────── */

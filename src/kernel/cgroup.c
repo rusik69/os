@@ -656,7 +656,7 @@ static int cgroup_v2_write(void *priv, const char *path, const void *buf, uint32
     return 0;
 }
 
-static struct vfs_ops cgroup_v2_vfs_ops = {
+static const struct vfs_ops cgroup_v2_vfs_ops = {
     .read = cgroup_v2_read,
     .write = cgroup_v2_write,
 };
@@ -850,7 +850,7 @@ static int cgroup_v1_read(void *priv, const char *path, void *buf, uint32_t max,
     return 0;
 }
 
-static struct vfs_ops cgroup_v1_vfs_ops = {
+static const struct vfs_ops cgroup_v1_vfs_ops = {
     .read = cgroup_v1_read,
     .write = cgroup_v1_write,
 };

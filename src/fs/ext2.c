@@ -3132,7 +3132,7 @@ static int ext2_seek(void *priv, const char *path, uint64_t offset, int whence) 
     }
 }
 
-static struct vfs_ops ext2_ops = {
+static const struct vfs_ops ext2_ops = {
     .read = ext2_read,
     .write = ext2_write,
     .stat = ext2_stat,

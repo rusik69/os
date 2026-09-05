@@ -329,12 +329,12 @@ static int ufs_readdir(void *priv, const char *path)
     return 0;
 }
 
-static struct vfs_ops ufs_ops = {
-    .read    = ufs_read,
-    .write   = ufs_write,
-    .stat    = ufs_stat,
-    .create  = ufs_create,
-    .unlink  = ufs_unlink,
+static const struct vfs_ops ufs_ops = {
+    .read = ufs_read,
+    .write = ufs_write,
+    .stat = ufs_stat,
+    .create = ufs_create,
+    .unlink = ufs_unlink,
     .readdir = ufs_readdir,
 };
 

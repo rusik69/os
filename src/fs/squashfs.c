@@ -667,9 +667,9 @@ static int squashfs_readdir_legacy(void *priv, const char *path)
     return n;
 }
 
-static struct vfs_ops squashfs_ops = {
-    .read    = squashfs_read,
-    .stat    = squashfs_stat,
+static const struct vfs_ops squashfs_ops = {
+    .read = squashfs_read,
+    .stat = squashfs_stat,
     .readdir_names = squashfs_readdir_names,
     .readdir = squashfs_readdir_legacy,
 };

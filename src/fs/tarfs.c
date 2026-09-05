@@ -264,9 +264,9 @@ static int tarfs_readdir_legacy(void *priv, const char *path) {
     return n;
 }
 
-static struct vfs_ops tarfs_ops = {
-    .read    = tarfs_read,
-    .stat    = tarfs_stat,
+static const struct vfs_ops tarfs_ops = {
+    .read = tarfs_read,
+    .stat = tarfs_stat,
     .readdir_names = tarfs_readdir,
     .readdir = tarfs_readdir_legacy,
 };

@@ -193,12 +193,12 @@ static int cramfs_readdir(void *priv, const char *path)
     return 0;
 }
 
-static struct vfs_ops cramfs_ops = {
-    .read    = cramfs_read,
-    .write   = cramfs_write,
-    .stat    = cramfs_stat,
-    .create  = cramfs_create,
-    .unlink  = cramfs_unlink,
+static const struct vfs_ops cramfs_ops = {
+    .read = cramfs_read,
+    .write = cramfs_write,
+    .stat = cramfs_stat,
+    .create = cramfs_create,
+    .unlink = cramfs_unlink,
     .readdir = cramfs_readdir,
 };
 

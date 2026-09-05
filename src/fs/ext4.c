@@ -1004,12 +1004,12 @@ static int ext4_readdir(void *priv, const char *path)
     return 0;
 }
 
-static struct vfs_ops ext4_ops = {
-    .read    = ext4_read,
-    .write   = ext4_write,
-    .stat    = ext4_stat,
-    .create  = ext4_create,
-    .unlink  = ext4_unlink,
+static const struct vfs_ops ext4_ops = {
+    .read = ext4_read,
+    .write = ext4_write,
+    .stat = ext4_stat,
+    .create = ext4_create,
+    .unlink = ext4_unlink,
     .readdir = ext4_readdir,
 };
 

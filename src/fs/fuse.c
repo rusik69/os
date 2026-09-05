@@ -1295,14 +1295,14 @@ static int fuse_unlink(void *priv, const char *path)
     return 0;
 }
 
-static struct vfs_ops fuse_vfs_ops = {
-    .read    = fuse_read,
-    .write   = fuse_write,
-    .stat    = fuse_stat,
+static const struct vfs_ops fuse_vfs_ops = {
+    .read = fuse_read,
+    .write = fuse_write,
+    .stat = fuse_stat,
     .readdir_names = fuse_readdir_names,
     .readdir = fuse_readdir_legacy,
-    .create  = fuse_create,
-    .unlink  = fuse_unlink,
+    .create = fuse_create,
+    .unlink = fuse_unlink,
 };
 
 /* ── Public API ─────────────────────────────────────────────────────── */

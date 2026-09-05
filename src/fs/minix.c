@@ -253,12 +253,12 @@ static int minix_readdir(void *priv, const char *path)
     return 0;
 }
 
-static struct vfs_ops minix_ops = {
-    .read    = minix_read,
-    .write   = minix_write,
-    .stat    = minix_stat,
-    .create  = minix_create,
-    .unlink  = minix_unlink,
+static const struct vfs_ops minix_ops = {
+    .read = minix_read,
+    .write = minix_write,
+    .stat = minix_stat,
+    .create = minix_create,
+    .unlink = minix_unlink,
     .readdir = minix_readdir,
 };
 

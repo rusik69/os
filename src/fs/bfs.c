@@ -180,12 +180,12 @@ static int bfs_readdir(void *priv, const char *path)
     return 0;
 }
 
-static struct vfs_ops bfs_ops = {
-    .read    = bfs_read,
-    .write   = bfs_write,
-    .stat    = bfs_stat,
-    .create  = bfs_create,
-    .unlink  = bfs_unlink,
+static const struct vfs_ops bfs_ops = {
+    .read = bfs_read,
+    .write = bfs_write,
+    .stat = bfs_stat,
+    .create = bfs_create,
+    .unlink = bfs_unlink,
     .readdir = bfs_readdir,
 };
 

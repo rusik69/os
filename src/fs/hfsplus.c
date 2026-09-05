@@ -560,12 +560,12 @@ static int hfsplus_readdir(void *priv, const char *path)
     return 0;
 }
 
-static struct vfs_ops hfsplus_ops = {
-    .read    = hfsplus_read,
-    .write   = hfsplus_write,
-    .stat    = hfsplus_stat,
-    .create  = hfsplus_create,
-    .unlink  = hfsplus_unlink,
+static const struct vfs_ops hfsplus_ops = {
+    .read = hfsplus_read,
+    .write = hfsplus_write,
+    .stat = hfsplus_stat,
+    .create = hfsplus_create,
+    .unlink = hfsplus_unlink,
     .readdir = hfsplus_readdir,
 };
 

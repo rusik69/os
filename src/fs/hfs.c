@@ -424,12 +424,12 @@ static int hfs_readdir(void *priv, const char *path)
     return 0;
 }
 
-static struct vfs_ops hfs_ops = {
-    .read    = hfs_read,
-    .write   = hfs_write,
-    .stat    = hfs_stat,
-    .create  = hfs_create,
-    .unlink  = hfs_unlink,
+static const struct vfs_ops hfs_ops = {
+    .read = hfs_read,
+    .write = hfs_write,
+    .stat = hfs_stat,
+    .create = hfs_create,
+    .unlink = hfs_unlink,
     .readdir = hfs_readdir,
 };
 

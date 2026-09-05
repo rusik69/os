@@ -1420,12 +1420,12 @@ static int cifs_vfs_readdir(void *priv, const char *path)
     return cifs_readdir(mnt->mount_id, path);
 }
 
-static struct vfs_ops cifs_ops = {
-    .read    = cifs_vfs_read,
-    .write   = cifs_vfs_write,
-    .stat    = cifs_vfs_stat,
-    .create  = cifs_vfs_create,
-    .unlink  = cifs_vfs_unlink,
+static const struct vfs_ops cifs_ops = {
+    .read = cifs_vfs_read,
+    .write = cifs_vfs_write,
+    .stat = cifs_vfs_stat,
+    .create = cifs_vfs_create,
+    .unlink = cifs_vfs_unlink,
     .readdir = cifs_vfs_readdir,
 };
 

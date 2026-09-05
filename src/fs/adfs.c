@@ -256,12 +256,12 @@ static int adfs_readdir(void *priv, const char *path)
     return 0;
 }
 
-static struct vfs_ops adfs_ops = {
-    .read    = adfs_read,
-    .write   = adfs_write,
-    .stat    = adfs_stat,
-    .create  = adfs_create,
-    .unlink  = adfs_unlink,
+static const struct vfs_ops adfs_ops = {
+    .read = adfs_read,
+    .write = adfs_write,
+    .stat = adfs_stat,
+    .create = adfs_create,
+    .unlink = adfs_unlink,
     .readdir = adfs_readdir,
 };
 

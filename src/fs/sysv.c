@@ -179,12 +179,12 @@ static int sysv_readdir(void *priv, const char *path)
     return 0;
 }
 
-static struct vfs_ops sysv_ops = {
-    .read    = sysv_read,
-    .write   = sysv_write,
-    .stat    = sysv_stat,
-    .create  = sysv_create,
-    .unlink  = sysv_unlink,
+static const struct vfs_ops sysv_ops = {
+    .read = sysv_read,
+    .write = sysv_write,
+    .stat = sysv_stat,
+    .create = sysv_create,
+    .unlink = sysv_unlink,
     .readdir = sysv_readdir,
 };
 

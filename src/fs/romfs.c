@@ -204,9 +204,9 @@ static int romfs_readdir_legacy(void *priv, const char *path) {
     return n;
 }
 
-static struct vfs_ops romfs_ops = {
-    .read    = romfs_read,
-    .stat    = romfs_stat,
+static const struct vfs_ops romfs_ops = {
+    .read = romfs_read,
+    .stat = romfs_stat,
     .readdir_names = romfs_readdir_names,
     .readdir = romfs_readdir_legacy,
 };

@@ -567,12 +567,12 @@ static int ntfs_readdir(void *priv, const char *path)
     return 0;
 }
 
-static struct vfs_ops ntfs_ops = {
-    .read    = ntfs_read,
-    .write   = ntfs_write,
-    .stat    = ntfs_stat,
-    .create  = ntfs_create,
-    .unlink  = ntfs_unlink,
+static const struct vfs_ops ntfs_ops = {
+    .read = ntfs_read,
+    .write = ntfs_write,
+    .stat = ntfs_stat,
+    .create = ntfs_create,
+    .unlink = ntfs_unlink,
     .readdir = ntfs_readdir,
 };
 

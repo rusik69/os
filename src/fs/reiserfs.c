@@ -582,12 +582,12 @@ static int reiserfs_readdir(void *priv, const char *path)
     return reiserfs_readdir_dir(rp, ino);
 }
 
-static struct vfs_ops reiserfs_ops = {
-    .read    = reiserfs_read,
-    .write   = reiserfs_write,
-    .stat    = reiserfs_stat,
-    .create  = reiserfs_create,
-    .unlink  = reiserfs_unlink,
+static const struct vfs_ops reiserfs_ops = {
+    .read = reiserfs_read,
+    .write = reiserfs_write,
+    .stat = reiserfs_stat,
+    .create = reiserfs_create,
+    .unlink = reiserfs_unlink,
     .readdir = reiserfs_readdir,
 };
 

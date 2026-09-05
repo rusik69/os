@@ -2609,7 +2609,7 @@ static int exfat_readdir(void *priv, const char *path) {
     return 0;
 }
 
-static struct vfs_ops exfat_ops = {
+static const struct vfs_ops exfat_ops = {
     .read = exfat_read,
     .write = exfat_write,
     .stat = exfat_stat,
