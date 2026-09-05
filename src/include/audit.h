@@ -63,6 +63,10 @@ int  audit_read_log(char *buf, int max);
  * Returns 0 on success, -1 on error. */
 int  audit_netlink_send(int event_type, const char *payload, int payload_len);
 
+/* Persist an audit event to the on-disk audit log (/audit.log).
+ * Best-effort append; returns the vfs_append result. */
+int audit_log_to_disk(const char *payload, int payload_len);
+
 /* ── Structured audit events (S105) ─────────────────────────────── */
 
 /* Log a PATH record with file metadata */

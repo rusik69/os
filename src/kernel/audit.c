@@ -24,8 +24,15 @@
 #include "string.h"
 #include "sysctl.h"
 #include "timer.h"
+#include "vfs.h"
 
 int audit_enabled = 0;
+
+/* Disk log: when enabled, every formatted audit event is appended to
+ * AUDIT_DISKLOG_PATH on the FAT32 disk via vfs_append (creates the file
+ * on first write).  Off by default; toggled via sysctl "audit.disklog". */
+#define AUDIT_DISKLOG_PATH "/audit.log"
+static int audit_disklog_enabled = 0;
 
 /* ── Ring buffer (secondary/fallback) ────────────────────────────── */
 static char audit_buf[AUDIT_BUF_SIZE];
@@ -101,6 +108,17 @@ static int audit_format_denial(char *buf, int buf_size,
         pid,
         subj ? subj : "kernel",
         obj ? obj : "unknown");
+}
+
+/* Persist an audit event to the disk log (FAT32, AUDIT_DISKLOG_PATH).
+ * Best-effort append; returns the vfs_append result (0 ok, negative error
+ * — the caller treats failures as non-fatal).  Creates the file on first
+ * write. */
+int audit_log_to_disk(const char *payload, int payload_len) {
+    if (!payload || payload_len <= 0)
+        return -EINVAL;
+
+    return vfs_append(AUDIT_DISKLOG_PATH, payload, (uint32_t)payload_len);
 }
 
 /* Internal helper: build and send a netlink audit message.
@@ -246,9 +264,34 @@ static int sysctl_write_audit_rule(const char *buf, int len) {
     return -EINVAL;
 }
 
+/* ── Sysctl: audit.disklog ───────────────────────────────────────── */
+static int sysctl_read_audit_disklog(char *buf, int max) {
+    if (max < 2)
+        return 0;
+    buf[0] = audit_disklog_enabled ? '1' : '0';
+    buf[1] = '\0';
+    return 1;
+}
+
+static int sysctl_write_audit_disklog(const char *buf, int len) {
+    /* "1" enables disk persistence, "0" disables it.  Also accepts
+     * "on"/"off".  Unknown input leaves the current setting unchanged. */
+    if (len >= 1 && (buf[0] == '1' || (len >= 2 && buf[0] == 'o' && buf[1] == 'n'))) {
+        audit_disklog_enabled = 1;
+        return 0;
+    }
+    if (len >= 1 &&
+        (buf[0] == '0' || (len >= 3 && buf[0] == 'o' && buf[1] == 'f' && buf[2] == 'f'))) {
+        audit_disklog_enabled = 0;
+        return 0;
+    }
+    return -EINVAL;
+}
+
 /* Register the audit-rule sysctl interface. */
 void audit_sysctl_register(void) {
     sysctl_register("audit.rule", sysctl_read_audit_rule, sysctl_write_audit_rule);
+    sysctl_register("audit.disklog", sysctl_read_audit_disklog, sysctl_write_audit_disklog);
 }
 
 void __init audit_init(void) {
@@ -304,7 +347,12 @@ static void __printf(2, 3) audit_log_formatted(int event_type, const char *fmt, 
     }
     if (audit_pos >= AUDIT_BUF_SIZE) audit_pos = 0;
 
-    /* 2) Send via netlink multicast */
+    /* 2) Persist to disk (optional).  Best-effort: failures do not
+     * disrupt live delivery via netlink/ring. */
+    if (audit_disklog_enabled)
+        audit_log_to_disk(tmp, n);
+
+    /* 3) Send via netlink multicast */
     audit_sequence++;
     audit_netlink_send(event_type, tmp, n);
 }
