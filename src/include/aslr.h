@@ -22,13 +22,13 @@
 extern int aslr_disabled;
 
 /* Maximum random shift for user stack top (in pages) */
-#define ASLR_STACK_RANDOM_PAGES  16   /* up to 64KB random offset */
+#define ASLR_STACK_RANDOM_PAGES 16 /* up to 64KB random offset */
 
 /* Maximum random shift for mmap base (in pages) */
-#define ASLR_MMAP_RANDOM_PAGES   256  /* up to 1MB random offset */
+#define ASLR_MMAP_RANDOM_PAGES 256 /* up to 1MB random offset */
 
 /* Maximum random shift for brk/data segment (in pages) */
-#define ASLR_BRK_RANDOM_PAGES    32
+#define ASLR_BRK_RANDOM_PAGES 32
 
 /* Maximum random shift for kernel module base (in pages).
  * Modules are loaded in a 64MB region (MODULES_VADDR..MODULES_VADDR+64MB).
@@ -84,5 +84,10 @@ void aslr_add_entropy(uint64_t entropy);
 /* Return a random number of pages (0..max_pages) as a base offset.
  * Returns 0 if ASLR is globally disabled. */
 uint64_t aslr_get_random_offset(uint64_t max_pages);
+
+/* Exec Shield (D316 task 1): expanded random byte offset for the mmap
+ * base — page-level ASLR offset plus intra-page byte jitter. Located in
+ * src/kernel/execshield.c. */
+uint64_t execshield_mmap_base_offset(void);
 
 #endif

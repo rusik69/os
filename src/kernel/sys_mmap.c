@@ -407,7 +407,7 @@ int64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t flags, 
             return (uint64_t)-EINVAL;
 
         if (addr == 0) {
-            uint64_t mmap_base = 0x0000000001000000ULL + (aslr_mmap_offset() * PAGE_SIZE);
+            uint64_t mmap_base = 0x0000000001000000ULL + execshield_mmap_base_offset();
             addr = (mmap_base + HUGETLB_PAGE_SIZE - 1) & ~(HUGETLB_PAGE_SIZE - 1ULL);
             while (addr + length < USER_VADDR_MAX) {
                 int free = 1;
@@ -461,7 +461,7 @@ int64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t flags, 
 
     /* If addr is 0, find a free region with ASLR */
     if (addr == 0) {
-        uint64_t mmap_base = 0x0000000001000000ULL + (aslr_mmap_offset() * PAGE_SIZE);
+        uint64_t mmap_base = 0x0000000001000000ULL + execshield_mmap_base_offset();
         if (length >= HUGE_PAGE_SIZE) {
             addr = (mmap_base + HUGE_PAGE_SIZE - 1) & ~(HUGE_PAGE_SIZE - 1ULL);
             while (addr + length < USER_VADDR_MAX) {

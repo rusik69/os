@@ -7,18 +7,20 @@
  * - READ_IMPLIES_EXEC personality handling
  * - PT_GNU_STACK processing for ELF binaries
  */
-#include "types.h"
-#include "printf.h"
-#include "string.h"
-#include "process.h"
-#include "vmm.h"
-#include "elf.h"
+#define KERNEL_INTERNAL /* for prng_rand64 (syscall.h) */
 #include "aslr.h"
+#include "elf.h"
+#include "printf.h"
+#include "process.h"
+#include "string.h"
+#include "syscall.h" /* prng_rand64 */
+#include "types.h"
+#include "vmm.h"
 
 /* ELF segment flags (not defined in elf.h) */
-#define PF_X        1
-#define PF_W        2
-#define PF_R        4
+#define PF_X 1
+#define PF_W 2
+#define PF_R 4
 
 /* PT_GNU_STACK — program header type for stack executability */
 #define PT_GNU_STACK 0x6474e551
@@ -34,8 +36,7 @@
  *
  * Return: 0 if the combination is allowed, -EACCES if W+X is detected
  */
-static int execshield_check_wx(uint64_t prot_flags)
-{
+static int execshield_check_wx(uint64_t prot_flags) {
     /* Extract writable and executable bits from protection flags */
     int writable = (prot_flags & PROT_WRITE) ? 1 : 0;
     int executable = (prot_flags & PROT_EXEC) ? 1 : 0;
@@ -62,9 +63,7 @@ static int execshield_check_wx(uint64_t prot_flags)
  * Return: 1 if READ_IMPLIES_EXEC should be set, 0 otherwise
  */
 static int execshield_read_implies_exec(const struct elf64_header *ehdr,
-                                  const struct elf64_phdr *phdrs,
-                                  int phdr_count)
-{
+                                        const struct elf64_phdr *phdrs, int phdr_count) {
     /* If no PT_GNU_STACK, legacy behavior implies exec on read */
     int gnu_stack_found = 0;
 
@@ -87,8 +86,7 @@ static int execshield_read_implies_exec(const struct elf64_header *ehdr,
     return 0;
 }
 
-static void execshield_apply_personality(struct process *proc, int read_implies_exec)
-{
+static void execshield_apply_personality(struct process *proc, int read_implies_exec) {
     if (!proc)
         return;
 
@@ -120,8 +118,7 @@ static void execshield_apply_personality(struct process *proc, int read_implies_
  * Return: Random page offset (0..ASLR_PIE_RANDOM_PAGES) for PIE,
  *         0 for non-PIE or if ASLR is globally disabled.
  */
-uint64_t execshield_aslr_base_offset(const struct elf64_header *ehdr)
-{
+uint64_t execshield_aslr_base_offset(const struct elf64_header *ehdr) {
     if (!ehdr || aslr_disabled)
         return 0;
 
@@ -132,6 +129,33 @@ uint64_t execshield_aslr_base_offset(const struct elf64_header *ehdr)
 
     /* Non-PIE (ET_EXEC): load at fixed linker-specified address */
     return 0;
+}
+
+/* ── mmap_base random entropy expansion (D316 task 1) ────────────────── */
+
+/**
+ * execshield_mmap_base_offset - Expanded random byte offset for mmap base
+ *
+ * The plain page-granular ASLR offset (aslr_mmap_offset(), up to
+ * ASLR_MMAP_RANDOM_PAGES) provides only log2(256) ≈ 8 bits of entropy
+ * and always lands on a page boundary.  Exec Shield expands this by
+ * combining the page-level random offset with a random intra-page byte
+ * offset, yielding (ASLR_MMAP_RANDOM_PAGES+1) * 4096 distinct bases —
+ * ~19 bits of entropy for anonymous/file mappings.  The intra-page
+ * jitter is masked to keep the base page-aligned when the caller needs
+ * it (huge mappings realign anyway).
+ *
+ * Context: Any context; acquires the PRNG lock internally.
+ * Return: Random byte offset (0 .. ASLR_MMAP_RANDOM_PAGES*PAGE_SIZE)
+ *         0 if ASLR is globally disabled.
+ */
+uint64_t execshield_mmap_base_offset(void) {
+    if (aslr_disabled)
+        return 0;
+
+    uint64_t base_pages = aslr_mmap_offset();                  /* 0..256 pages */
+    uint64_t page_jitter = prng_rand64() & (PAGE_SIZE - 1ULL); /* byte offset */
+    return base_pages * PAGE_SIZE + page_jitter;
 }
 
 /* ── mprotect enforcement ─────────────────────────────────── */
@@ -151,8 +175,7 @@ uint64_t execshield_aslr_base_offset(const struct elf64_header *ehdr)
  *         be violated
  */
 static int execshield_mprotect_check(uint64_t addr, uint64_t len, uint64_t prot,
-                               const struct process *proc)
-{
+                                     const struct process *proc) {
     (void)addr;
     (void)len;
 
@@ -162,9 +185,8 @@ static int execshield_mprotect_check(uint64_t addr, uint64_t len, uint64_t prot,
 
     /* Check if W^X would be violated */
     if (execshield_check_wx(prot) < 0) {
-        kprintf("[EXECSHIELD] W^X denied: pid=%u addr=0x%llx len=%llu prot=0x%llx\n",
-                proc->pid, (unsigned long long)addr,
-                (unsigned long long)len, (unsigned long long)prot);
+        kprintf("[EXECSHIELD] W^X denied: pid=%u addr=0x%llx len=%llu prot=0x%llx\n", proc->pid,
+                (unsigned long long)addr, (unsigned long long)len, (unsigned long long)prot);
         return -EINVAL;
     }
 
@@ -186,28 +208,24 @@ static int execshield_mprotect_check(uint64_t addr, uint64_t len, uint64_t prot,
  * READ_IMPLIES_EXEC personality handling, and PT_GNU_STACK processing
  * are active.
  */
-static void execshield_init(void)
-{
+static void execshield_init(void) {
     kprintf("[OK] Exec Shield (W^X enforcement + READ_IMPLIES_EXEC + PT_GNU_STACK)\n");
 }
 
 /* ── Stub: execshield_enable ─────────────────────────────── */
-static int execshield_enable(void *task)
-{
+static int execshield_enable(void *task) {
     (void)task;
     kprintf("[execshield] execshield_enable: not yet implemented\n");
     return 0;
 }
 /* ── Stub: execshield_disable ─────────────────────────────── */
-static int execshield_disable(void *task)
-{
+static int execshield_disable(void *task) {
     (void)task;
     kprintf("[execshield] execshield_disable: not yet implemented\n");
     return 0;
 }
 /* ── Stub: execshield_check ─────────────────────────────── */
-static int execshield_check(uint64_t addr, size_t size, int prot)
-{
+static int execshield_check(uint64_t addr, size_t size, int prot) {
     (void)addr;
     (void)size;
     (void)prot;
