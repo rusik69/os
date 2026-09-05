@@ -1924,12 +1924,12 @@ clean-test:
 
 # ── Format: run clang-format on all .c and .h files ───────────────────
 
-FORMAT_FILES := $(shell find src/ -type f \( -name '*.c' -o -name '*.h' \) | sort)
+FORMAT_FILES := $(shell find src/ userspace/ -type f \( -name '*.c' -o -name '*.h' \) 2>/dev/null | sort)
 
 format:
 	@if command -v clang-format >/dev/null 2>&1; then \
 		clang-format -i $(FORMAT_FILES); \
-		echo "Formatted $(words $(FORMAT_FILES)) files in src/"; \
+		echo "Formatted $(words $(FORMAT_FILES)) files in src/ + userspace/"; \
 	else \
 		echo "clang-format not found — install with: sudo apt install clang-format"; \
 	fi
