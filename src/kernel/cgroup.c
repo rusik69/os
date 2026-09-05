@@ -175,10 +175,10 @@ static int cgroup_v2_read(void *priv, const char *path, void *buf, uint32_t max,
             strlcpy(ctrl, "-", sizeof(ctrl));
 
         {
-            int n =
-                snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
-                         "  cgroup[%d]  parent=%d  pids=%lu  controllers=%s\n", i,
-                         g_cgroups[i].parent_id, (unsigned long)g_cgroups[i].pids.current, ctrl);
+            int n = snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
+                             "  cgroup[%d]  parent=%d  pids=%lu/%lu  controllers=%s\n", i,
+                             g_cgroups[i].parent_id, (unsigned long)g_cgroups[i].pids.current,
+                             (unsigned long)g_cgroups[i].pids.max, ctrl);
             if (n > 0 && pos + n < (int)sizeof(tmp))
                 pos += n;
         }
