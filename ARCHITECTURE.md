@@ -3357,3 +3357,94 @@ All syscalls follow the standard x86-64 syscall ABI:
 | `src/kernel/syscall_linux.c` | Linux compat dispatch (__NR_* numbers) |
 | `src/include/syscall.h` | All SYS_* and __NR_* constant definitions |
 | `src/kernel/seccomp.c` | Seccomp-BPF filter evaluation on syscall entry |
+
+## Power Management
+
+**Files:** `src/power/` (suspend.c, suspend_s2idle.c, cpufreq.c, cpuidle.c, cpuidle_teo.c, cpuidle_ladder.c, devfreq.c, pm_qos.c, rapl.c, energy_model.c, wakeup.c)
+
+Power management is split into three cooperating domains: **idle** (C-states), **frequency/voltage scaling** (cpufreq), and **system sleep** (suspend/resume). They share a common policy: enter the shallowest state that still meets the scheduler's latency and timer deadlines, escalating to deeper states only when the predicted idle/resume gap is long enough.
+
+### Idle Power (cpuidle)
+
+```text
+scheduler finds no runnable task
+        │
+        ▼
+cpuidle_idle() ── selects a C-state via governor
+        │            (Predictive "menu"/TEO/ladder governor)
+        ▼
+┌───────────────────────────────────────────────────┐
+│ C-state ladder                                     │
+│   POLL     → busy loop (sub-breakeven idles)       │
+│   C1 / HLT → halt instruction                     │
+│   C1E/MWAIT→ monitor + mwait (if CPUID.05)        │
+│   C2       → deeper (APIC timer as wake source)   │
+│   C3       → deepest (cache flushing, bus off)     │
+└───────────────────────────────────────────────────┘
+        │
+        ▼
+interrupt / timer → wake → resume to scheduler
+```
+
+- CPUID discovery: leaf 5 for MWAIT C-states, leaf 1 for HLT.
+  ACPI `_CST`/`LPIT` platform states are also supported.
+- Default governor is the **menu** (predictive) governor using an
+  exponential moving average of past idle durations plus
+  next-timer-event prediction; `cpuidle_teo.c` (timer events only)
+  and `cpuidle_ladder.c` are alternates.
+- `POLL` is chosen for idles shorter than the C1 break-even to avoid
+  the HLT PMU/timer wakeup overhead.
+
+### Frequency Scaling (cpufreq)
+
+OS-managed DVFS with pluggable governors and sysfs interface under
+`/sys/devices/system/cpu/cpu*/cpufreq/`:
+
+| Governor | File | Policy |
+|----------|------|--------|
+| schedutil | `cpufreq_schedutil.c` | Uses PELT utilization from the scheduler to pick frequency (highest priority) |
+| ondemand | `cpufreq_ondemand.c` | Sample-based load tracking, up-threshold tuning |
+| conservative | `cpufreq_conservative.c` | Slower ramp-up, freq gracefully down |
+| userspace | `cpufreq_userspace.c` | Explicit `scaling_setspeed` from userspace |
+
+`cpufreq_register_acpi_states()` exposes the platform's P-states
+(states list from ACPI/CPPC). The active governor is queried via
+`cpufreq_schedutil_is_active()`, `cpufreq_ondemand_is_active()`, etc.
+
+`devfreq.c` extends DVFS to non-CPU devices; `energy_model.c` provides
+per-device energy cost tables; `rapl.c` reads hardware Running Average
+Power Limit energy counters.
+
+### System Sleep (suspend / resume)
+
+```text
+pm_suspend_cycle(state)                 suspend_state_t: S3, S0ix, Hibernate
+        │
+        ▼
+suspend_prepare(state)
+        │  suspend_devices()  →  each driver's suspend callback
+        ▼
+suspend_enter(state)
+        │  │
+        │  ├─ S3:  save CPU state → enter ACPI S3 → resume
+        │  ├─ S0ix: suspend_s2idle_enter() (idle-loop based, freeze threads)
+        │  └─ Hibernate: suspend_hibernate() → image/copy to disk → power off
+        │
+        ▼  (wakeup event)
+suspend_wakeup()
+        │
+        ▼
+resume_devices() → restore CPU/device state → return from suspend_enter()
+        │
+        ▼
+pm_suspend_end()  →  back to normal operation
+```
+
+- `pm_suspend_begin/end()` bracket a suspend attempt; `pm_suspend_in_progress()`
+  and `pm_suspend_get_state()` let other subsystems check sleep state.
+- Suspendable drivers opt in via `suspend_device_register(name)`.
+- ACPI S3 (suspend to RAM), S0ix (modern standby), and hibernate are the
+  supported states; `suspend_s0ix_supported()` reports S0ix availability
+  and `suspend_s0ix_stats()` exposes S0ix entry accounting.
+- `pm_qos.c` provides latency/dev-latency quality-of-service constraints
+  that governors respect when deciding how deep to sleep or scale.
