@@ -17,12 +17,13 @@ A practical guide for writing device drivers for the Hermes OS kernel (x86-64, C
 9. [Character Device (devfs) Driver API](#9-character-device-devfs-driver-api)
 10. [Platform Device Driver API](#10-platform-device-driver-api)
 11. [I2C / SPI Driver API](#11-i2c--spi-driver-api)
-12. [DMA Buffer Allocation](#12-dma-buffer-allocation)
-13. [Timer API](#13-timer-api)
-14. [Locking Requirements](#14-locking-requirements)
-15. [Exporting Symbols](#15-exporting-symbols)
-16. [Makefile Integration](#16-makefile-integration)
-17. [Module Metadata](#17-module-metadata)
+12. [GPIO Driver API](#12-gpio-driver-api)
+13. [DMA Buffer Allocation](#13-dma-buffer-allocation)
+14. [Timer API](#14-timer-api)
+15. [Locking Requirements](#15-locking-requirements)
+16. [Exporting Symbols](#16-exporting-symbols)
+17. [Makefile Integration](#17-makefile-integration)
+18. [Module Metadata](#18-module-metadata)
 
 ---
 
@@ -362,7 +363,7 @@ idt_register_handler_named(32 + irq_line, mydrv_irq_handler, "my_driver");
 ### IRQ handler best practices
 
 - **Keep handlers fast.** Do minimal work (read status, clear source, schedule bottom-half if needed).
-- **Hold spinlocks with IRQs disabled** when touching shared state (see Section 14).
+- **Hold spinlocks with IRQs disabled** when touching shared state (see Section 15).
 - **Use `irq_ack()`** at the end to signal End-Of-Interrupt to the PIC/IOAPIC.
 - **Network drivers** should call `net_rx_signal()` after acking to wake the network poll loop.
 
@@ -726,7 +727,74 @@ Key calls: `spi_master_register()/unregister()`,
 
 ---
 
-## 12. DMA Buffer Allocation
+## 12. GPIO Driver API
+
+GPIO is provided by `gpiolib` (`src/kernel/gpiolib.c`,
+`src/include/gpiolib.h`): a gpiochip-based driver model where a
+hardware GPIO controller registers a `struct gpio_chip` (label, base,
+line count, ops), and drivers/consumers use the global line number API.
+
+```c
+#include "gpiolib.h"
+
+static int ctl_direction_input(struct gpio_chip *c, unsigned int off) { /* */ return 0; }
+static int ctl_direction_output(struct gpio_chip *c, unsigned int off, int val) { /* */ return 0; }
+static int ctl_get(struct gpio_chip *c, unsigned int off) { /* */ return 0; }
+static void ctl_set(struct gpio_chip *c, unsigned int off, int val) { /* */ }
+
+static int ctl_gpio_init(void)
+{
+    static struct gpio_chip_ops ops = {
+        .direction_input  = ctl_direction_input,
+        .direction_output = ctl_direction_output,
+        .get              = ctl_get,
+        .set              = ctl_set,
+    };
+    struct gpio_chip chip = {
+        .label = "myctl",
+        .ops   = &ops,
+        .base  = 0,
+        .ngpio = 8,
+        .valid_mask = 0xFF,
+    };
+    /* Register the controller with gpiolib; becomes global lines base..base+7. */
+    return gpiochip_add(&chip);
+}
+device_initcall(ctl_gpio_init);
+```
+
+**Consumer API (global line number):**
+
+```c
+gpio_request(gpio, "led0");                 /* reserve the line */
+gpio_direction_output(gpio, 1);             /* drive high */
+gpio_set_value(gpio, 0);                    /* or toggle */
+int v = gpio_get_value(gpio);               /* read input */
+gpio_direction_input(gpio);
+gpio_request_irq(gpio, my_isr, "button0", GPIO_IRQ_TYPE_EDGE_BOTH); /* IRQ on a line */
+gpio_free_irq(gpio);
+gpio_to_irq(gpio);                          /* line → IRQ vector */
+gpio_free(gpio);                            /* release */
+```
+
+**Key points:**
+
+- **Driver side:** fill `struct gpio_chip` (`label`, `ops`, `base`,
+  `ngpio`, `valid_mask`) and call `gpiochip_add(&chip)`. The ops
+  `request/free/direction_input/direction_output/get/set` are required;
+  the `irq_*` ops are optional (NULL if the chip has no IRQ support).
+- **Consumer side:** request lines by *absolute* number
+  (`chip.base + offset`), pass a label, set direction, read/write.
+- **Interrupts:** `gpio_request_irq()` registers a per-line handler with
+  `GPIO_IRQ_FLAG_*`; `gpio_irq_set_type()` and `gpio_set_irq_mode()`
+  configure trigger mode. `gpiochip_irq_demux()` dispatches a pending
+  chip IRQ to the registered per-line handlers.
+- Unsupported operations return an error; calling an IRQ op on a chip
+  without IRQ ops is rejected.
+
+---
+
+## 13. DMA Buffer Allocation
 
 Use the physical memory manager for DMA-capable buffers. The kernel provides `pmm_alloc_frame()` (single 4 KB page) and `pmm_alloc_frames()` (contiguous multi-page block).
 
@@ -792,7 +860,7 @@ cmd.prp1 = data_phys;
 
 ---
 
-## 13. Timer API
+## 14. Timer API
 
 Use the dynamic timer subsystem for delayed work, polling loops, and periodic tasks.
 
@@ -895,7 +963,7 @@ uint64_t ms_to_ticks(uint64_t ms) {
 
 ---
 
-## 14. Locking Requirements
+## 15. Locking Requirements
 
 Drivers that touch shared state (global data, device registers accessed from multiple CPUs) must use spinlocks. The kernel provides both plain and IRQ-safe variants.
 
@@ -969,7 +1037,7 @@ static void e1000_irq_handler(struct interrupt_frame *frame)
 
 ---
 
-## 15. Exporting Symbols
+## 16. Exporting Symbols
 
 Drivers that are compiled as loadable modules or provide an API to other modules can export symbols using `EXPORT_SYMBOL()` and `EXPORT_SYMBOL_GPL()`.
 
@@ -1017,7 +1085,7 @@ EXPORT_SYMBOL(mpath_select_path);
 
 ---
 
-## 16. Makefile Integration
+## 17. Makefile Integration
 
 The kernel has two build models:
 
@@ -1091,7 +1159,7 @@ For built-in use, `module_init(my_driver_init)` already handles registration via
 
 ---
 
-## 17. Module Metadata
+## 18. Module Metadata
 
 Module metadata is embedded in the `.modinfo` section using macros:
 
