@@ -127,6 +127,13 @@ static struct socket socket_table[SOCK_MAX];
  */
 static spinlock_t socket_lock;
 
+/**
+ * socket_init - Initialize the socket subsystem
+ *
+ * Zeroes the socket table, initialises the global socket lock, and registers each address family
+ * (AF_UNIX, AF_PACKET, AF_NETLINK, AF_CAN) by calling its init hook. Called once during kernel
+ * bring-up.
+ */
 void socket_init(void) {
     memset(socket_table, 0, sizeof(socket_table));
     spinlock_init(&socket_lock);
@@ -137,6 +144,13 @@ void socket_init(void) {
 }
 
 /* Convert slot to fd number (fd = slot + 100 to avoid conflict with normal fds) */
+/**
+ * sock_fd_from_slot - Convert a socket table slot index to a file descriptor
+ * @slot: Index into the socket table
+ *
+ * Sockets are exposed to userspace via fd numbers offset by +100 so they never collide with
+ * ordinary file descriptors.
+ */
 int sock_fd_from_slot(int slot) {
     return slot + 100;
 }
@@ -161,11 +175,24 @@ struct socket *sock_get(int fd) {
 }
 
 /* Release a socket obtained from sock_get. */
+/**
+ * sock_put - Release a socket acquired via sock_get
+ * @s: Socket previously returned by sock_get
+ *
+ * Releases the per-socket spinlock taken by sock_get so a concurrent sock_free or operation may
+ * proceed.
+ */
 void sock_put(struct socket *s) {
     spinlock_release(&s->lock);
 }
 
 /* Allocate a socket slot */
+/**
+ * sock_alloc - Allocate a free socket table slot
+ *
+ * Finds the first unused slot under the global socket_lock, initialises its fields to a
+ * freshly-created socket, and returns the slot index. Returns -ENOMEM if the table is full.
+ */
 int sock_alloc(void) {
     spinlock_acquire(&socket_lock);
     for (int i = 0; i < SOCK_MAX; i++) {
@@ -190,6 +217,14 @@ int sock_alloc(void) {
  * Under socket_lock (serialises with sock_alloc) and the per-socket
  * lock (serialises with sock_get / sock_put), marks the slot as free
  * and tears down all protocol resources.
+ */
+/**
+ * sock_free - Free a socket and tear down all protocol resources
+ * @fd: Socket file descriptor to release
+ *
+ * Under the global socket_lock and the per-socket lock, marks the slot as free and destroys any
+ * AF_UNIX endpoint, AF_PACKET, AF_NETLINK, AF_CAN socket, TCP connection or UDP listener associated
+ * with it.
  */
 void sock_free(int fd) {
     int slot = fd - 100;
@@ -250,6 +285,16 @@ void sock_free(int fd) {
 
 /* ── Socket syscall implementations ──────────────────────────── */
 
+/**
+ * sys_socket_impl - Create a new socket
+ * @domain: Address family (AF_INET, AF_UNIX, AF_PACKET, ...)
+ * @type: Socket type (SOCK_STREAM, SOCK_DGRAM, SOCK_RAW, ...)
+ * @protocol: Protocol (IPPROTO_TCP, IPPROTO_UDP, or 0)
+ *
+ * Implements the socket(2) syscall. Consults the LSM socket_create hook, attempts on-demand
+ * autoloading of protocol modules for unsupported families, then allocates a socket slot and
+ * returns its fd.
+ */
 int sys_socket_impl(int domain, int type, int protocol) {
     /* LSM socket_create hook: security modules may deny creation of
      * particular socket families/types/protocols up front. */
@@ -365,6 +410,16 @@ int sys_socket_impl(int domain, int type, int protocol) {
     return sock_fd_from_slot(slot);
 }
 
+/**
+ * sys_bind_impl - Bind a socket to a local address
+ * @sockfd: Socket file descriptor
+ * @addr: Local sockaddr_in to bind
+ * @addrlen: Length of @addr
+ *
+ * Implements the bind(2) syscall. Records the local IP and port on the socket; for stream/TCP
+ * sockets it retries port allocation on EADDRINUSE when SO_REUSEADDR is set, and for UDP it
+ * registers a listener.
+ */
 int sys_bind_impl(int sockfd, const struct sockaddr_in *addr, int addrlen) {
     struct socket *s = sock_get(sockfd);
     if (!s)
@@ -477,6 +532,14 @@ out:
     return ret;
 }
 
+/**
+ * sys_listen_impl - Mark a socket as listening for connections
+ * @sockfd: Socket file descriptor
+ * @backlog: Maximum length of the pending-connections queue
+ *
+ * Implements the listen(2) syscall. Transitions the socket to the listening state and starts
+ * accepting inbound connections for the bound port.
+ */
 int sys_listen_impl(int sockfd, int backlog) {
     struct socket *s = sock_get(sockfd);
     if (!s)
@@ -516,6 +579,15 @@ int sys_listen_impl(int sockfd, int backlog) {
     return 0;
 }
 
+/**
+ * sys_accept_impl - Accept an incoming connection on a listening socket
+ * @sockfd: Listening socket file descriptor
+ * @addr: Optional caller buffer to store the peer address
+ * @addrlen: In/out length of @addr
+ *
+ * Implements the accept(2) syscall. Waits for a pending connection, allocates a new connected
+ * socket, and returns its fd; fills @addr with the peer address if requested.
+ */
 int sys_accept_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
     struct socket *s = sock_get(sockfd);
     if (!s)
@@ -600,6 +672,14 @@ int sys_accept_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
     return sock_fd_from_slot(new_slot);
 }
 
+/**
+ * sys_connect_impl - Initiate a connection to a remote address
+ * @sockfd: Socket file descriptor
+ * @addr: Remote sockaddr_in to connect to
+ *
+ * Implements the connect(2) syscall. For stream sockets performs a TCP connect over the network
+ * stack; for datagram sockets records the destination and caches the resolved MAC for fast send.
+ */
 int sys_connect_impl(int sockfd, const struct sockaddr_in *addr) {
     struct socket *s = sock_get(sockfd);
     if (!s)
@@ -696,6 +776,17 @@ static int sock_validate_level(struct socket *s, int level) {
     return -ENOPROTOOPT;
 }
 
+/**
+ * sys_setsockopt_impl - Set a socket option
+ * @sockfd: Socket file descriptor
+ * @level: Option level (SOL_SOCKET, SOL_TCP, SOL_IP)
+ * @optname: Option name (SO_REUSEADDR, TCP_NODELAY, IP_TTL, ...)
+ * @optval: Pointer to the option value
+ * @optlen: Length of the option value
+ *
+ * Implements the setsockopt(2) syscall. Validates the option level, then applies socket, TCP, or IP
+ * options to the socket structure.
+ */
 int sys_setsockopt_impl(int sockfd, int level, int optname, const void *optval, uint32_t optlen) {
     struct socket *s = sock_get(sockfd);
     if (!s)
@@ -849,6 +940,17 @@ int sys_setsockopt_impl(int sockfd, int level, int optname, const void *optval, 
     return 0;
 }
 
+/**
+ * sys_getsockopt_impl - Get a socket option
+ * @sockfd: Socket file descriptor
+ * @level: Option level (SOL_SOCKET, SOL_TCP, SOL_IP)
+ * @optname: Option name to query
+ * @optval: Buffer to receive the option value
+ * @optlen: In/out length of @optval
+ *
+ * Implements the getsockopt(2) syscall. Returns the current value of the requested socket, TCP, or
+ * IP option, including SO_TYPE, SO_ERROR, and TCP_INFO.
+ */
 int sys_getsockopt_impl(int sockfd, int level, int optname, void *optval, uint32_t *optlen) {
     struct socket *s = sock_get(sockfd);
     if (!s)
@@ -1047,6 +1149,16 @@ int sys_getsockopt_impl(int sockfd, int level, int optname, void *optval, uint32
     return -ENOPROTOOPT;
 }
 
+/**
+ * sys_sendmsg_impl - Send data on a socket
+ * @sockfd: Socket file descriptor
+ * @msg: msghdr describing destination and iovec scatter/gather array
+ * @flags: Send flags (MSG_DONTWAIT, MSG_NOSIGNAL, ...)
+ *
+ * Implements the sendmsg(2) syscall. Dispatches to the AF_UNIX, AF_PACKET, AF_NETLINK, AF_CAN or
+ * net-based send path according to the socket domain and type, copying the user iovec into a kernel
+ * buffer.
+ */
 int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
     struct socket *s = sock_get(sockfd);
     if (!s)
@@ -1174,6 +1286,15 @@ out:
     return error;
 }
 
+/**
+ * sys_recvmsg_impl - Receive data on a socket
+ * @sockfd: Socket file descriptor
+ * @msg: msghdr describing destination buffers and source-address storage
+ * @flags: Receive flags (MSG_WAITALL, MSG_DONTWAIT, ...)
+ *
+ * Implements the recvmsg(2) syscall. Dispatches to the protocol-specific receive path, copies
+ * received data into the caller iov, and reports the source address and message flags.
+ */
 int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
     struct socket *s = sock_get(sockfd);
     if (!s)
@@ -1289,6 +1410,14 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
     return n;
 }
 
+/**
+ * sys_getsockname_impl - Retrieve the local bound address of a socket
+ * @sockfd: Socket file descriptor
+ * @addr: Buffer to receive the local sockaddr_in
+ * @addrlen: In/out length of @addr
+ *
+ * Implements the getsockname(2) syscall for AF_INET sockets.
+ */
 int sys_getsockname_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
     struct socket *s = sock_get(sockfd);
     if (!s)
@@ -1345,6 +1474,14 @@ out:
     return ret;
 }
 
+/**
+ * sys_getpeername_impl - Retrieve the remote peer address of a connected socket
+ * @sockfd: Socket file descriptor
+ * @addr: Buffer to receive the peer sockaddr_in
+ * @addrlen: In/out length of @addr
+ *
+ * Implements the getpeername(2) syscall for AF_INET sockets.
+ */
 int sys_getpeername_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
     struct socket *s = sock_get(sockfd);
     if (!s)
@@ -1377,6 +1514,16 @@ out:
     return ret;
 }
 
+/**
+ * sys_socketpair_impl - Create an unnamed connected socket pair
+ * @domain: Address family
+ * @type: Socket type
+ * @protocol: Protocol
+ * @sv: int[2] buffer receiving the two new file descriptors
+ *
+ * Implements the socketpair(2) syscall. Creates two connected AF_UNIX sockets and returns their fds
+ * in @sv.
+ */
 int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]) {
     (void)protocol;
 
@@ -1493,6 +1640,15 @@ int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]) {
 
 /* ── Socket poll support ─────────────────────────────────────── */
 
+/**
+ * sock_poll - Poll a socket for readiness
+ * @sockfd: Socket file descriptor
+ * @events: Requested events mask (POLLIN | POLLOUT)
+ * @pt: Optional poll_table for register/wake integration
+ *
+ * Implements the poll(2) backend for sockets. Returns a bitmask of
+ * POLLIN|POLLOUT|POLLHUP|POLLERR|POLLNVAL reflecting the socket's current readiness.
+ */
 int sock_poll(int sockfd, int events, struct poll_table *pt) {
     struct socket *s = sock_get(sockfd);
     if (!s)
@@ -1622,6 +1778,13 @@ EXPORT_SYMBOL(sys_recvmsg_impl);
  * Safe to call from softirq context.  Does not acquire socket locks
  * because it only reads in_use/conn_id (aligned ints — atomic on x86)
  * and calls wait_queue_wake_all which has its own spinlock.
+ */
+/**
+ * sock_wake_by_conn_id - Wake socket waitqueues for a TCP connection
+ * @conn_id: TCP connection id
+ *
+ * Called from the TCP stack when data arrives, waking any poll/select/epoll waiters associated with
+ * @conn_id.
  */
 void sock_wake_by_conn_id(int conn_id) {
     for (int i = 0; i < SOCK_MAX; i++) {
