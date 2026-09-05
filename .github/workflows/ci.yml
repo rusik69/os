@@ -369,6 +369,50 @@ jobs:
           echo "- check-padded: struct alignment warnings" >> $GITHUB_STEP_SUMMARY
           echo "- sparse: semantic parser for kernel annotations" >> $GITHUB_STEP_SUMMARY
 
+  # ── Code coverage (gcov) ─────────────────────────────────────────
+  # Builds the host test suite with -fprofile-arcs -ftest-coverage and
+  # emits per-file gcov output. Non-blocking (occasionally flaky).
+  coverage:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build + run tests with coverage
+        run: |
+          make test-coverage -j$(nproc) \
+            CC="ccache x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy
+
+      - name: Generate gcov coverage output
+        run: |
+          mkdir -p coverage
+          for f in build_test/*.gcda; do
+            [ -f "$f" ] || continue
+            fname="$(basename "$f" .gcda)"
+            gcov -o build_test -s src "$f" >/dev/null 2>&1 || true
+          done
+          ls *.gcov 2>/dev/null | head -20 | tee coverage/gcov-files.txt || echo "no gcov files"
+          echo "gcov coverage files: $(ls *.gcov 2>/dev/null | wc -l)"
+
+      - name: Upload coverage output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-gcov
+          path: |
+            *.gcov
+            coverage/
+          retention-days: 7
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Code Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "- gcov per-file coverage output uploaded ($(ls *.gcov 2>/dev/null | wc -l) files)" >> $GITHUB_STEP_SUMMARY
+
   # ── Fast pre-merge verification ────────────────────────────────────
   verify:
     runs-on: [self-hosted, linux, x64]
