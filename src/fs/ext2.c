@@ -969,6 +969,16 @@ static inline uint32_t ext2_align4(uint32_t v) {
 /* Forward declarations for HTree functions used by add_dirent_htree */
 static uint32_t ext2_dx_hash(const unsigned char *name, int name_len, uint8_t hash_version,
                              const uint32_t hash_seed[4]);
+/**
+ * ext2_htree_lookup_leaf - Look up a name in an htree-indexed ext2 directory
+ * @ep: ext2 filesystem private data
+ * @inode: Directory inode
+ * @hash: Hash of the name to find
+ * @out_ino: Receives the found inode number
+ *
+ * Descends the directory's index tree using @hash to locate the leaf block entry for the name.
+ * Returns 0 on success or a negative error code.
+ */
 static int ext2_htree_lookup_leaf(struct ext2_priv *ep, struct ext2_inode *inode, uint32_t hash,
                                   uint32_t *leaf_block);
 
@@ -2029,6 +2039,16 @@ static int ext2_path_to_ino(struct ext2_priv *ep, const char *path, uint32_t *in
  * Returns the number of bytes written to @buf (not including NUL
  * terminator), or negative errno on failure.
  */
+/**
+ * ext2_readlink - Read the target of a symbolic link
+ * @priv: ext2 filesystem private data
+ * @path: Path of the symlink
+ * @buf: Buffer to receive the link target
+ * @bufsize: Capacity of @buf
+ *
+ * Resolves the symlink inode's data blocks into @buf, NUL-terminated. Returns the string length or
+ * a negative error code.
+ */
 static int ext2_readlink(void *priv, const char *path, char *buf, int bufsize) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
     uint32_t ino;
@@ -2085,6 +2105,15 @@ static int ext2_readlink(void *priv, const char *path, char *buf, int bufsize) {
  * For short targets (≤ 60 bytes), creates a fast symlink with the
  * target stored in the inode's i_block[].  For longer targets, creates
  * a slow symlink with the target in a data block.
+ */
+/**
+ * ext2_symlink - Create a symbolic link
+ * @priv: ext2 filesystem private data
+ * @target: Link target contents
+ * @linkpath: Path at which to create the symlink
+ *
+ * Creates a new symlink inode at @linkpath pointing to @target and adds the corresponding directory
+ * entry. Returns 0 on success or a negative error code.
  */
 static int ext2_symlink(void *priv, const char *target, const char *linkpath) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
@@ -2238,6 +2267,15 @@ err_free_inode:
  * Returns 0 on success, negative errno on failure.
  * Hard links to directories are not permitted (standard ext2 limitation).
  */
+/**
+ * ext2_link - Create a hard link
+ * @priv: ext2 filesystem private data
+ * @oldpath: Existing file to link from
+ * @newpath: New directory entry to create
+ *
+ * Adds a directory entry for @newpath referencing the same inode as @oldpath and increments its
+ * link count. Returns 0 on success.
+ */
 static int ext2_link(void *priv, const char *oldpath, const char *newpath) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
 
@@ -2364,6 +2402,17 @@ static int ext2_link(void *priv, const char *oldpath, const char *newpath) {
 
 /* ── VFS operations ──────────────────────────────────────────────── */
 
+/**
+ * ext2_read - Read data from an ext2 file
+ * @priv: ext2 filesystem private data
+ * @path: Path of the file
+ * @buf: Destination buffer
+ * @max_size: Maximum bytes to read
+ * @out_size: Receives the number of bytes actually read
+ *
+ * Reads up to @max_size bytes from @path into @buf, resolving the file's extent blocks. Returns 0
+ * on success or a negative error code.
+ */
 static int ext2_read(void *priv, const char *path, void *buf, uint32_t max_size,
                      uint32_t *out_size) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
@@ -2400,6 +2449,15 @@ static int ext2_read(void *priv, const char *path, void *buf, uint32_t max_size,
     return 0;
 }
 
+/**
+ * ext2_stat - Stat an ext2 file
+ * @priv: ext2 filesystem private data
+ * @path: Path of the file
+ * @st: vfs_stat buffer to fill
+ *
+ * Populates @st with the file's type, size, mode, ownership and timestamps. Returns 0 on success or
+ * a negative error code.
+ */
 static int ext2_stat(void *priv, const char *path, struct vfs_stat *st) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
     uint32_t ino;
@@ -2427,6 +2485,16 @@ static int ext2_stat(void *priv, const char *path, struct vfs_stat *st) {
     return 0;
 }
 
+/**
+ * ext2_readdir - Enumerate the entries of an ext2 directory
+ * @priv: ext2 filesystem private data
+ * @path: Directory path
+ * @names: Array of 64-byte name buffers
+ * @max: Capacity of @names
+ *
+ * Fills @names with up to @max entry names from directory @path. Returns the number of entries or a
+ * negative error code.
+ */
 static int ext2_readdir(void *priv, const char *path, char names[][64], int max) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
     uint32_t ino;
@@ -2460,6 +2528,18 @@ int ext2_scan_block_groups(struct ext2_priv *ep);
  * updates the inode's block pointers.
  *
  * Returns 0 on success, negative errno on error. */
+/**
+ * ext2_write_file_data - Write data to an ext2 inode's data blocks
+ * @ep: ext2 filesystem private data
+ * @ino: Inode number
+ * @inode: In-memory inode
+ * @offset: Byte offset within the file
+ * @data: Data to write
+ * @size: Number of bytes
+ *
+ * Resolves the block map for the inode and copies @size bytes from @data at @offset, allocating
+ * blocks as required. Returns the bytes written or a negative error code.
+ */
 static int ext2_write_file_data(struct ext2_priv *ep, uint32_t ino, struct ext2_inode *inode,
                                 const uint8_t *data, uint32_t offset, uint32_t size) {
     uint64_t new_size = (uint64_t)offset + size;
@@ -2536,6 +2616,16 @@ static int ext2_write_file_data(struct ext2_priv *ep, uint32_t ino, struct ext2_
 
 /* ── VFS operations (write, create, unlink, truncate) ───────────── */
 
+/**
+ * ext2_write - Write data to an ext2 file
+ * @priv: ext2 filesystem private data
+ * @path: Path of the file
+ * @data: Data to write
+ * @size: Number of bytes to write
+ *
+ * Allocates and fills the file's data blocks with @size bytes from @data, extending the inode as
+ * needed. Returns 0 on success or a negative error code.
+ */
 static int ext2_write(void *priv, const char *path, const void *data, uint32_t size) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
     uint32_t ino;
@@ -2557,6 +2647,15 @@ static int ext2_write(void *priv, const char *path, const void *data, uint32_t s
     return ext2_write_inode(ep, ino, &inode);
 }
 
+/**
+ * ext2_truncate - Truncate an ext2 file to a given length
+ * @priv: ext2 filesystem private data
+ * @path: Path of the file
+ * @len: Desired length in bytes
+ *
+ * Shrinks (or extends) the file to @len, freeing or allocating data blocks and updating the inode
+ * size. Returns 0 on success.
+ */
 static int ext2_truncate(void *priv, const char *path, uint32_t len) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
     uint32_t ino;
@@ -2609,6 +2708,15 @@ static int ext2_truncate(void *priv, const char *path, uint32_t len) {
  * Allocates a new inode, initializes it, and adds a directory entry
  * in the parent directory.  If the EXTENTS feature is set, the new
  * inode is initialised with an extent tree root. */
+/**
+ * ext2_create - Create a new ext2 inode (file or directory)
+ * @priv: ext2 filesystem private data
+ * @path: Path of the new entry
+ * @type: Entry type (VFS_TYPE_FILE, VFS_TYPE_DIR, ...)
+ *
+ * Allocates an inode of @type at @path and links it into its parent directory. Returns 0 on success
+ * or a negative error code.
+ */
 static int ext2_create(void *priv, const char *path, uint8_t type) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
     (void)type;
@@ -2702,6 +2810,14 @@ static int ext2_create(void *priv, const char *path, uint8_t type) {
     return 0;
 }
 
+/**
+ * ext2_unlink - Remove an ext2 directory entry
+ * @priv: ext2 filesystem private data
+ * @path: Path of the entry to remove
+ *
+ * Removes the directory entry, decrements the inode link count, and frees the inode when the count
+ * reaches zero. Returns 0 on success.
+ */
 static int ext2_unlink(void *priv, const char *path) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
 
@@ -2842,6 +2958,17 @@ entry_removed:
  *   FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE: Deallocate blocks, create holes
  *
  * Returns 0 on success, negative errno on failure. */
+/**
+ * ext2_fallocate - Pre-allocate disk space for an ext2 file
+ * @priv: ext2 filesystem private data
+ * @path: Path of the file
+ * @mode: Allocation mode flags
+ * @offset: Start offset
+ * @len: Length of the range
+ *
+ * Allocates data blocks for the byte range [@offset, @offset+@len) so subsequent writes do not
+ * allocate. Returns 0 on success.
+ */
 static int ext2_fallocate(void *priv, const char *path, int mode, uint32_t offset, uint32_t len) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
     uint32_t ino;
@@ -2945,6 +3072,15 @@ static int ext2_fallocate(void *priv, const char *path, int mode, uint32_t offse
  * SEEK_HOLE (whence=4): Find the next hole starting from offset.
  *   Returns the byte offset of the first hole at or after offset.
  *   If no hole found, returns the file size. */
+/**
+ * ext2_seek - Locate a data or hole boundary in an ext2 file
+ * @priv: ext2 filesystem private data
+ * @path: Path of the file
+ * @offset: Starting offset
+ * @whence: SEEK_DATA or SEEK_HOLE
+ *
+ * Returns the next data or hole offset at or beyond @offset, used for sparse-file operations.
+ */
 static int ext2_seek(void *priv, const char *path, uint64_t offset, int whence) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
     uint32_t ino;
@@ -4391,6 +4527,14 @@ static int ext2_umount(const char *target) {
     return 0;
 }
 /* ── ext2_lookup ──────────────────────────────────────── */
+/**
+ * ext2_lookup - Look up a child inode by name
+ * @name: Entry name to find
+ * @parent: Parent inode context
+ *
+ * Searches the parent directory for @name and returns its inode number via the context. Returns 0
+ * on success or a negative error code.
+ */
 static int ext2_lookup(const char *name, void *parent) {
     (void)parent;
     kprintf("[ext2] lookup: %s\n", name);
