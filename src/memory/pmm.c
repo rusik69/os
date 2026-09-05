@@ -162,6 +162,11 @@ static uint64_t pmm_hint = 0; /* last-known free frame; speeds up allocation */
  * a frame becomes a table and cleared when the table is freed. */
 static uint8_t pt_frame_bitmap[MAX_FRAMES / 8];
 
+/**
+ * pmm_mark_pt_frame - Mark a frame as in use as a page-table page.
+ * @phys: Physical address of the frame.
+ * Compaction must never move frames flagged this way.
+ */
 void pmm_mark_pt_frame(uint64_t phys) {
     uint64_t frame = phys / PAGE_SIZE;
     if (frame >= MAX_FRAMES)
@@ -169,6 +174,10 @@ void pmm_mark_pt_frame(uint64_t phys) {
     pt_frame_bitmap[frame / 8] |= (uint8_t)(1u << (frame % 8));
 }
 
+/**
+ * pmm_unmark_pt_frame - Clear the page-table-frame marker.
+ * @phys: Physical address of the frame.
+ */
 void pmm_unmark_pt_frame(uint64_t phys) {
     uint64_t frame = phys / PAGE_SIZE;
     if (frame >= MAX_FRAMES)
@@ -176,6 +185,11 @@ void pmm_unmark_pt_frame(uint64_t phys) {
     pt_frame_bitmap[frame / 8] &= (uint8_t) ~(1u << (frame % 8));
 }
 
+/**
+ * pmm_is_pt_frame - Test whether a frame is a page-table page.
+ * @phys: Physical address of the frame.
+ * Return: 1 if the frame is a page-table page, 0 otherwise.
+ */
 int pmm_is_pt_frame(uint64_t phys) {
     uint64_t frame = phys / PAGE_SIZE;
     if (frame >= MAX_FRAMES)
@@ -477,6 +491,10 @@ static void pmm_cache_drain(void) {
  * target CPU may still run during this drain; a tiny window exists
  * between the drain and the state transition.  A subsequent
  * pmm_cpu_online() on bring-up clears any stray entries. */
+/**
+ * pmm_cpu_offline - Drain a going-offline CPU's per-CPU hot cache.
+ * @cpu_id: Index of the CPU being deactivated.
+ */
 void pmm_cpu_offline(int cpu_id) {
     if (cpu_id < 0 || cpu_id >= SMP_MAX_CPUS)
         return;
@@ -502,6 +520,10 @@ void pmm_cpu_offline(int cpu_id) {
  * but unreachable); clearing count to 0 discards them safely.
  * No lock needed: the target CPU is not yet online, and the only
  * code that will access this cache slot is the CPU being brought up. */
+/**
+ * pmm_cpu_online - Re-initialize a coming-online CPU's per-CPU hot cache.
+ * @cpu_id: Index of the CPU being activated.
+ */
 void pmm_cpu_online(int cpu_id) {
     if (cpu_id < 0 || cpu_id >= SMP_MAX_CPUS)
         return;
@@ -674,6 +696,11 @@ void __init pmm_init(uint64_t multiboot_info_phys) {
             (unsigned long long)(total_frames - used_frames));
 }
 
+/**
+ * pmm_reserve_frames - Mark a physical range as used/reserved.
+ * @phys_start: Starting physical address (must be page-aligned).
+ * @byte_size:  Size of the region in bytes.
+ */
 void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size) {
     uint64_t start_frame = phys_start / PAGE_SIZE;
     uint64_t end_frame = (phys_start + byte_size + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -736,6 +763,11 @@ void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size) {
     spinlock_irqsave_release(&pmm_global_lock, irq_flags);
 }
 
+/**
+ * pmm_advance_hint - Advance the allocation hint past a physical address.
+ * @phys_addr: Physical address to skip over.
+ * Ensures future allocations bypass a just-reserved range.
+ */
 void pmm_advance_hint(uint64_t phys_addr) {
     uint64_t frame = phys_addr / PAGE_SIZE;
     if (frame + 1 > pmm_hint)
@@ -827,15 +859,27 @@ void pmm_add_free_frames(uint64_t phys_start, uint64_t byte_size) {
  */
 static uint64_t pmm_reclaim_watermark = 64; /* default: 64 pages = 256 KB */
 
+/**
+ * pmm_get_reclaim_watermark - Return the proactive-reclaim watermark.
+ * Return: current watermark, in frames.
+ */
 uint64_t pmm_get_reclaim_watermark(void) {
     return pmm_reclaim_watermark;
 }
 
+/**
+ * pmm_set_reclaim_watermark - Set the proactive-reclaim watermark.
+ * @pages: New watermark, in frames.
+ */
 void pmm_set_reclaim_watermark(uint64_t pages) {
     pmm_reclaim_watermark = pages;
     kprintf("[pmm] reclaim watermark set to %llu pages\n", (unsigned long long)pages);
 }
 
+/**
+ * pmm_below_watermark - Test whether memory is below the reclaim watermark.
+ * Return: 1 if below the watermark, 0 otherwise.
+ */
 int pmm_below_watermark(void) {
     uint64_t free_pages = (total_frames > used_frames) ? (total_frames - used_frames) : 0;
     return free_pages < pmm_reclaim_watermark;
@@ -844,6 +888,10 @@ int pmm_below_watermark(void) {
 /* ── Memory statistics dumping ──────────────────────────────────────────── */
 
 /* Scan the bitmap to find the largest contiguous free block (in frames) */
+/**
+ * pmm_largest_free_block - Size of the largest contiguous free region.
+ * Return: number of frames in the largest free block.
+ */
 uint64_t pmm_largest_free_block(void) {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
@@ -866,6 +914,10 @@ uint64_t pmm_largest_free_block(void) {
 }
 
 /* Count distinct free page runs (higher = more fragmented) */
+/**
+ * pmm_free_block_count - Count of contiguous free regions.
+ * Return: number of disjoint free blocks in the bitmap.
+ */
 uint64_t pmm_free_block_count(void) {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
@@ -895,6 +947,12 @@ uint64_t pmm_free_block_count(void) {
  *
  * Safe for SMP: acquires pmm_global_lock to synchronise bitmap access with
  * concurrent pmm_alloc_frame / pmm_free_frame callers. */
+/**
+ * pmm_find_free_region - Find the next free region at or after start_frame.
+ * @start_frame: Frame index to begin the search at.
+ * @out_count:   Optional pointer to receive the region size in frames.
+ * Return: starting frame of the found region, or MAX_FRAMES if none.
+ */
 uint64_t pmm_find_free_region(uint64_t start_frame, uint64_t *out_count) {
     if (out_count)
         *out_count = 0;
@@ -937,6 +995,9 @@ uint64_t pmm_find_free_region(uint64_t start_frame, uint64_t *out_count) {
 }
 
 /* Print detailed physical memory state: usage, largest free block, fragmentation */
+/**
+ * pmm_dump_stats - Print PMM allocation statistics to the console.
+ */
 void pmm_dump_stats(void) {
     uint64_t total = total_frames;
     uint64_t used = used_frames;
@@ -1136,6 +1197,12 @@ static uint64_t pmm_oom_recover(uint64_t needed_pages, uint64_t caller_ip) {
  *
  * Returns the number of pages actually freed, or negative on error.
  */
+/**
+ * page_reclaim - Attempt to reclaim memory pages.
+ * @nr_pages: Number of pages to attempt to reclaim.
+ * @gfp_mask: GFP flags controlling permitted reclaim actions.
+ * Return: number of pages successfully reclaimed.
+ */
 int page_reclaim(int nr_pages, unsigned int gfp_mask) {
     if (nr_pages <= 0)
         return 0;
@@ -1290,6 +1357,11 @@ uint64_t pmm_alloc_frame_at(uint64_t frame) {
 }
 
 /* Allocate count contiguous frames. Returns first frame physical addr, or 0 on failure. */
+/**
+ * pmm_alloc_frames - Allocate a contiguous run of physical frames.
+ * @count: Number of frames to allocate.
+ * Return: pointer to the first frame's physical address, or NULL on failure.
+ */
 uint64_t *pmm_alloc_frames(size_t count) {
     if (count == 0)
         return NULL;
@@ -1560,6 +1632,11 @@ void pmm_free_frame(uint64_t addr) {
 
 /* Free 'count' contiguous physical frames starting at 'phys'.
  * Bypasses the per-CPU hot cache for efficiency with bulk operations. */
+/**
+ * pmm_free_frames_contiguous - Free a contiguous run of frames.
+ * @phys:  Starting physical address of the range.
+ * @count: Number of frames to free.
+ */
 void pmm_free_frames_contiguous(uint64_t phys, size_t count) {
     if (count == 0 || phys == 0)
         return;
@@ -1590,6 +1667,11 @@ void pmm_free_frames_contiguous(uint64_t phys, size_t count) {
     spinlock_irqsave_release(&pmm_global_lock, irq_flags);
 }
 
+/**
+ * pmm_ref_frame - Increment the reference count of a frame.
+ * @phys: Physical address of the frame.
+ * Used to track Copy-on-Write (COW) sharing.
+ */
 void pmm_ref_frame(uint64_t phys) {
     uint64_t frame = phys / PAGE_SIZE;
     if (frame >= MAX_FRAMES)
@@ -1601,6 +1683,11 @@ void pmm_ref_frame(uint64_t phys) {
     spinlock_irqsave_release(&pmm_global_lock, irq_flags);
 }
 
+/**
+ * pmm_unref_frame - Decrement a frame reference count; free at zero.
+ * @phys: Physical address of the frame.
+ * Return: the new reference count (0 means the frame was freed).
+ */
 int pmm_unref_frame(uint64_t phys) {
     uint64_t frame = phys / PAGE_SIZE;
     if (frame >= MAX_FRAMES)
@@ -1639,6 +1726,11 @@ int pmm_unref_frame(uint64_t phys) {
     return ret;
 }
 
+/**
+ * pmm_refcount - Query the current reference count of a frame.
+ * @phys: Physical address of the frame.
+ * Return: the frame's reference count.
+ */
 int pmm_refcount(uint64_t phys) {
     uint64_t frame = phys / PAGE_SIZE;
     if (frame >= MAX_FRAMES)
@@ -1650,9 +1742,17 @@ int pmm_refcount(uint64_t phys) {
     return ret;
 }
 
+/**
+ * pmm_get_total_frames - Return the total number of managed frames.
+ * Return: total frame count.
+ */
 uint64_t pmm_get_total_frames(void) {
     return total_frames;
 }
+/**
+ * pmm_get_used_frames - Return the number of currently in-use frames.
+ * Return: used frame count.
+ */
 uint64_t pmm_get_used_frames(void) {
     return used_frames;
 }
@@ -1702,6 +1802,10 @@ int pfn_valid(uint64_t pfn) {
     return (pfn < total_frames && pfn < MAX_FRAMES);
 }
 
+/**
+ * pmm_set_poison - Enable or disable page poisoning.
+ * @enable: Non-zero to enable, zero to disable.
+ */
 void pmm_set_poison(int enable) {
     pmm_poison_enabled = enable;
 }
@@ -1965,6 +2069,11 @@ void pageblock_dump_stats(void) {
  * pmm_alloc_frame_migrate(MIGRATE_UNMOVABLE) to help prevent fragmentation.
  */
 
+/**
+ * pmm_alloc_frame_migrate - Allocate a frame for a given migration type.
+ * @mt: Migration type (see enum migratetype).
+ * Return: physical address of an allocated frame, or 0 on failure.
+ */
 uint64_t pmm_alloc_frame_migrate(enum migratetype mt) {
     /* Validate zone index: must be a valid non-negative migration type
      * that is available for allocation (not MIGRATE_ISOLATE).  Clamp
@@ -2075,6 +2184,11 @@ static int pmm_free_pages(void *addr, size_t count) {
 }
 
 /* ── pmm_stats ─────────────────────────────── */
+/**
+ * pmm_stats - Populate a PMM statistics structure for introspection.
+ * @stats: Pointer to the stats structure to fill.
+ * Return: 0 on success, negative error code on failure.
+ */
 int pmm_stats(void *stats) {
     if (!stats)
         return -EFAULT;
