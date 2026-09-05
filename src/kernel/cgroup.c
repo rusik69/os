@@ -592,6 +592,55 @@ void cgroup_cpuset_apply_member(int cg_id, int pid) {
 }
 EXPORT_SYMBOL(cgroup_cpuset_apply_member);
 
+/* ── cpuset NUMA node affinity (cpuset.mems) ──────────────────────── */
+
+int cgroup_cpuset_set_mems(int cg_id, const cpuset_t *nodes) {
+    if (!nodes || cpuset_empty(nodes))
+        return -EINVAL;
+    if (cg_id < 0 || cg_id >= CGROUP_MAX || !g_cgroups[cg_id].in_use)
+        return -EINVAL;
+
+    spinlock_acquire(&g_cgroup_lock);
+    struct cgroup *cg = &g_cgroups[cg_id];
+    cg->nodelist = *nodes;
+    cg->nodelist_valid = 1;
+
+    /* Preferred home node = lowest allowed node. */
+    int home = __builtin_ctzll(cg->nodelist.bits);
+
+    /* Apply the preferred node to every member process. */
+    for (int i = 0; i < CGROUP_MAX_PIDS; i++) {
+        int pid = cg->members[i];
+        if (pid <= 0)
+            continue;
+        struct process *m = process_get_by_pid((uint32_t)pid);
+        if (m)
+            m->home_node = home;
+    }
+    spinlock_release(&g_cgroup_lock);
+
+    kprintf("[cgroup] cpuset.mems[%d] set to 0x%llx (home node %d)\n", cg_id,
+            (unsigned long long)cg->nodelist.bits, home);
+    return 0;
+}
+EXPORT_SYMBOL(cgroup_cpuset_set_mems);
+
+int cgroup_cpuset_get_mems(int cg_id, cpuset_t *nodes) {
+    if (!nodes)
+        return -EINVAL;
+    if (cg_id < 0 || cg_id >= CGROUP_MAX || !g_cgroups[cg_id].in_use)
+        return -EINVAL;
+
+    spinlock_acquire(&g_cgroup_lock);
+    if (g_cgroups[cg_id].nodelist_valid)
+        *nodes = g_cgroups[cg_id].nodelist;
+    else
+        cpuset_zero(nodes);
+    spinlock_release(&g_cgroup_lock);
+    return 0;
+}
+EXPORT_SYMBOL(cgroup_cpuset_get_mems);
+
 /* Destroy a cgroup. All member processes are moved to the root cgroup.
  * Returns 0 on success. */
 int cgroup_destroy(int cg_id) {
@@ -1211,12 +1260,16 @@ int cgroup_write_control(int cg_id, const char *controller, const char *key, con
             return cgroup_freeze(cg_id);
         if (strcmp(value, "THAWED") == 0)
             return cgroup_unfreeze(cg_id);
-    } else if (strcmp(controller, "cpuset") == 0 || strcmp(key, "cpuset.cpus") == 0) {
-        /* cpuset controller: "cpuset cpus <list>" or "cpuset.cpus <list>" */
+    } else if (strcmp(controller, "cpuset") == 0 || strcmp(key, "cpuset.cpus") == 0 ||
+               strcmp(key, "cpuset.mems") == 0) {
+        /* cpuset controller: "cpuset cpus <list>", "cpuset.cpus <list>",
+         * or "cpuset.mems <nodelist>". */
         cpuset_t set;
         int pr = cpuset_parse(value, &set);
         if (pr < 0)
             return pr;
+        if (strcmp(key, "cpuset.mems") == 0 || strcmp(key, "mems") == 0)
+            return cgroup_cpuset_set_mems(cg_id, &set);
         return cgroup_cpuset_set(cg_id, &set);
     }
 

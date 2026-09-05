@@ -101,6 +101,10 @@ struct cgroup {
     cpuset_t cpuset;
     int cpuset_valid; /* 1 = cpuset active for this cgroup */
 
+    /* cpuset controller: memory nodes allowed for tasks in this cgroup */
+    cpuset_t nodelist;
+    int nodelist_valid; /* 1 = node affinity active */
+
     /* Controller states */
     struct cgroup_cpu_state cpu;
     struct cgroup_mem_state mem;
@@ -183,5 +187,12 @@ void cgroup_cpuset_apply_member(int cg_id, int pid);
 /* Parse a CPU-list string ("0-3,5") into a cpuset.  Returns 0 on
  * success, -EINVAL on malformed input. */
 int cpuset_parse(const char *str, cpuset_t *set);
+
+/* Set the memory nodes allowed for a cgroup (NUMA affinity) and apply
+ * the preferred node to every member.  Returns 0 on success. */
+int cgroup_cpuset_set_mems(int cg_id, const cpuset_t *nodes);
+
+/* Read the memory-node list currently allowed for a cgroup. */
+int cgroup_cpuset_get_mems(int cg_id, cpuset_t *nodes);
 
 #endif /* CGROUP_H */
