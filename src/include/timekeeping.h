@@ -29,4 +29,14 @@ void timekeeping_set_rt_offset(int64_t offset_ns);
 /* Return the currently applied realtime slew offset (ns). */
 int64_t timekeeping_get_rt_offset(void);
 
+/* ── Leap second handling ────────────────────────────────────────── */
+
+/* Return the TAI-UTC offset (in seconds) in effect at UTC epoch @epoch_sec.
+ * Derived from the IERS leap-second table.  Returns 0 before the first
+ * (1972) leap second. */
+int timekeeping_leap_offset(uint64_t epoch_sec);
+
+/* Return the TAI-UTC offset in effect for the current wall-clock time. */
+int timekeeping_leap_now(void);
+
 #endif /* TIMEKEEPING_H */

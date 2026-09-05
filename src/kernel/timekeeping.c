@@ -39,3 +39,65 @@ void timekeeping_ntp_settime(uint64_t epoch_sec) {
     /* A hard step supersedes any accumulated slew offset. */
     g_rt_offset_ns = 0;
 }
+
+/* ── Leap second handling ──────────────────────────────────────────
+ *
+ * TAI-UTC offset is applied instantaneously by the IERS at announced
+ * dates.  The table below records, for each leap insertion, the UTC
+ * epoch at which the new offset came into effect and the resulting
+ * cumulative TAI-UTC offset.  Entries are in strictly ascending epoch
+ * order, enabling a simple linear scan.
+ */
+struct leap_second {
+    uint64_t epoch; /* UTC epoch (s) at which the offset steps */
+    int offset;     /* cumulative TAI - UTC offset in effect (s) */
+};
+
+static const struct leap_second leap_seconds[] = {
+    {63072000, 10},   /* 1972-01-01 */
+    {78796800, 11},   /* 1972-07-01 */
+    {94694400, 12},   /* 1973-01-01 */
+    {126230400, 13},  /* 1974-01-01 */
+    {157766400, 14},  /* 1975-01-01 */
+    {189302400, 15},  /* 1976-01-01 */
+    {220924800, 16},  /* 1977-01-01 */
+    {252460800, 17},  /* 1978-01-01 */
+    {283996800, 18},  /* 1979-01-01 */
+    {315532800, 19},  /* 1980-01-01 */
+    {362793600, 20},  /* 1981-07-01 */
+    {394329600, 21},  /* 1982-07-01 */
+    {425865600, 22},  /* 1983-07-01 */
+    {489024000, 23},  /* 1985-07-01 */
+    {567993600, 24},  /* 1988-01-01 */
+    {631152000, 25},  /* 1990-01-01 */
+    {662688000, 26},  /* 1991-01-01 */
+    {709948800, 27},  /* 1992-07-01 */
+    {741484800, 28},  /* 1993-07-01 */
+    {773020800, 29},  /* 1994-07-01 */
+    {820454400, 30},  /* 1996-01-01 */
+    {867715200, 31},  /* 1997-07-01 */
+    {915148800, 32},  /* 1999-01-01 */
+    {1136073600, 33}, /* 2006-01-01 */
+    {1230768000, 34}, /* 2009-01-01 */
+    {1341100800, 35}, /* 2012-07-01 */
+    {1435708800, 36}, /* 2015-07-01 */
+    {1483228800, 37}, /* 2017-01-01 (current) */
+};
+#define LEAP_SECONDS_N ((int)(sizeof(leap_seconds) / sizeof(leap_seconds[0])))
+
+int timekeeping_leap_offset(uint64_t epoch_sec) {
+    int offset = 0;
+    for (int i = 0; i < LEAP_SECONDS_N; i++) {
+        if (epoch_sec >= leap_seconds[i].epoch)
+            offset = leap_seconds[i].offset;
+        else
+            break; /* table is strictly ascending */
+    }
+    return offset;
+}
+
+int timekeeping_leap_now(void) {
+    uint64_t ticks = timer_get_ticks();
+    uint64_t epoch = rtc_get_epoch() + (ticks / TIMER_FREQ);
+    return timekeeping_leap_offset(epoch);
+}

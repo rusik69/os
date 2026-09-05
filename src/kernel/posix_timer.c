@@ -25,9 +25,9 @@
 #include "spinlock.h"
 #include "string.h"
 #include "syscall.h"
+#include "timekeeping.h"
 #include "timer.h"
 #include "timers.h"
-#include "timekeeping.h"
 #include "types.h"
 #include "uaccess.h"
 
@@ -68,6 +68,9 @@ MODULE_AUTHOR("Ruslan Gustomiasov");
 #endif
 #ifndef CLOCK_BOOTTIME_ALARM
 #define CLOCK_BOOTTIME_ALARM 9
+#endif
+#ifndef CLOCK_TAI
+#define CLOCK_TAI 11
 #endif
 
 /* ── POSIX timer slots ─────────────────────────────────────────── */
@@ -185,7 +188,8 @@ int64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr) {
     switch (clockid) {
     case CLOCK_REALTIME:
     case CLOCK_REALTIME_COARSE:
-    case CLOCK_REALTIME_ALARM: {
+    case CLOCK_REALTIME_ALARM:
+    case CLOCK_TAI: {
         uint64_t epoch = rtc_get_epoch();
         int64_t ns;
         int64_t off = timekeeping_get_rt_offset();
@@ -203,6 +207,9 @@ int64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr) {
             ns += 1000000000LL;
         }
         ts.tv_nsec = (uint64_t)ns;
+        /* CLOCK_TAI = CLOCK_REALTIME + the TAI-UTC leap-second offset. */
+        if (clockid == CLOCK_TAI)
+            ts.tv_sec += (int64_t)timekeeping_leap_offset((uint64_t)ts.tv_sec);
         break;
     }
 
