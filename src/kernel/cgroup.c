@@ -17,17 +17,18 @@
 
 #define KERNEL_INTERNAL
 #include "cgroup.h"
-#include "string.h"
-#include "string_ext.h"
-#include "printf.h"
-#include "spinlock.h"
+
 #include "errno.h"
-#include "timer.h"
+#include "export.h"
+#include "printf.h"
 #include "process.h"
 #include "scheduler.h"
 #include "signal.h"
+#include "spinlock.h"
+#include "string.h"
+#include "string_ext.h"
+#include "timer.h"
 #include "vfs.h"
-#include "export.h"
 /* TIMER_FREQ from timeconst.h */
 #include "timeconst.h"
 #ifndef TIMER_FREQ
@@ -40,8 +41,7 @@
 #define CGROUP_PROCESS_WRAPPERS
 #include "scheduler.h"
 
-static inline void process_freeze(uint32_t pid)
-{
+static inline void process_freeze(uint32_t pid) {
     struct process *p = process_get_by_pid(pid);
     if (p && p->state != PROCESS_UNUSED && p->state != PROCESS_ZOMBIE) {
         p->is_suspended = 1;
@@ -50,8 +50,7 @@ static inline void process_freeze(uint32_t pid)
     }
 }
 
-static inline void process_unfreeze(uint32_t pid)
-{
+static inline void process_unfreeze(uint32_t pid) {
     struct process *p = process_get_by_pid(pid);
     if (p && p->state != PROCESS_UNUSED && p->state != PROCESS_ZOMBIE) {
         p->is_suspended = 0;
@@ -61,14 +60,12 @@ static inline void process_unfreeze(uint32_t pid)
     }
 }
 
-static inline uint64_t process_get_mem_usage(uint32_t pid)
-{
+static inline uint64_t process_get_mem_usage(uint32_t pid) {
     struct process *p = process_get_by_pid(pid);
     return p ? p->max_rss : 0;
 }
 
-static inline void process_kill(uint32_t pid)
-{
+static inline void process_kill(uint32_t pid) {
     signal_send(pid, SIGKILL);
 }
 #endif
@@ -88,12 +85,12 @@ static int g_cgroup_initialized = 0;
 
 /* Default CPU quota/period: 100000/100000 = 1 core */
 #define CGROUP_CPU_PERIOD_DEFAULT 100000
-#define CGROUP_CPU_PERIOD_MIN     1000
-#define CGROUP_CPU_PERIOD_MAX     1000000
+#define CGROUP_CPU_PERIOD_MIN 1000
+#define CGROUP_CPU_PERIOD_MAX 1000000
 
 /* ── Memory controller state ──────────────────────────────────────── */
 
-#define CGROUP_MEM_MAX_DEFAULT  0   /* 0 = unlimited */
+#define CGROUP_MEM_MAX_DEFAULT 0 /* 0 = unlimited */
 #define CGROUP_MEM_HIGH_DEFAULT 0
 
 /* ── IO controller state ──────────────────────────────────────────── */
@@ -102,13 +99,12 @@ static int g_cgroup_initialized = 0;
 
 /* ── PID controller state ─────────────────────────────────────────── */
 
-#define CGROUP_PIDS_MAX_DEFAULT 0  /* 0 = unlimited */
+#define CGROUP_PIDS_MAX_DEFAULT 0 /* 0 = unlimited */
 
 /* ── Queue of pending work items ──────────────────────────────────── */
 
 struct cgroup_work {
-    enum { CGROUP_WORK_NONE, CGROUP_WORK_FREEZE, CGROUP_WORK_UNFREEZE,
-           CGROUP_WORK_OOM_KILL } type;
+    enum { CGROUP_WORK_NONE, CGROUP_WORK_FREEZE, CGROUP_WORK_UNFREEZE, CGROUP_WORK_OOM_KILL } type;
     int cg_idx;
 } g_cgroup_work_queue[16];
 static int g_cgroup_work_head = 0, g_cgroup_work_tail = 0;
@@ -118,13 +114,11 @@ static spinlock_t g_cgroup_work_lock;
  *  Internal helpers
  * ═══════════════════════════════════════════════════════════════════════ */
 
-static inline bool cgroup_valid(int idx)
-{
+static inline bool cgroup_valid(int idx) {
     return idx >= 0 && idx < CGROUP_MAX && g_cgroups[idx].in_use;
 }
 
-static int cgroup_alloc_id(void)
-{
+static int cgroup_alloc_id(void) {
     spinlock_acquire(&g_cgroup_lock);
     for (int i = 1; i < CGROUP_MAX; i++) {
         if (!g_cgroups[i].in_use) {
@@ -133,7 +127,7 @@ static int cgroup_alloc_id(void)
             g_cgroups[i].id = i;
             g_cgroups[i].parent_id = -1;
             g_cgroups[i].cpu.max_period = CGROUP_CPU_PERIOD_DEFAULT;
-            g_cgroups[i].cpu.max_quota   = CGROUP_CPU_PERIOD_DEFAULT;
+            g_cgroups[i].cpu.max_quota = CGROUP_CPU_PERIOD_DEFAULT;
             g_num_cgroups++;
             spinlock_release(&g_cgroup_lock);
             return i;
@@ -145,9 +139,7 @@ static int cgroup_alloc_id(void)
 
 /* ── Cgroupv2 filesystem ──────────────────────────────────────────── */
 
-static int cgroup_v2_read(void *priv, const char *path, void *buf,
-                          uint32_t max, uint32_t *out)
-{
+static int cgroup_v2_read(void *priv, const char *path, void *buf, uint32_t max, uint32_t *out) {
     (void)priv;
     (void)path;
     /* Build hierarchy info listing all mounted cgroups and their controllers */
@@ -155,42 +147,40 @@ static int cgroup_v2_read(void *priv, const char *path, void *buf,
     int pos = 0;
     {
         int n = snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
-            "# Cgroup v2 unified hierarchy\n"
-            "# Controllers: cpu memory io pids freezer\n"
-            "# /sys/fs/cgroup/ mounted\n\n");
-        if (n > 0 && pos + n < (int)sizeof(tmp)) pos += n;
+                         "# Cgroup v2 unified hierarchy\n"
+                         "# Controllers: cpu memory io pids freezer\n"
+                         "# /sys/fs/cgroup/ mounted\n\n");
+        if (n > 0 && pos + n < (int)sizeof(tmp))
+            pos += n;
     }
 
     spinlock_acquire(&g_cgroup_lock);
     for (int i = 0; i < CGROUP_MAX; i++) {
-        if (!g_cgroups[i].in_use) continue;
-        /* Build controller list for this cgroup */
+        if (!g_cgroups[i].in_use)
+            continue;
+        /* Build controller list for this cgroup (driven by the enable mask) */
         char ctrl[128] = "";
-        if (g_cgroups[i].cpu.max_period > 0 || g_cgroups[i].cpu.max_quota > 0)
+        uint32_t mask = g_cgroups[i].ctrl_mask;
+        if (mask & CG_CTRL_CPU)
             strlcat(ctrl, "cpu ", sizeof(ctrl));
-        if (g_cgroups[i].mem.max_bytes > 0 || g_cgroups[i].mem.high_bytes > 0)
+        if (mask & CG_CTRL_MEMORY)
             strlcat(ctrl, "memory ", sizeof(ctrl));
-        if (g_cgroups[i].pids.max > 0)
+        if (mask & CG_CTRL_PIDS)
             strlcat(ctrl, "pids ", sizeof(ctrl));
-        /* IO limits */
-        for (int j = 0; j < CGROUP_IO_MAX_DEVICES; j++) {
-            if (g_cgroups[i].io.devices[j].in_use) {
-                strlcat(ctrl, "io ", sizeof(ctrl));
-                break;
-            }
-        }
-        /* Freezer is always available */
-        strlcat(ctrl, "freezer", sizeof(ctrl));
+        if (mask & CG_CTRL_IO)
+            strlcat(ctrl, "io ", sizeof(ctrl));
+        if (mask & CG_CTRL_FREEZER)
+            strlcat(ctrl, "freezer", sizeof(ctrl));
         if (ctrl[0] == '\0')
             strlcpy(ctrl, "-", sizeof(ctrl));
 
         {
-            int n = snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
-                "  cgroup[%d]  parent=%d  pids=%lu  controllers=%s\n",
-                i, g_cgroups[i].parent_id,
-                (unsigned long)g_cgroups[i].pids.current,
-                ctrl);
-            if (n > 0 && pos + n < (int)sizeof(tmp)) pos += n;
+            int n =
+                snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
+                         "  cgroup[%d]  parent=%d  pids=%lu  controllers=%s\n", i,
+                         g_cgroups[i].parent_id, (unsigned long)g_cgroups[i].pids.current, ctrl);
+            if (n > 0 && pos + n < (int)sizeof(tmp))
+                pos += n;
         }
     }
     spinlock_release(&g_cgroup_lock);
@@ -201,9 +191,7 @@ static int cgroup_v2_read(void *priv, const char *path, void *buf,
     return 0;
 }
 
-static int cgroup_v2_write(void *priv, const char *path, const void *buf,
-                           uint32_t size)
-{
+static int cgroup_v2_write(void *priv, const char *path, const void *buf, uint32_t size) {
     (void)priv;
     /* Parse write content to support cgroup migration and limit setting.
      *
@@ -214,8 +202,8 @@ static int cgroup_v2_write(void *priv, const char *path, const void *buf,
     const char *s = (const char *)buf;
     uint32_t len = size;
     /* Strip trailing whitespace/newline */
-    while (len > 0 && (s[len - 1] == '\n' || s[len - 1] == '\r' ||
-                       s[len - 1] == ' ' || s[len - 1] == '\t'))
+    while (len > 0 &&
+           (s[len - 1] == '\n' || s[len - 1] == '\r' || s[len - 1] == ' ' || s[len - 1] == '\t'))
         len--;
 
     /* Check for cgroup.procs prefix */
@@ -228,7 +216,8 @@ static int cgroup_v2_write(void *priv, const char *path, const void *buf,
         /* cgroup.procs <pid> */
         pid = 0;
         for (uint32_t i = (uint32_t)plen; i < len; i++) {
-            if (s[i] < '0' || s[i] > '9') return -EINVAL;
+            if (s[i] < '0' || s[i] > '9')
+                return -EINVAL;
             pid = pid * 10 + (int)(s[i] - '0');
         }
         is_migration = 1;
@@ -274,31 +263,103 @@ static int cgroup_v2_write(void *priv, const char *path, const void *buf,
                 if (slash && (size_t)(slash - p) < sizeof(g_cgroups[0].name)) {
                     char cg_name[32];
                     size_t nlen = (size_t)(slash - p);
-                    if (nlen > 31) nlen = 31;
+                    if (nlen > 31)
+                        nlen = 31;
                     memcpy(cg_name, p, nlen);
                     cg_name[nlen] = '\0';
                     /* Look up cgroup by name */
                     int found = -1;
                     for (int i = 0; i < CGROUP_MAX; i++) {
-                        if (g_cgroups[i].in_use &&
-                            g_cgroups[i].name[0] &&
+                        if (g_cgroups[i].in_use && g_cgroups[i].name[0] &&
                             strcmp(g_cgroups[i].name, cg_name) == 0) {
                             found = i;
                             break;
                         }
                     }
-                    if (found >= 0) cg_id = found;
+                    if (found >= 0)
+                        cg_id = found;
                 }
             }
         }
         return cgroup_attach(cg_id, pid);
     }
 
+    /* Controller enable/disable: "subtree_control +cpu -io" (or
+     * "cgroup.subtree_control ...").  Each token is +name (enable)
+     * or -name (disable). */
+    if (len > 0) {
+        char tmp[128];
+        if (len > 127)
+            len = 127;
+        memcpy(tmp, s, len);
+        tmp[len] = '\0';
+
+        char *space = strchr(tmp, ' ');
+        if (space && (strncmp(tmp, "subtree_control", 16) == 0 ||
+                      strncmp(tmp, "cgroup.subtree_control", 22) == 0)) {
+            int cg_id = 0;
+            /* Extract target cgroup name from path */
+            if (path) {
+                const char *p = path;
+                const char *base = "/sys/fs/cgroup/";
+                size_t blen = strlen(base);
+                if (memcmp(p, base, blen) == 0) {
+                    p += blen;
+                    const char *slash = strchr(p, '/');
+                    char cg_name[32] = "";
+                    if (slash && (size_t)(slash - p) < sizeof(cg_name)) {
+                        size_t nlen = (size_t)(slash - p);
+                        memcpy(cg_name, p, nlen);
+                        cg_name[nlen] = '\0';
+                    }
+                    if (cg_name[0]) {
+                        for (int i = 0; i < CGROUP_MAX; i++) {
+                            if (g_cgroups[i].in_use && g_cgroups[i].name[0] &&
+                                strcmp(g_cgroups[i].name, cg_name) == 0) {
+                                cg_id = i;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (cg_id < 0 || cg_id >= CGROUP_MAX)
+                return -EINVAL;
+
+            /* Parse each +/-controller token */
+            space++;
+            while (*space) {
+                while (*space == ' ' || *space == '\t')
+                    space++;
+                if (*space == '\0')
+                    break;
+                char op = *space++; /* '+' or '-' */
+                if (op != '+' && op != '-')
+                    return -EINVAL;
+                char name[16];
+                size_t ni = 0;
+                while (*space && *space != ' ' && *space != '\t') {
+                    if (ni < sizeof(name) - 1)
+                        name[ni++] = *space;
+                    space++;
+                }
+                name[ni] = '\0';
+                if (name[0] == '\0')
+                    return -EINVAL;
+                int ret = cgroup_set_controller(cg_id, name, op == '+');
+                if (ret < 0)
+                    return ret;
+            }
+            return 0;
+        }
+    }
+
     /* Key-value setting: "cpu.max 50000 100000", "memory.max 1048576", etc. */
     if (len > 0) {
         /* Copy to a temporary buffer */
         char tmp[128];
-        if (len > 127) len = 127;
+        if (len > 127)
+            len = 127;
         memcpy(tmp, s, len);
         tmp[len] = '\0';
 
@@ -328,14 +389,14 @@ static int cgroup_v2_write(void *priv, const char *path, const void *buf,
                         char cg_name[32] = "";
                         if (slash) {
                             size_t nlen = (size_t)(slash - p);
-                            if (nlen > 31) nlen = 31;
+                            if (nlen > 31)
+                                nlen = 31;
                             memcpy(cg_name, p, nlen);
                             cg_name[nlen] = '\0';
                         }
                         if (cg_name[0]) {
                             for (int i = 0; i < CGROUP_MAX; i++) {
-                                if (g_cgroups[i].in_use &&
-                                    g_cgroups[i].name[0] &&
+                                if (g_cgroups[i].in_use && g_cgroups[i].name[0] &&
                                     strcmp(g_cgroups[i].name, cg_name) == 0) {
                                     cg_id = i;
                                     break;
@@ -361,14 +422,14 @@ static int cgroup_v2_write(void *priv, const char *path, const void *buf,
                         char cg_name[32] = "";
                         if (slash) {
                             size_t nlen = (size_t)(slash - p);
-                            if (nlen > 31) nlen = 31;
+                            if (nlen > 31)
+                                nlen = 31;
                             memcpy(cg_name, p, nlen);
                             cg_name[nlen] = '\0';
                         }
                         if (cg_name[0]) {
                             for (int i = 0; i < CGROUP_MAX; i++) {
-                                if (g_cgroups[i].in_use &&
-                                    g_cgroups[i].name[0] &&
+                                if (g_cgroups[i].in_use && g_cgroups[i].name[0] &&
                                     strcmp(g_cgroups[i].name, cg_name) == 0) {
                                     cg_id = i;
                                     break;
@@ -389,7 +450,7 @@ static int cgroup_v2_write(void *priv, const char *path, const void *buf,
 }
 
 static struct vfs_ops cgroup_v2_vfs_ops = {
-    .read  = cgroup_v2_read,
+    .read = cgroup_v2_read,
     .write = cgroup_v2_write,
 };
 
@@ -399,28 +460,80 @@ static struct vfs_ops cgroup_v2_vfs_ops = {
 
 /* Create a new cgroup as a child of parent_id.
  * Returns cgroup ID (>= 0) on success, negative errno on failure. */
-int cgroup_create(int parent_id)
-{
+int cgroup_create(int parent_id) {
     if (parent_id != 0 && !cgroup_valid(parent_id))
         return -EINVAL;
 
     int id = cgroup_alloc_id();
-    if (id < 0) return id;
+    if (id < 0)
+        return id;
 
     g_cgroups[id].parent_id = parent_id;
     g_cgroups[id].cpu.max_period = CGROUP_CPU_PERIOD_DEFAULT;
-    g_cgroups[id].cpu.max_quota   = CGROUP_CPU_PERIOD_DEFAULT;
-    g_cgroups[id].cpu.usage_usec  = 0;
+    g_cgroups[id].cpu.max_quota = CGROUP_CPU_PERIOD_DEFAULT;
+    g_cgroups[id].cpu.usage_usec = 0;
+
+    /* Inherit the parent's controller enable mask (root default = all).
+     * New cgroups start with the same controllers their parent offers. */
+    if (cgroup_valid(parent_id))
+        g_cgroups[id].ctrl_mask = g_cgroups[parent_id].ctrl_mask;
+    else
+        g_cgroups[id].ctrl_mask = CG_CTRL_ALL;
 
     kprintf("[cgroup] created cgroup %d (parent %d)\n", id, parent_id);
     return id;
 }
 EXPORT_SYMBOL(cgroup_create);
 
+/* ── Controller enable/disable (cgroup.subtree_control) ──────────── */
+
+static uint32_t controller_name_to_mask(const char *name) {
+    if (!name)
+        return 0;
+    if (strcmp(name, "cpu") == 0)
+        return CG_CTRL_CPU;
+    if (strcmp(name, "memory") == 0)
+        return CG_CTRL_MEMORY;
+    if (strcmp(name, "io") == 0)
+        return CG_CTRL_IO;
+    if (strcmp(name, "pids") == 0)
+        return CG_CTRL_PIDS;
+    if (strcmp(name, "freezer") == 0)
+        return CG_CTRL_FREEZER;
+    return 0;
+}
+
+int cgroup_set_controller(int cg_id, const char *name, int enable) {
+    uint32_t bit = controller_name_to_mask(name);
+    if (bit == 0)
+        return -EINVAL;
+    if (cg_id < 0 || cg_id >= CGROUP_MAX || !g_cgroups[cg_id].in_use)
+        return -EINVAL;
+
+    spinlock_acquire(&g_cgroup_lock);
+    struct cgroup *cg = &g_cgroups[cg_id];
+    if (enable)
+        cg->ctrl_mask |= bit;
+    else
+        cg->ctrl_mask &= ~bit;
+    spinlock_release(&g_cgroup_lock);
+
+    kprintf("[cgroup] %s %s controller in cgroup %d (mask=0x%x)\n", enable ? "enabled" : "disabled",
+            name, cg_id, cg->ctrl_mask);
+    return (int)cg->ctrl_mask;
+}
+EXPORT_SYMBOL(cgroup_set_controller);
+
+uint32_t cgroup_controllers(int cg_id) {
+    if (cg_id < 0 || cg_id >= CGROUP_MAX || !g_cgroups[cg_id].in_use)
+        return 0;
+    return g_cgroups[cg_id].ctrl_mask;
+}
+EXPORT_SYMBOL(cgroup_controllers);
+
 /* Destroy a cgroup. All member processes are moved to the root cgroup.
  * Returns 0 on success. */
-int cgroup_destroy(int cg_id)
-{
+int cgroup_destroy(int cg_id) {
     if (!cgroup_valid(cg_id) || cg_id == 0)
         return -EINVAL;
 
@@ -432,7 +545,8 @@ int cgroup_destroy(int cg_id)
      * spinlock, so calling it here would self-deadlock. */
     for (int i = 0; i < CGROUP_MAX_PIDS; i++) {
         int pid = cg->members[i];
-        if (pid == 0) continue;
+        if (pid == 0)
+            continue;
         cg->members[i] = 0;
         cg->num_pids--;
         /* Attach to root cgroup (best effort — root may be full) */
@@ -455,8 +569,7 @@ EXPORT_SYMBOL(cgroup_destroy);
 
 /* Attach a process (PID) to a cgroup.
  * Returns 0 on success, negative errno on failure. */
-int cgroup_attach(int cg_id, int pid)
-{
+int cgroup_attach(int cg_id, int pid) {
     if (!cgroup_valid(cg_id))
         return -EINVAL;
 
@@ -494,7 +607,8 @@ int cgroup_attach(int cg_id, int pid)
     /* Remove from old cgroup first */
     for (int i = 0; i < CGROUP_MAX_PIDS; i++) {
         for (int j = 0; j < CGROUP_MAX; j++) {
-            if (!g_cgroups[j].in_use) continue;
+            if (!g_cgroups[j].in_use)
+                continue;
             for (int k = 0; k < CGROUP_MAX_PIDS; k++) {
                 if (g_cgroups[j].members[k] == pid) {
                     g_cgroups[j].members[k] = 0;
@@ -514,11 +628,11 @@ EXPORT_SYMBOL(cgroup_attach);
 
 /* Get the cgroup ID for a given PID.
  * Returns cgroup ID or -1 if not found. */
-int cgroup_of_pid(int pid)
-{
+int cgroup_of_pid(int pid) {
     spinlock_acquire(&g_cgroup_lock);
     for (int i = 0; i < CGROUP_MAX; i++) {
-        if (!g_cgroups[i].in_use) continue;
+        if (!g_cgroups[i].in_use)
+            continue;
         for (int j = 0; j < CGROUP_MAX_PIDS; j++) {
             if (g_cgroups[i].members[j] == pid) {
                 spinlock_release(&g_cgroup_lock);
@@ -536,42 +650,45 @@ int cgroup_of_pid(int pid)
 
 /* Set cpu.max quota (µs per period) and period (µs).
  * quota <= 0 means unlimited. */
-int cgroup_cpu_set_max(int cg_id, int64_t quota_us, int64_t period_us)
-{
-    if (!cgroup_valid(cg_id)) return -EINVAL;
+int cgroup_cpu_set_max(int cg_id, int64_t quota_us, int64_t period_us) {
+    if (!cgroup_valid(cg_id))
+        return -EINVAL;
     if (period_us < CGROUP_CPU_PERIOD_MIN || period_us > CGROUP_CPU_PERIOD_MAX)
         return -EINVAL;
 
     struct cgroup *cg = &g_cgroups[cg_id];
     spinlock_acquire(&g_cgroup_lock);
-    cg->cpu.max_quota   = quota_us <= 0 ? CGROUP_CPU_PERIOD_DEFAULT : (uint64_t)quota_us;
-    cg->cpu.max_period  = (uint64_t)period_us;
-    cg->cpu.throttled   = 0;
+    cg->cpu.max_quota = quota_us <= 0 ? CGROUP_CPU_PERIOD_DEFAULT : (uint64_t)quota_us;
+    cg->cpu.max_period = (uint64_t)period_us;
+    cg->cpu.throttled = 0;
     spinlock_release(&g_cgroup_lock);
     return 0;
 }
 EXPORT_SYMBOL(cgroup_cpu_set_max);
 
 /* Query cpu.max values. */
-void cgroup_cpu_get_max(int cg_id, uint64_t *quota, uint64_t *period)
-{
-    if (!cgroup_valid(cg_id)) return;
+void cgroup_cpu_get_max(int cg_id, uint64_t *quota, uint64_t *period) {
+    if (!cgroup_valid(cg_id))
+        return;
     struct cgroup *cg = &g_cgroups[cg_id];
-    if (quota)  *quota  = cg->cpu.max_quota;
-    if (period) *period = cg->cpu.max_period;
+    if (quota)
+        *quota = cg->cpu.max_quota;
+    if (period)
+        *period = cg->cpu.max_period;
 }
 
 /* Account CPU usage (called by scheduler on context switch).
  * @pid: process that ran
  * @delta_us: microseconds of CPU time consumed
  * Returns 1 if the process was throttled, 0 otherwise. */
-int cgroup_cpu_account(int pid, uint64_t delta_us)
-{
+int cgroup_cpu_account(int pid, uint64_t delta_us) {
     int cg_id = cgroup_of_pid(pid);
-    if (cg_id < 0 || !cgroup_valid(cg_id)) return 0;
+    if (cg_id < 0 || !cgroup_valid(cg_id))
+        return 0;
 
     struct cgroup *cg = &g_cgroups[cg_id];
-    if (cg->cpu.max_quota == 0) return 0; /* unlimited */
+    if (cg->cpu.max_quota == 0)
+        return 0; /* unlimited */
 
     spinlock_acquire(&g_cgroup_lock);
     cg->cpu.usage_usec += delta_us;
@@ -596,21 +713,24 @@ int cgroup_cpu_account(int pid, uint64_t delta_us)
 EXPORT_SYMBOL(cgroup_cpu_account);
 
 /* Check if a cgroup is currently throttled. */
-int cgroup_cpu_is_throttled(int cg_id)
-{
-    if (!cgroup_valid(cg_id)) return 0;
+int cgroup_cpu_is_throttled(int cg_id) {
+    if (!cgroup_valid(cg_id))
+        return 0;
     return g_cgroups[cg_id].cpu.throttled;
 }
 
 /* Get CPU throttling statistics. */
-void cgroup_cpu_stat(int cg_id, uint64_t *usage_usec,
-                     uint64_t *nr_throttled, uint64_t *throttled_usec)
-{
-    if (!cgroup_valid(cg_id)) return;
+void cgroup_cpu_stat(int cg_id, uint64_t *usage_usec, uint64_t *nr_throttled,
+                     uint64_t *throttled_usec) {
+    if (!cgroup_valid(cg_id))
+        return;
     struct cgroup *cg = &g_cgroups[cg_id];
-    if (usage_usec)       *usage_usec       = cg->cpu.usage_usec;
-    if (nr_throttled)     *nr_throttled     = cg->cpu.nr_throttled;
-    if (throttled_usec)   *throttled_usec   = cg->cpu.throttled_usec;
+    if (usage_usec)
+        *usage_usec = cg->cpu.usage_usec;
+    if (nr_throttled)
+        *nr_throttled = cg->cpu.nr_throttled;
+    if (throttled_usec)
+        *throttled_usec = cg->cpu.throttled_usec;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -618,9 +738,9 @@ void cgroup_cpu_stat(int cg_id, uint64_t *usage_usec,
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* Set memory.max limit (bytes). 0 = unlimited. */
-int cgroup_mem_set_max(int cg_id, uint64_t max_bytes)
-{
-    if (!cgroup_valid(cg_id)) return -EINVAL;
+int cgroup_mem_set_max(int cg_id, uint64_t max_bytes) {
+    if (!cgroup_valid(cg_id))
+        return -EINVAL;
     struct cgroup *cg = &g_cgroups[cg_id];
     spinlock_acquire(&g_cgroup_lock);
     cg->mem.max_bytes = max_bytes;
@@ -635,9 +755,9 @@ EXPORT_SYMBOL(cgroup_mem_set_max);
 
 /* Set memory.high limit (bytes). 0 = unlimited.
  * When exceeded, reclaim is aggressively attempted. */
-int cgroup_mem_set_high(int cg_id, uint64_t high_bytes)
-{
-    if (!cgroup_valid(cg_id)) return -EINVAL;
+int cgroup_mem_set_high(int cg_id, uint64_t high_bytes) {
+    if (!cgroup_valid(cg_id))
+        return -EINVAL;
     struct cgroup *cg = &g_cgroups[cg_id];
     spinlock_acquire(&g_cgroup_lock);
     cg->mem.high_bytes = high_bytes;
@@ -650,10 +770,10 @@ EXPORT_SYMBOL(cgroup_mem_set_high);
  * @pid: process allocating memory
  * @nr_pages: number of pages allocated (positive) or freed (negative)
  * Returns 1 if cgroup OOM should be triggered, 0 otherwise. */
-int cgroup_mem_account(int pid, int64_t nr_pages)
-{
+int cgroup_mem_account(int pid, int64_t nr_pages) {
     int cg_id = cgroup_of_pid(pid);
-    if (cg_id < 0 || !cgroup_valid(cg_id)) return 0;
+    if (cg_id < 0 || !cgroup_valid(cg_id))
+        return 0;
 
     struct cgroup *cg = &g_cgroups[cg_id];
     spinlock_acquire(&g_cgroup_lock);
@@ -690,24 +810,28 @@ int cgroup_mem_account(int pid, int64_t nr_pages)
 EXPORT_SYMBOL(cgroup_mem_account);
 
 /* Query memory usage and limits. */
-void cgroup_mem_stat(int cg_id, uint64_t *usage, uint64_t *max_usage,
-                     uint64_t *limit, uint64_t *high_limit,
-                     int *oom_kills)
-{
-    if (!cgroup_valid(cg_id)) return;
+void cgroup_mem_stat(int cg_id, uint64_t *usage, uint64_t *max_usage, uint64_t *limit,
+                     uint64_t *high_limit, int *oom_kills) {
+    if (!cgroup_valid(cg_id))
+        return;
     struct cgroup *cg = &g_cgroups[cg_id];
-    if (usage)      *usage      = cg->mem.usage_bytes;
-    if (max_usage)  *max_usage  = cg->mem.max_usage;
-    if (limit)      *limit      = cg->mem.max_bytes;
-    if (high_limit) *high_limit = cg->mem.high_bytes;
-    if (oom_kills)  *oom_kills  = cg->mem.oom_kills;
+    if (usage)
+        *usage = cg->mem.usage_bytes;
+    if (max_usage)
+        *max_usage = cg->mem.max_usage;
+    if (limit)
+        *limit = cg->mem.max_bytes;
+    if (high_limit)
+        *high_limit = cg->mem.high_bytes;
+    if (oom_kills)
+        *oom_kills = cg->mem.oom_kills;
 }
 
 /* Kill the largest process in a cgroup (OOM handler).
  * Returns PID of killed process, or -1 if none. */
-int cgroup_oom_kill(int cg_id)
-{
-    if (!cgroup_valid(cg_id)) return -EINVAL;
+int cgroup_oom_kill(int cg_id) {
+    if (!cgroup_valid(cg_id))
+        return -EINVAL;
 
     struct cgroup *cg = &g_cgroups[cg_id];
     int victim = -1;
@@ -716,7 +840,8 @@ int cgroup_oom_kill(int cg_id)
     spinlock_acquire(&g_cgroup_lock);
     for (int i = 0; i < CGROUP_MAX_PIDS; i++) {
         int pid = cg->members[i];
-        if (pid == 0) continue;
+        if (pid == 0)
+            continue;
         uint64_t mem = process_get_mem_usage(pid); /* defined in process.h */
         if (mem > max_mem) {
             max_mem = mem;
@@ -725,8 +850,8 @@ int cgroup_oom_kill(int cg_id)
     }
 
     if (victim > 0) {
-        kprintf("[cgroup OOM] killing PID %d (mem %llu) in cgroup %d\n",
-                victim, (unsigned long long)max_mem, cg_id);
+        kprintf("[cgroup OOM] killing PID %d (mem %llu) in cgroup %d\n", victim,
+                (unsigned long long)max_mem, cg_id);
         process_kill(victim);
         cg->mem.oom_kills++;
     }
@@ -746,11 +871,10 @@ EXPORT_SYMBOL(cgroup_oom_kill);
  * @wbps: write bytes per second limit (0 = unlimited)
  * @riops: read IOPS limit (0 = unlimited)
  * @wiops: write IOPS limit (0 = unlimited) */
-int cgroup_io_set_limit(int cg_id, uint32_t major, uint32_t minor,
-                        uint64_t rbps, uint64_t wbps,
-                        uint64_t riops, uint64_t wiops)
-{
-    if (!cgroup_valid(cg_id)) return -EINVAL;
+int cgroup_io_set_limit(int cg_id, uint32_t major, uint32_t minor, uint64_t rbps, uint64_t wbps,
+                        uint64_t riops, uint64_t wiops) {
+    if (!cgroup_valid(cg_id))
+        return -EINVAL;
 
     struct cgroup *cg = &g_cgroups[cg_id];
     spinlock_acquire(&g_cgroup_lock);
@@ -758,13 +882,11 @@ int cgroup_io_set_limit(int cg_id, uint32_t major, uint32_t minor,
     /* Find existing device entry or create one */
     int slot = -1;
     for (int i = 0; i < CGROUP_IO_MAX_DEVICES; i++) {
-        if (cg->io.devices[i].major == major &&
-            cg->io.devices[i].minor == minor) {
+        if (cg->io.devices[i].major == major && cg->io.devices[i].minor == minor) {
             slot = i;
             break;
         }
-        if (slot < 0 && cg->io.devices[i].major == 0 &&
-            cg->io.devices[i].minor == 0)
+        if (slot < 0 && cg->io.devices[i].major == 0 && cg->io.devices[i].minor == 0)
             slot = i;
     }
     if (slot < 0) {
@@ -774,8 +896,8 @@ int cgroup_io_set_limit(int cg_id, uint32_t major, uint32_t minor,
 
     cg->io.devices[slot].major = (uint16_t)major;
     cg->io.devices[slot].minor = (uint16_t)minor;
-    cg->io.devices[slot].rbps  = rbps;
-    cg->io.devices[slot].wbps  = wbps;
+    cg->io.devices[slot].rbps = rbps;
+    cg->io.devices[slot].wbps = wbps;
     cg->io.devices[slot].riops = riops;
     cg->io.devices[slot].wiops = wiops;
     cg->io.devices[slot].in_use = 1;
@@ -791,16 +913,17 @@ EXPORT_SYMBOL(cgroup_io_set_limit);
  * @is_write: 1 for write, 0 for read
  * @bytes: size of the I/O in bytes
  * Returns 1 if the I/O should be throttled (delayed), 0 if allowed. */
-int cgroup_io_throttle_check(int cg_id, int is_write, uint64_t bytes)
-{
-    if (!cgroup_valid(cg_id)) return 0;
+int cgroup_io_throttle_check(int cg_id, int is_write, uint64_t bytes) {
+    if (!cgroup_valid(cg_id))
+        return 0;
 
     struct cgroup *cg = &g_cgroups[cg_id];
     spinlock_acquire(&g_cgroup_lock);
 
     /* Check against all device limits — for simplicity, aggregate */
     for (int i = 0; i < CGROUP_IO_MAX_DEVICES; i++) {
-        if (!cg->io.devices[i].in_use) continue;
+        if (!cg->io.devices[i].in_use)
+            continue;
         struct cgroup_io_device *dev = &cg->io.devices[i];
 
         uint64_t limit = is_write ? dev->wbps : dev->rbps;
@@ -835,9 +958,9 @@ int cgroup_io_throttle_check(int cg_id, int is_write, uint64_t bytes)
 EXPORT_SYMBOL(cgroup_io_throttle_check);
 
 /* Get IO statistics for a cgroup. */
-int cgroup_io_stat(int cg_id, struct cgroup_io_device *devices, int max)
-{
-    if (!cgroup_valid(cg_id)) return -EINVAL;
+int cgroup_io_stat(int cg_id, struct cgroup_io_device *devices, int max) {
+    if (!cgroup_valid(cg_id))
+        return -EINVAL;
 
     struct cgroup *cg = &g_cgroups[cg_id];
     int count = 0;
@@ -856,9 +979,9 @@ int cgroup_io_stat(int cg_id, struct cgroup_io_device *devices, int max)
 
 /* Set the maximum number of processes (threads) allowed in a cgroup.
  * 0 = unlimited. */
-int cgroup_pids_set_max(int cg_id, int64_t max_pids)
-{
-    if (!cgroup_valid(cg_id)) return -EINVAL;
+int cgroup_pids_set_max(int cg_id, int64_t max_pids) {
+    if (!cgroup_valid(cg_id))
+        return -EINVAL;
     struct cgroup *cg = &g_cgroups[cg_id];
     spinlock_acquire(&g_cgroup_lock);
     cg->pids.max = max_pids > 0 ? (uint64_t)max_pids : 0;
@@ -872,10 +995,10 @@ EXPORT_SYMBOL(cgroup_pids_set_max);
  * @pid: new PID (for fork) or exiting PID
  * @is_fork: 1 for fork, 0 for exit
  * Returns 0 on success, -EAGAIN if the limit would be exceeded. */
-int cgroup_pids_account(int pid, int is_fork)
-{
+int cgroup_pids_account(int pid, int is_fork) {
     int cg_id = cgroup_of_pid(pid);
-    if (cg_id < 0) cg_id = 0; /* default to root */
+    if (cg_id < 0)
+        cg_id = 0; /* default to root */
 
     struct cgroup *cg = &g_cgroups[cg_id];
     spinlock_acquire(&g_cgroup_lock);
@@ -897,11 +1020,13 @@ int cgroup_pids_account(int pid, int is_fork)
 EXPORT_SYMBOL(cgroup_pids_account);
 
 /* Query PID controller status. */
-void cgroup_pids_stat(int cg_id, uint64_t *current, uint64_t *max)
-{
-    if (!cgroup_valid(cg_id)) return;
-    if (current) *current = g_cgroups[cg_id].pids.current;
-    if (max)     *max     = g_cgroups[cg_id].pids.max;
+void cgroup_pids_stat(int cg_id, uint64_t *current, uint64_t *max) {
+    if (!cgroup_valid(cg_id))
+        return;
+    if (current)
+        *current = g_cgroups[cg_id].pids.current;
+    if (max)
+        *max = g_cgroups[cg_id].pids.max;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -911,9 +1036,9 @@ void cgroup_pids_stat(int cg_id, uint64_t *current, uint64_t *max)
 /* Freeze all tasks in a cgroup.
  * Frozen tasks are not scheduled until unfrozen.
  * Returns 0 on success. */
-int cgroup_freeze(int cg_id)
-{
-    if (!cgroup_valid(cg_id)) return -EINVAL;
+int cgroup_freeze(int cg_id) {
+    if (!cgroup_valid(cg_id))
+        return -EINVAL;
 
     struct cgroup *cg = &g_cgroups[cg_id];
     spinlock_acquire(&g_cgroup_lock);
@@ -925,8 +1050,7 @@ int cgroup_freeze(int cg_id)
             process_freeze(cg->members[i]); /* defined in process.h */
         }
     }
-    kprintf("[cgroup] frozen cgroup %d (%d processes)\n",
-            cg_id, cg->num_pids);
+    kprintf("[cgroup] frozen cgroup %d (%d processes)\n", cg_id, cg->num_pids);
     spinlock_release(&g_cgroup_lock);
     return 0;
 }
@@ -934,9 +1058,9 @@ EXPORT_SYMBOL(cgroup_freeze);
 
 /* Unfreeze all tasks in a cgroup.
  * Returns 0 on success. */
-int cgroup_unfreeze(int cg_id)
-{
-    if (!cgroup_valid(cg_id)) return -EINVAL;
+int cgroup_unfreeze(int cg_id) {
+    if (!cgroup_valid(cg_id))
+        return -EINVAL;
 
     struct cgroup *cg = &g_cgroups[cg_id];
     spinlock_acquire(&g_cgroup_lock);
@@ -948,8 +1072,7 @@ int cgroup_unfreeze(int cg_id)
             process_unfreeze(cg->members[i]); /* defined in process.h */
         }
     }
-    kprintf("[cgroup] unfrozen cgroup %d (%d processes)\n",
-            cg_id, cg->num_pids);
+    kprintf("[cgroup] unfrozen cgroup %d (%d processes)\n", cg_id, cg->num_pids);
     spinlock_release(&g_cgroup_lock);
     return 0;
 }
@@ -957,9 +1080,9 @@ EXPORT_SYMBOL(cgroup_unfreeze);
 
 /* Query freezer state for a cgroup.
  * Returns CGROUP_THAWED or CGROUP_FROZEN. */
-int cgroup_freezer_state(int cg_id)
-{
-    if (!cgroup_valid(cg_id)) return CGROUP_THAWED;
+int cgroup_freezer_state(int cg_id) {
+    if (!cgroup_valid(cg_id))
+        return CGROUP_THAWED;
     return g_cgroups[cg_id].freezer.state;
 }
 
@@ -968,11 +1091,11 @@ int cgroup_freezer_state(int cg_id)
 /* Write a cgroup control file value.
  * Format: "cg_id controller key value" or "cg_id value"
  * Returns 0 on success, negative on error. */
-int cgroup_write_control(int cg_id, const char *controller,
-                         const char *key, const char *value)
-{
-    if (!cgroup_valid(cg_id)) return -EINVAL;
-    if (!controller || !key || !value) return -EINVAL;
+int cgroup_write_control(int cg_id, const char *controller, const char *key, const char *value) {
+    if (!cgroup_valid(cg_id))
+        return -EINVAL;
+    if (!controller || !key || !value)
+        return -EINVAL;
 
     if (strcmp(controller, "cpu") == 0) {
         if (strcmp(key, "max") == 0) {
@@ -990,7 +1113,8 @@ int cgroup_write_control(int cg_id, const char *controller,
                     period = 0;
                     while (*s >= '0' && *s <= '9')
                         period = period * 10 + (uint64_t)(*s++ - '0');
-                    if (period == 0) period = CGROUP_CPU_PERIOD_DEFAULT;
+                    if (period == 0)
+                        period = CGROUP_CPU_PERIOD_DEFAULT;
                 }
             }
             return cgroup_cpu_set_max(cg_id, (int64_t)quota, (int64_t)period);
@@ -1032,9 +1156,9 @@ int cgroup_write_control(int cg_id, const char *controller,
  *  Initialization
  * ═══════════════════════════════════════════════════════════════════════ */
 
-void cgroup_init(void)
-{
-    if (g_cgroup_initialized) return;
+void cgroup_init(void) {
+    if (g_cgroup_initialized)
+        return;
 
     memset(g_cgroups, 0, sizeof(g_cgroups));
     spinlock_init(&g_cgroup_lock);
@@ -1045,7 +1169,8 @@ void cgroup_init(void)
     g_cgroups[0].id = 0;
     g_cgroups[0].parent_id = -1;
     g_cgroups[0].cpu.max_period = CGROUP_CPU_PERIOD_DEFAULT;
-    g_cgroups[0].cpu.max_quota   = CGROUP_CPU_PERIOD_DEFAULT;
+    g_cgroups[0].cpu.max_quota = CGROUP_CPU_PERIOD_DEFAULT;
+    g_cgroups[0].ctrl_mask = CG_CTRL_ALL; /* all controllers enabled at root */
     g_num_cgroups = 1;
 
     /* Mount cgroup v2 at /sys/fs/cgroup/ */
@@ -1068,9 +1193,9 @@ EXPORT_SYMBOL(cgroup_init);
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── cgroup_fork: Initialize cgroup state for a new process ────────────── */
-static int cgroup_fork(struct process *task)
-{
-    if (!task) return -EINVAL;
+static int cgroup_fork(struct process *task) {
+    if (!task)
+        return -EINVAL;
     /* In a minimal implementation, the child inherits the parent's cgroup
      * by attaching the new PID to the parent's cgroup. */
     struct process *parent = process_get_current();
@@ -1085,35 +1210,35 @@ static int cgroup_fork(struct process *task)
 }
 
 /* ── cgroup_post_fork: Post-fork cgroup accounting ─────────────────────── */
-static void cgroup_post_fork(struct process *task)
-{
-    if (!task) return;
+static void cgroup_post_fork(struct process *task) {
+    if (!task)
+        return;
     /* Account this new process in the pids controller */
     cgroup_pids_account(task->pid, 1);
     kprintf("[cgroup] cgroup_post_fork: pid=%d\n", task->pid);
 }
 
 /* ── cgroup_exit: Clean up cgroup state on process exit ────────────────── */
-static void cgroup_exit(struct process *task)
-{
-    if (!task) return;
+static void cgroup_exit(struct process *task) {
+    if (!task)
+        return;
     /* Decrement the pids counter for this cgroup */
     cgroup_pids_account(task->pid, 0);
     kprintf("[cgroup] cgroup_exit: pid=%d\n", task->pid);
 }
 
 /* ── cgroup_can_fork: Check if cgroup allows forking ───────────────────── */
-static int cgroup_can_fork(struct process *task)
-{
-    if (!task) return -EINVAL;
+static int cgroup_can_fork(struct process *task) {
+    if (!task)
+        return -EINVAL;
     /* Check pids.max limit */
     int cg_id = cgroup_of_pid(task->pid);
     uint64_t current_pids_val = 0, max_pids_val = 0;
     if (cg_id >= 0) {
         cgroup_pids_stat(cg_id, &current_pids_val, &max_pids_val);
         if (max_pids_val > 0 && current_pids_val >= max_pids_val) {
-            kprintf("[cgroup] cgroup_can_fork: pid=%d DENIED (pids limit %llu)\n",
-                    task->pid, (unsigned long long)max_pids_val);
+            kprintf("[cgroup] cgroup_can_fork: pid=%d DENIED (pids limit %llu)\n", task->pid,
+                    (unsigned long long)max_pids_val);
             return -EAGAIN;
         }
     }
