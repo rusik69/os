@@ -98,6 +98,38 @@ jobs:
           echo "## Userspace Build" >> $GITHUB_STEP_SUMMARY
           echo "- initramfs.cpio: $(ls -lh userspace/initramfs.cpio | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
 
+  # ── Kernel module build verification ───────────────────────────────
+  # Builds all loadable kernel modules (.ko). Catches module-only build
+  # breakage (relocation errors, missing EXPORT_SYMBOL deps) that isn't
+  # exercised by the kernel/disk-image build.
+  modules:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
+    needs: [kernel]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ccache cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-modules-${{ github.sha }}
+          restore-keys: |
+            ccache-modules-
+            ccache-
+
+      - name: Build all kernel modules
+        run: |
+          make modules -j$(nproc) \
+            CC="ccache x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld
+          echo "Module count: $(find build -name '*.ko' | wc -l)"
+
+      - name: Summary
+        run: |
+          echo "## Kernel Module Build" >> $GITHUB_STEP_SUMMARY
+          echo "- All loadable kernel modules (.ko) built successfully" >> $GITHUB_STEP_SUMMARY
+
   # ── Host-side unit tests ───────────────────────────────────────────
   # test_logbuf segfault is pre-existing (masked by cancel-in-progress).
   # Non-blocking while the test is fixed.
