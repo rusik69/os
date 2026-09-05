@@ -2350,6 +2350,47 @@ Modules can be stored compressed in the initramfs to reduce disk and memory foot
 
 Detection occurs via magic byte matching in `module_compress.c`. Compressed files use the `.ko.gz` or `.ko.xz` extension. The decompressed data is passed to the standard ELF loader.
 
+### Executable ELF Loading (process exec)
+
+The module loader above handles kernel `.ko` ELF objects. A **separate**
+path — `src/kernel/elf.c` — loads *executable* ELF binaries into a
+userspace process, from `fork`+`execve`, `process_spawn()`, or
+`process_spawn_kernel()`. It shares the same ELF validation core
+(`elf_validate()`) but diverges in how segments are placed.
+
+**Exec path (`process_execve` / `process_spawn`):**
+
+1. Read the file (up to `ELF_MAX_SIZE`) into a kernel buffer via `vfs_read`.
+2. Validate size, program-header bounds (`e_phnum` capped at
+   `ELF_MAX_PHNUM`, `phdr_end` overflow-checked), ELF header fields
+   (64-bit class, x86-64 machine, `PT_LOAD` segments present).
+3. **Permission check** — `process_check_exec_perms()` verifies execute
+   permission against the caller's effective uid/gid.
+4. `elf_load()` → `elf_validate()` returns the validated **entry point**.
+   For userland ELFs it is a no-op mapping-wise: the caller performs the
+   PT_LOAD segment mapping into the process address space. Entry is
+   rejected if it lands above the userspace boundary
+   (`>= 0x800000000000`).
+5. **Dynamic binary detection** — `elf_find_interp()` scans for `PT_INTERP`;
+   if the binary is dynamically linked, the interpreter path is extracted
+   and loaded recursively as the initial object (matching a mini-LD.so
+   flow), otherwise the executable is statically linked.
+6. Segment mapping — PT_LOAD segments are mapped at their virtual
+   addresses with appropriate permissions (RX text, RW data), the stack,
+   heap/brk and (ASLR-randomized) mmap regions are set up, argv/envp are
+   copied in, then control transfers to user mode at the entry point.
+
+**Shared validation (`elf_validate`):** bounds-checks the ELF header,
+sanity-checks the program header table, assembles the set of `PT_LOAD`
+segments, verifies the entry is inside at least one segment, and reports
+whether the object is userland or kernel-mode. Kernel-mode ELFs get
+their segments loaded directly by `elf_load`; userland ELFs defer mapping
+to the exec/spawn caller.
+
+The kernel binary itself is also fed through this routine at boot (the
+`init` image), and `process_spawn_kernel` uses the kernel-mode path;
+kernel-initrd and container `init` processes go through the same flow.
+
 ### Module Signature Verification
 
 All modules are verified cryptographically before loading:
