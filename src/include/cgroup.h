@@ -33,12 +33,14 @@ struct cgroup_io_device {
 
 /* CPU controller state */
 struct cgroup_cpu_state {
-    uint64_t max_quota;      /* cpu.max quota in µs */
-    uint64_t max_period;     /* cpu.max period in µs */
-    uint64_t usage_usec;     /* CPU time used in µs */
-    int throttled;           /* 1 if currently throttled */
-    uint64_t nr_throttled;   /* total throttling events */
-    uint64_t throttled_usec; /* total time throttled in µs */
+    uint64_t max_quota;         /* cpu.max quota in µs */
+    uint64_t max_period;        /* cpu.max period in µs */
+    uint64_t usage_usec;        /* CPU time used in µs (total) */
+    uint64_t usage_user_usec;   /* CPU time in user mode µs */
+    uint64_t usage_system_usec; /* CPU time in kernel mode µs */
+    int throttled;              /* 1 if currently throttled */
+    uint64_t nr_throttled;      /* total throttling events */
+    uint64_t throttled_usec;    /* total time throttled in µs */
 };
 
 /* Memory controller state */
@@ -131,9 +133,11 @@ int cgroup_of_pid(int pid);
 int cgroup_cpu_set_max(int cg_id, int64_t quota_us, int64_t period_us);
 void cgroup_cpu_get_max(int cg_id, uint64_t *quota, uint64_t *period);
 int cgroup_cpu_account(int pid, uint64_t delta_us);
+/* Account CPU time to a cgroup's user/system buckets (@is_user 1=user). */
+int cgroup_cpu_account_split(int pid, uint64_t delta_us, int is_user);
 int cgroup_cpu_is_throttled(int cg_id);
-void cgroup_cpu_stat(int cg_id, uint64_t *usage_usec, uint64_t *nr_throttled,
-                     uint64_t *throttled_usec);
+void cgroup_cpu_stat(int cg_id, uint64_t *usage_usec, uint64_t *user_usec, uint64_t *system_usec,
+                     uint64_t *nr_throttled, uint64_t *throttled_usec);
 
 /* Memory controller */
 int cgroup_mem_set_max(int cg_id, uint64_t max_bytes);

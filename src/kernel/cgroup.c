@@ -837,16 +837,29 @@ void cgroup_cpu_get_max(int cg_id, uint64_t *quota, uint64_t *period) {
  * @pid: process that ran
  * @delta_us: microseconds of CPU time consumed
  * Returns 1 if the process was throttled, 0 otherwise. */
-int cgroup_cpu_account(int pid, uint64_t delta_us) {
+int cgroup_cpu_account_split(int pid, uint64_t delta_us, int is_user) {
     int cg_id = cgroup_of_pid(pid);
     if (cg_id < 0 || !cgroup_valid(cg_id))
         return 0;
 
     struct cgroup *cg = &g_cgroups[cg_id];
-    if (cg->cpu.max_quota == 0)
-        return 0; /* unlimited */
+    if (cg->cpu.max_quota == 0) {
+        /* No quota — still record user/system usage. */
+        spinlock_acquire(&g_cgroup_lock);
+        if (is_user)
+            cg->cpu.usage_user_usec += delta_us;
+        else
+            cg->cpu.usage_system_usec += delta_us;
+        cg->cpu.usage_usec += delta_us;
+        spinlock_release(&g_cgroup_lock);
+        return 0;
+    }
 
     spinlock_acquire(&g_cgroup_lock);
+    if (is_user)
+        cg->cpu.usage_user_usec += delta_us;
+    else
+        cg->cpu.usage_system_usec += delta_us;
     cg->cpu.usage_usec += delta_us;
 
     /* Check if we've exceeded the quota in this period */
@@ -860,11 +873,19 @@ int cgroup_cpu_account(int pid, uint64_t delta_us) {
     /* Period rotation check — approximate: reset when usage exceeds period */
     if (cg->cpu.usage_usec > cg->cpu.max_period) {
         cg->cpu.usage_usec = 0;
+        cg->cpu.usage_user_usec = 0;
+        cg->cpu.usage_system_usec = 0;
         cg->cpu.throttled = 0;
     }
 
     spinlock_release(&g_cgroup_lock);
     return 0;
+}
+EXPORT_SYMBOL(cgroup_cpu_account_split);
+
+int cgroup_cpu_account(int pid, uint64_t delta_us) {
+    /* Legacy total-only accounting is bucketed as system time. */
+    return cgroup_cpu_account_split(pid, delta_us, 0);
 }
 EXPORT_SYMBOL(cgroup_cpu_account);
 
@@ -875,14 +896,18 @@ int cgroup_cpu_is_throttled(int cg_id) {
     return g_cgroups[cg_id].cpu.throttled;
 }
 
-/* Get CPU throttling statistics. */
-void cgroup_cpu_stat(int cg_id, uint64_t *usage_usec, uint64_t *nr_throttled,
-                     uint64_t *throttled_usec) {
+/* Get CPU accounting statistics (total + user/system split). */
+void cgroup_cpu_stat(int cg_id, uint64_t *usage_usec, uint64_t *user_usec, uint64_t *system_usec,
+                     uint64_t *nr_throttled, uint64_t *throttled_usec) {
     if (!cgroup_valid(cg_id))
         return;
     struct cgroup *cg = &g_cgroups[cg_id];
     if (usage_usec)
         *usage_usec = cg->cpu.usage_usec;
+    if (user_usec)
+        *user_usec = cg->cpu.usage_user_usec;
+    if (system_usec)
+        *system_usec = cg->cpu.usage_system_usec;
     if (nr_throttled)
         *nr_throttled = cg->cpu.nr_throttled;
     if (throttled_usec)
