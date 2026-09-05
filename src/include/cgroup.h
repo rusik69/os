@@ -25,6 +25,8 @@ struct cgroup_io_device {
     uint64_t wiops;          /* write IOPS */
     uint64_t read_bytes_acc; /* accumulated bytes for token bucket */
     uint64_t write_bytes_acc;
+    uint64_t read_iops_acc; /* accumulated ops for IOPS token bucket */
+    uint64_t write_iops_acc;
     uint64_t last_tick;
     int in_use;
 };

@@ -453,10 +453,11 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count, void *buf, uint32_
         return -EINVAL;
     }
 
-    /* ── Per-cgroup I/O bandwidth limit enforcement (D315 task 8, io.max).
-     * Map the submitting process to its cgroup and run a token-bucket
-     * throttle check.  If the read/write bandwidth budget for the current
-     * block-window is exhausted, wait a tick so the budget refills.  The
+    /* ── Per-cgroup I/O bandwidth + IOPS limit enforcement (D315 tasks 8-9,
+     * io.max).  Map the submitting process to its cgroup and run a
+     * token-bucket throttle check covering both the bytes/sec and the
+     * IOPS budget.  If either budget for the current block-window is
+     * exhausted, wait a tick so the budget refills.  The
      * spin is bounded so a pathological (never-refilling) budget degrades
      * to running unthrottled instead of hanging the kernel.  No lock is
      * held across the wait — cgroup_io_throttle_check releases the cgroup

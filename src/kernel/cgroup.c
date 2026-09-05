@@ -1137,29 +1137,54 @@ int cgroup_io_throttle_check(int cg_id, int is_write, uint64_t bytes) {
             continue;
         struct cgroup_io_device *dev = &cg->io.devices[i];
 
-        uint64_t limit = is_write ? dev->wbps : dev->rbps;
-        if (limit > 0) {
-            /* Simple token bucket model */
-            uint64_t *acc = is_write ? &dev->write_bytes_acc : &dev->read_bytes_acc;
-            uint64_t now = timer_get_ticks();
-            uint64_t elapsed = now - dev->last_tick;
+        uint64_t bw_limit = is_write ? dev->wbps : dev->rbps;
+        uint64_t iops_limit = is_write ? dev->wiops : dev->riops;
 
-            /* Refill tokens */
-            if (elapsed > 0) {
-                uint64_t refill = (limit * elapsed) / TIMER_FREQ;
+        /* Both budgets (bytes/sec and IOPS) share a single token-bucket
+         * refill driven by the same elapsed window, per-device.
+         * 0 = unlimited for either. */
+        uint64_t *acc = is_write ? &dev->write_bytes_acc : &dev->read_bytes_acc;
+        uint64_t *iop_acc = is_write ? &dev->write_iops_acc : &dev->read_iops_acc;
+        uint64_t now = timer_get_ticks();
+        uint64_t elapsed = now - dev->last_tick;
+
+        /* Refill tokens for both the byte and the IOPS bucket. */
+        if (elapsed > 0) {
+            if (bw_limit > 0) {
+                uint64_t refill = (bw_limit * elapsed) / TIMER_FREQ;
                 if (*acc > refill)
                     *acc -= refill;
                 else
                     *acc = 0;
-                dev->last_tick = now;
             }
+            if (iops_limit > 0) {
+                uint64_t refill = (iops_limit * elapsed) / TIMER_FREQ;
+                if (*iop_acc > refill)
+                    *iop_acc -= refill;
+                else
+                    *iop_acc = 0;
+            }
+            dev->last_tick = now;
+        }
 
-            /* Check if we have enough tokens */
+        /* Bandwidth (bytes/sec) gate: the request consumes `bytes`. */
+        uint64_t limit = is_write ? dev->wbps : dev->rbps;
+        if (limit > 0) {
             if (*acc + bytes > limit) {
                 spinlock_release(&g_cgroup_lock);
                 return 1; /* throttle */
             }
             *acc += bytes;
+        }
+
+        /* IOPS gate: an I/O request costs a single operation token
+         * regardless of its byte size. */
+        if (iops_limit > 0) {
+            if (*iop_acc + 1 > iops_limit) {
+                spinlock_release(&g_cgroup_lock);
+                return 1; /* throttle */
+            }
+            *iop_acc += 1;
         }
     }
 
