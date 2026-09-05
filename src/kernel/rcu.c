@@ -2,6 +2,7 @@
 #include "rcu.h"
 #include "types.h"
 #include "smp.h"
+#include "cpuhp.h"
 #include "printf.h"
 #include "timer.h"
 #include "scheduler.h"
@@ -101,6 +102,24 @@ static inline struct rcu_cpu_state *this_rcu_state(void) {
     return &rcu_state_percpu[cpu_id];
 }
 
+/*
+ * rcu_cpu_must_pass_qs() — should a CPU constrain grace-period completion?
+ *
+ * A grace period completes once every *online* CPU has passed through a
+ * quiescent state.  Offline CPUs never run again until re-onlined, so they
+ * must NOT block GP completion or they would be flagged as permanently
+ * stalled and eventually panic the kernel.  When a CPU is taken offline its
+ * RCU callback processing is implicitly offloaded to the remaining online
+ * CPUs: the global done list is drained by whichever online CPU runs the
+ * next timer tick, and this helper excludes the offlined CPU from the
+ * quiescent-state wait so the grace period can still finish.
+ */
+static inline int rcu_cpu_must_pass_qs(int cpu_id) {
+    if (cpu_id < 0 || cpu_id >= SMP_MAX_CPUS)
+        return 0;
+    return cpuhp_is_online(cpu_id);
+}
+
 /* ── Lock/unlock for callback list manipulation ──────────────────── */
 static inline void rcu_cb_lock_acquire(void) {
     for (;;) {
@@ -189,9 +208,13 @@ static void rcu_dump_stall_info(uint64_t elapsed_ticks, int printed_warning,
     kprintf("---  ---------  --------------  ----------  ------\n");
     int first_stalled = -1;
     for (int c = 0; c < ncpus; c++) {
+        if (c >= SMP_MAX_CPUS)
+            continue;
         uint64_t cpu_elapsed = (now - rcu_state_percpu[c].last_qs_tick) * 1000ULL / TIMER_FREQ;
         const char *status;
-        if (rcu_state_percpu[c].gp_seq < rcu_gp_seq) {
+        if (!rcu_cpu_must_pass_qs(c)) {
+            status = "offline";
+        } else if (rcu_state_percpu[c].gp_seq < rcu_gp_seq) {
             status = "STALLED";
             if (first_stalled < 0)
                 first_stalled = c;
@@ -293,10 +316,14 @@ static int rcu_try_complete_gp(void) {
     int ncpus = smp_get_cpu_count();
     uint64_t current_gp = rcu_gp_seq;   /* snapshot before scanning */
 
-    /* Check whether every online CPU has acknowledged this GP */
+    /* Check whether every online CPU has acknowledged this GP.
+     * Offline CPUs are excluded — they never run, so offloading is achieved
+     * by not letting them block GP completion. */
     for (int c = 0; c < ncpus; c++) {
+        if (!rcu_cpu_must_pass_qs(c))
+            continue; /* offline CPU — offloaded, does not constrain GP */
         if (rcu_state_percpu[c].gp_seq < current_gp)
-            return 0;  /* at least one CPU still pending */
+            return 0; /* at least one online CPU still pending */
     }
 
     /* All CPUs have passed through a QS — GP complete.
@@ -411,8 +438,11 @@ int rcu_check_stall(void) {
     int ncpus = smp_get_cpu_count();
     int stalled_cpus = 0;
 
-    /* Check if all CPUs have observed a QS since the GP started */
+    /* Check if all CPUs have observed a QS since the GP started.
+     * Offline CPUs are offloaded and never block the grace period. */
     for (int c = 0; c < ncpus; c++) {
+        if (!rcu_cpu_must_pass_qs(c))
+            continue;
         if (rcu_state_percpu[c].gp_seq < rcu_gp_seq)
             stalled_cpus++;
     }
@@ -553,6 +583,8 @@ void synchronize_rcu(void) {
     for (;;) {
         int all_quiet = 1;
         for (uint64_t c = 0; c < ncpus; c++) {
+            if (!rcu_cpu_must_pass_qs((int)c))
+                continue; /* offline CPU — offloaded, does not block GP */
             if (rcu_state_percpu[c].gp_seq < rcu_gp_seq) {
                 all_quiet = 0;
                 stalled_cpu = (int)c;
@@ -755,6 +787,42 @@ static int rcu_boost_get_priority(uint64_t gp_seq)
 
 /* ── Initialization ──────────────────────────────────────────────── */
 
+/*
+ * rcu_cpu_hotplug_notify() — RCU mirror of CPU hotplug transitions.
+ *
+ * When a CPU goes offline it can never pass a quiescent state again, but it
+ * must not hold up grace periods or trip the stall detector.  We bring its
+ * per-CPU state up to date with the current GP so GP completion only waits
+ * on the still-online CPUs (see rcu_cpu_must_pass_qs).  Any callbacks queued
+ * before the offline are drained by whichever online CPU runs the next timer
+ * tick — i.e. callback processing is offloaded to the remaining online CPUs.
+ */
+static void rcu_cpu_hotplug_notify(int cpu_id, enum cpuhp_state old_state,
+                                   enum cpuhp_state new_state) {
+    if (cpu_id < 0 || cpu_id >= SMP_MAX_CPUS)
+        return;
+
+    struct rcu_cpu_state *st = &rcu_state_percpu[cpu_id];
+
+    if (old_state == CPUHP_STATE_ONLINE && new_state != CPUHP_STATE_ONLINE) {
+        /* Going offline — catch up with the current GP so it never blocks
+         * GP completion or reads as stalled.  Callbacks stay on the global
+         * lists and are processed by an online CPU's timer tick. */
+        st->gp_seq = rcu_gp_seq;
+        st->last_qs_tick = timer_get_ticks();
+        __asm__ volatile("mfence" : : : "memory");
+        kprintf("[RCU] CPU %d offline: callback processing offloaded to "
+                "online CPUs (gp seq caught up to %llu)\n",
+                cpu_id, (unsigned long long)st->gp_seq);
+    } else if (new_state == CPUHP_STATE_ONLINE && old_state != CPUHP_STATE_ONLINE) {
+        /* Coming online — start current with the GP; it will record a
+         * real QS at its first context switch. */
+        st->gp_seq = rcu_gp_seq;
+        st->last_qs_tick = timer_get_ticks();
+        __asm__ volatile("mfence" : : : "memory");
+    }
+}
+
 void __init rcu_init(void) {
     for (int i = 0; i < SMP_MAX_CPUS; i++) {
         rcu_state_percpu[i].gp_seq = 0;
@@ -771,6 +839,10 @@ void __init rcu_init(void) {
     rcu_cb_lock = 0;
     rcu_n_cbs_queued = 0;
     rcu_n_cbs_invoked = 0;
+
+    /* Mirror CPU hotplug so offline CPUs never block GP completion and
+     * their callback processing is offloaded to the online CPUs. */
+    cpuhp_register_notify(rcu_cpu_hotplug_notify);
 
     kprintf("[OK] RCU initialized with call_rcu + stall detection "
             "(warn=%lums, panic=%lums)\n",
