@@ -16,10 +16,11 @@
  * Item S100 — IMA policy engine
  */
 
-#include "types.h"
-#include "string.h"
-#include "printf.h"
 #include "errno.h"
+#include "printf.h"
+#include "string.h"
+#include "types.h"
+#include "vfs.h"
 
 /* ── IMA policy actions ──────────────────────────────────────────── */
 #define IMA_POLICY_MEASURE   0x01   /* Measure the file */
@@ -35,7 +36,11 @@
 #define IMA_POLICY_FLAG_MAGIC      0x08   /* Match by fs magic */
 #define IMA_POLICY_FLAG_EXEC       0x10   /* Match exec file */
 #define IMA_POLICY_FLAG_MMAP       0x20   /* Match mmap'd file */
-#define IMA_POLICY_FLAG_MASK       0x40   /* Match by security label */
+#define IMA_POLICY_FLAG_MASK 0x40         /* Match by access mask */
+#define IMA_POLICY_FLAG_SMASK 0x80        /* Match by security label */
+
+/* ── IMA access-mask defined bits (analogous to VFS_R_OK/W_OK/X_OK) ─ */
+#define IMA_MAY_APPEND 8
 
 /* ── Policy rule ─────────────────────────────────────────────────── */
 #define IMA_MAX_RULES      64
@@ -49,6 +54,7 @@ struct ima_policy_rule {
     uint32_t gid;                 /* GID to match */
     uint32_t fs_magic;            /* Filesystem magic */
     uint32_t func;                /* Function type: exec, mmap, open */
+    uint32_t mask;                /* Access mask (VFS_R_OK|VFS_W_OK|VFS_X_OK) */
 };
 
 /* ── Global policy table ─────────────────────────────────────────── */
@@ -177,6 +183,74 @@ int ima_policy_add_rule(const char *rule_str)
             else if (val_len == 4 && strncmp(val_start, "FILE_MMAP", 4) == 0)
                 rule->func = 2;
             rule->flags |= IMA_POLICY_FLAG_EXEC;
+        } else if (key_len == 7 && strncmp(key_start, "fsmagic", 7) == 0) {
+            /* Filesystem magic: decimal or 0x hex. */
+            uint32_t val = 0;
+            int j = 0;
+            if (val_len >= 2 && val_start[0] == '0' &&
+                (val_start[1] == 'x' || val_start[1] == 'X')) {
+                j = 2;
+                for (; j < (int)val_len; j++) {
+                    char c = val_start[j];
+                    uint32_t d;
+                    if (c >= '0' && c <= '9')
+                        d = (uint32_t)(c - '0');
+                    else if (c >= 'a' && c <= 'f')
+                        d = (uint32_t)(c - 'a' + 10);
+                    else if (c >= 'A' && c <= 'F')
+                        d = (uint32_t)(c - 'A' + 10);
+                    else
+                        break;
+                    val = val * 16 + d;
+                }
+            } else {
+                for (; j < (int)val_len && val_start[j] >= '0' && val_start[j] <= '9'; j++)
+                    val = val * 10 + (uint32_t)(val_start[j] - '0');
+            }
+            rule->fs_magic = val;
+            rule->flags |= IMA_POLICY_FLAG_MAGIC;
+        } else if (key_len == 4 && strncmp(key_start, "mask", 4) == 0) {
+            /* Access mask: one or more tokens split by space, comma, or
+             * pipe.  Accepts short (r/w/x), word (read/write/exec/append)
+             * and Linux MAY_* forms. */
+            uint32_t m = 0;
+            const char *tok = val_start;
+            const char *end = val_start + val_len;
+            while (tok < end) {
+                while (tok < end && (*tok == ' ' || *tok == ',' || *tok == '|'))
+                    tok++;
+                const char *s = tok;
+                while (tok < end && *tok != ' ' && *tok != ',' && *tok != '|')
+                    tok++;
+                size_t tlen = (size_t)(tok - s);
+                if (tlen == 0)
+                    continue;
+                if (tlen == 1 && (*s == 'r' || *s == 'R'))
+                    m |= VFS_R_OK;
+                else if (tlen == 1 && (*s == 'w' || *s == 'W'))
+                    m |= VFS_W_OK;
+                else if (tlen == 1 && (*s == 'x' || *s == 'X'))
+                    m |= VFS_X_OK;
+                else if (tlen == 4 && strncmp(s, "read", 4) == 0)
+                    m |= VFS_R_OK;
+                else if (tlen == 5 && strncmp(s, "write", 5) == 0)
+                    m |= VFS_W_OK;
+                else if (tlen == 4 && strncmp(s, "exec", 4) == 0)
+                    m |= VFS_X_OK;
+                else if (tlen == 6 && strncmp(s, "append", 6) == 0)
+                    m |= IMA_MAY_APPEND;
+                else if (tlen == 8 && strncmp(s, "MAY_READ", 8) == 0)
+                    m |= VFS_R_OK;
+                else if (tlen == 9 && strncmp(s, "MAY_WRITE", 9) == 0)
+                    m |= VFS_W_OK;
+                else if (tlen == 8 && strncmp(s, "MAY_EXEC", 8) == 0)
+                    m |= VFS_X_OK;
+                else if (tlen == 10 && strncmp(s, "MAY_APPEND", 10) == 0)
+                    m |= IMA_MAY_APPEND;
+            }
+            rule->mask = m;
+            if (m)
+                rule->flags |= IMA_POLICY_FLAG_MASK;
         }
 
         /* Skip whitespace */
@@ -199,12 +273,12 @@ int ima_policy_add_rule(const char *rule_str)
  * @gid:    GID of the process.
  * @func:   Function type (1=FILE_CHECK, 2=MMAP).
  * @fs_magic: Filesystem magic number (0 = unknown).
+ * @mask:   Access mask (VFS_R_OK|VFS_W_OK|VFS_X_OK).
  *
  * Returns action bitmask (IMA_POLICY_MEASURE, etc.).
  */
-static uint32_t ima_policy_evaluate(const char *path, uint32_t uid, uint32_t gid,
-                              uint32_t func, uint32_t fs_magic)
-{
+static uint32_t ima_policy_evaluate(const char *path, uint32_t uid, uint32_t gid, uint32_t func,
+                                    uint32_t fs_magic, uint32_t mask) {
     if (!g_ima_policy_initialized || !path)
         return 0;
 
@@ -242,6 +316,13 @@ static uint32_t ima_policy_evaluate(const char *path, uint32_t uid, uint32_t gid
                 match = 0;
         }
 
+        /* Check access mask: rule fires when the requested access
+         * overlaps any of the rule's masked bits. */
+        if (match && (rule->flags & IMA_POLICY_FLAG_MASK)) {
+            if ((mask & rule->mask) == 0)
+                match = 0;
+        }
+
         if (match)
             return rule->action;
     }
@@ -254,10 +335,9 @@ static uint32_t ima_policy_evaluate(const char *path, uint32_t uid, uint32_t gid
  * ima_policy_should_measure — Convenience wrapper.
  * Returns 1 if the file should be measured, 0 otherwise.
  */
-static int ima_policy_should_measure(const char *path, uint32_t uid, uint32_t gid,
-                               uint32_t func, uint32_t fs_magic)
-{
-    uint32_t action = ima_policy_evaluate(path, uid, gid, func, fs_magic);
+static int ima_policy_should_measure(const char *path, uint32_t uid, uint32_t gid, uint32_t func,
+                                     uint32_t fs_magic, uint32_t mask) {
+    uint32_t action = ima_policy_evaluate(path, uid, gid, func, fs_magic, mask);
     if (action & IMA_POLICY_DONT_MEASURE)
         return 0;
     return action & IMA_POLICY_MEASURE;
@@ -267,10 +347,9 @@ static int ima_policy_should_measure(const char *path, uint32_t uid, uint32_t gi
  * ima_policy_should_appraise — Convenience wrapper.
  * Returns 1 if the file should be appraised, 0 otherwise.
  */
-static int ima_policy_should_appraise(const char *path, uint32_t uid, uint32_t gid,
-                                uint32_t func, uint32_t fs_magic)
-{
-    uint32_t action = ima_policy_evaluate(path, uid, gid, func, fs_magic);
+static int ima_policy_should_appraise(const char *path, uint32_t uid, uint32_t gid, uint32_t func,
+                                      uint32_t fs_magic, uint32_t mask) {
+    uint32_t action = ima_policy_evaluate(path, uid, gid, func, fs_magic, mask);
     if (action & IMA_POLICY_DONT_APPRAISE)
         return 0;
     return action & IMA_POLICY_APPRAISE;
