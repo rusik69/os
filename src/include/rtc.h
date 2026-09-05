@@ -20,8 +20,8 @@ void rtc_get_time(struct rtc_time *t);
  * boot_epoch stores the Unix epoch time at boot (in seconds).
  * clock_gettime(CLOCK_REALTIME) returns boot_epoch + ticks_elapsed.
  * clock_settime adjusts boot_epoch. */
-uint64_t rtc_get_epoch(void);       /* current wall clock epoch seconds */
-void     rtc_set_epoch(uint64_t s); /* set wall clock epoch (for settime) */
+uint64_t rtc_get_epoch(void);   /* current wall clock epoch seconds */
+void rtc_set_epoch(uint64_t s); /* set wall clock epoch (for settime) */
 
 /* Convert an rtc_time struct to Unix epoch seconds (days since 1970).
  * Exposed so syscall.c can compute from raw RTC time if needed. */
@@ -30,8 +30,8 @@ uint64_t rtc_to_epoch(const struct rtc_time *t);
 /* ── Periodic interrupt ────────────────────────────────────────────── */
 
 /* Enable or disable the RTC periodic interrupt at the given rate.
-   rate_hz must be a power-of-2 divisor of 32768 (2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192).
-   Returns 0 on success, -1 on invalid rate. */
+   rate_hz must be a power-of-2 divisor of 32768 (2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048,
+   4096, 8192). Returns 0 on success, -1 on invalid rate. */
 int rtc_set_periodic(int enable, int rate_hz);
 
 /* Wait for a given number of periodic ticks (blocking).
@@ -50,6 +50,12 @@ int rtc_alarm_enable(int enable);
 /* Set RTC alarm from epoch seconds. Writing 0 disables the alarm.
    Returns 0 on success, -1 on error. */
 int rtc_set_alarm_epoch(uint64_t epoch_sec);
+
+/* Sync the RTC hardware clock to the current system time.
+   Converts the running wall-clock epoch (boot epoch + uptime) back into a
+   calendar time and writes it to the CMOS RTC, so the RTC persists the
+   current time across reboot.  Returns 0 on success, -1 on failure. */
+int rtc_update_clock(void);
 
 /* RTC sysfs interface — creates /sys/class/rtc/rtc0/wakealarm */
 void rtc_sysfs_init(void);

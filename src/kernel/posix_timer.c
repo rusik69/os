@@ -306,6 +306,11 @@ int64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr) {
      */
     uint64_t new_epoch = (ts.tv_sec >= ticks_sec) ? (ts.tv_sec - ticks_sec) : 0;
     rtc_set_epoch(new_epoch);
+
+    /* Persist the new wall-clock time to the CMOS RTC so it survives
+     * reboot (the RTC is the persistent clock backing boot_epoch). */
+    rtc_update_clock();
+
     return 0;
 }
 

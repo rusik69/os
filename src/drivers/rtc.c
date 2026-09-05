@@ -269,6 +269,42 @@ uint64_t rtc_get_ticks(void) {
 
 /* ── Alarm API ─────────────────────────────────────────────────────── */
 
+/* Convert an epoch-second timestamp into calendar (rtc_time) form. */
+static void epoch_to_rtc_time(uint64_t epoch_sec, struct rtc_time *t) {
+    uint64_t remaining = epoch_sec;
+    memset(t, 0, sizeof(*t));
+    t->year = 2000;
+
+    /* Subtract years */
+    for (;;) {
+        int days = is_leap((int)t->year) ? 366 : 365;
+        uint64_t secs = (uint64_t)days * 86400ULL;
+        if (remaining < secs)
+            break;
+        remaining -= secs;
+        t->year++;
+    }
+
+    /* Subtract months */
+    for (int mo = 1; mo <= 12; mo++) {
+        int days = days_in_mon[mo - 1];
+        if (mo == 2 && is_leap((int)t->year))
+            days++;
+        uint64_t secs = (uint64_t)days * 86400ULL;
+        if (remaining < secs)
+            break;
+        remaining -= secs;
+        t->month = (uint8_t)mo;
+    }
+    t->month++; /* month is 1-indexed */
+    t->day = (uint8_t)(remaining / 86400ULL) + 1;
+    remaining %= 86400ULL;
+    t->hour = (uint8_t)(remaining / 3600ULL);
+    remaining %= 3600ULL;
+    t->minute = (uint8_t)(remaining / 60ULL);
+    t->second = (uint8_t)(remaining % 60ULL);
+}
+
 int rtc_set_alarm(const struct rtc_time *t) {
     if (!t)
         return -1;
@@ -306,39 +342,8 @@ int rtc_set_alarm_epoch(uint64_t epoch_sec) {
         return -1;
 
     /* Convert epoch seconds to rtc_time */
-    uint64_t remaining = epoch_sec;
     struct rtc_time t;
-    memset(&t, 0, sizeof(t));
-    t.year = 2000;
-
-    /* Subtract years */
-    for (;;) {
-        int days = is_leap((int)t.year) ? 366 : 365;
-        uint64_t secs = (uint64_t)days * 86400ULL;
-        if (remaining < secs)
-            break;
-        remaining -= secs;
-        t.year++;
-    }
-
-    /* Subtract months */
-    for (int mo = 1; mo <= 12; mo++) {
-        int days = days_in_mon[mo - 1];
-        if (mo == 2 && is_leap((int)t.year))
-            days++;
-        uint64_t secs = (uint64_t)days * 86400ULL;
-        if (remaining < secs)
-            break;
-        remaining -= secs;
-        t.month = (uint8_t)mo;
-    }
-    t.month++; /* month is 1-indexed */
-    t.day = (uint8_t)(remaining / 86400ULL) + 1;
-    remaining %= 86400ULL;
-    t.hour = (uint8_t)(remaining / 3600ULL);
-    remaining %= 3600ULL;
-    t.minute = (uint8_t)(remaining / 60ULL);
-    t.second = (uint8_t)(remaining % 60ULL);
+    epoch_to_rtc_time(epoch_sec, &t);
 
     g_wakealarm_epoch = epoch_sec;
     return rtc_set_alarm(&t);
@@ -631,8 +636,42 @@ static int rtc_read_time(struct rtc_time *tm) {
 }
 
 static int rtc_set_time(const struct rtc_time *tm) {
-    (void)tm;
+    if (!tm)
+        return -EINVAL;
+    if (tm->second > 59 || tm->minute > 59 || tm->hour > 23 || tm->day < 1 || tm->day > 31 ||
+        tm->month < 1 || tm->month > 12)
+        return -EINVAL;
+
+    /* Wait for any update cycle to complete so we don't clobber a
+     * running RTC update with a torn write. */
+    while (is_updating())
+        ;
+
+    /* Record Status-B so the 24-hour mode bit is set (clock stored as
+     * 0-23 hour in BCD — matching the rtc_get_time read path). */
+    uint8_t regb = cmos_read(RTC_STATUS_B);
+    regb |= 0x02; /* 24-hour mode */
+    cmos_write(RTC_STATUS_B, regb);
+
+    /* Write BCD-encoded time fields.  Omit day-of-week (register 0x06). */
+    cmos_write(RTC_SECONDS, bin_to_bcd(tm->second));
+    cmos_write(RTC_MINUTES, bin_to_bcd(tm->minute));
+    cmos_write(RTC_HOURS, bin_to_bcd(tm->hour));
+    cmos_write(RTC_DAY, bin_to_bcd(tm->day));
+    cmos_write(RTC_MONTH, bin_to_bcd(tm->month));
+    cmos_write(RTC_YEAR, bin_to_bcd((uint8_t)(tm->year % 100)));
+
     return 0;
+}
+
+/* Sync the RTC hardware clock to the current system time. */
+int rtc_update_clock(void) {
+    /* Current wall-clock = boot epoch + uptime. */
+    uint64_t now_sec = rtc_get_epoch() + (timer_get_ticks() / TIMER_FREQ);
+
+    struct rtc_time t;
+    epoch_to_rtc_time(now_sec, &t);
+    return rtc_set_time(&t);
 }
 
 /* Standard Linux RTC ioctl commands (from linux/rtc.h) */
