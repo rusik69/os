@@ -78,4 +78,14 @@ int firmware_cache_flush(void);
 /* Initialize firmware subsystem. */
 void firmware_init(void);
 
+/* ── Firmware loader sysfs interface ─────────────────────────── */
+/* Register a firmware name for sysfs-driven loading, creating
+ * /sys/class/firmware/<name>/{loading,data}.  Usermode writes the blob to
+ * data, then "0" to loading to commit it into the firmware cache so
+ * request_firmware() serves it.  Returns 0 on success, negative on error. */
+int firmware_sysfs_register(const char *name);
+
+/* Create the /sys/class/firmware/ container (idempotent). */
+void firmware_sysfs_init(void);
+
 #endif /* FIRMWARE_H */

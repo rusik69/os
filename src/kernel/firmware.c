@@ -1,13 +1,15 @@
 #define KERNEL_INTERNAL
 #include "firmware.h"
+
+#include "errno.h"
+#include "heap.h"
 #include "printf.h"
+#include "spinlock.h"
 #include "string.h"
+#include "sysfs.h"
+#include "timer.h"
 #include "types.h"
 #include "vfs.h"
-#include "heap.h"
-#include "spinlock.h"
-#include "errno.h"
-#include "timer.h"
 #include "workqueue.h"
 
 /* ── Built-in firmware table ─────────────────────────────────────────── */
@@ -482,7 +484,201 @@ int firmware_cache_flush(void)
     return flushed;
 }
 
-/* ── Stub: firmware_request ────────────────────────────────────────── */
+/* ── Firmware loader sysfs interface ─────────────────────────────────
+ *
+ * Exposes the Linux firmware-class ABI under /sys/class/firmware/:
+ *
+ *   /sys/class/firmware/<name>/loading   — write "1" to begin an upload,
+ *                                          "0" to commit it, "-1" to abort
+ *   /sys/class/firmware/<name>/data       — write the firmware blob bytes
+ *
+ * This lets environment (or a userspace helper) provide blobs that the
+ * kernel firmware loader then returns from request_firmware() — used when
+ * a device's firmware is not embedded and not present on the firmware
+ * filesystem, mirroring Linux's CONFIG_FW_LOADER_USER_HELPER fallback.
+ */
+
+#define FIRMWARE_UPLOAD_MAX 4
+#define FIRMWARE_UPLOAD_NAME_LEN 48
+
+/* Per-upload dynamic sysfs state. */
+struct firmware_upload {
+    char name[FIRMWARE_UPLOAD_NAME_LEN];
+    uint8_t *buf; /* accumulated data (kmalloc'd) */
+    size_t len;   /* bytes accumulated so far */
+    size_t cap;   /* allocated capacity */
+    int in_progress;
+    int in_use;
+};
+
+static struct firmware_upload g_fw_uploads[FIRMWARE_UPLOAD_MAX];
+
+/* Find the upload slot for a given firmware name, or NULL. */
+static struct firmware_upload *fw_upload_lookup(const char *name) {
+    for (int i = 0; i < FIRMWARE_UPLOAD_MAX; i++) {
+        if (g_fw_uploads[i].in_use && strcmp(g_fw_uploads[i].name, name) == 0)
+            return &g_fw_uploads[i];
+    }
+    return NULL;
+}
+
+/*
+ * Commit a fully-uploaded blob into the firmware cache so that
+ * request_firmware(name) subsequently serves it.  A copy is made so the
+ * upload buffer can be released independently of the cache.
+ */
+static int firmware_sysfs_commit(struct firmware_upload *u) {
+    if (!u || !u->buf || u->len == 0)
+        return -EINVAL;
+
+    uint8_t *copy = (uint8_t *)kmalloc(u->len);
+    if (!copy)
+        return -ENOMEM;
+    memcpy(copy, u->buf, u->len);
+
+    spinlock_acquire(&fw_lock);
+    int ret = fw_cache_insert(u->name, copy, u->len);
+    spinlock_release(&fw_lock);
+    if (ret != 0)
+        kfree(copy);
+    return ret;
+}
+
+/* Reset (or allocate) an upload's accumulation buffer. */
+static int fw_upload_reset(struct firmware_upload *u) {
+    if (u->buf) {
+        kfree(u->buf);
+        u->buf = NULL;
+        u->len = 0;
+        u->cap = 0;
+    }
+    /* Start with a modest buffer; grow as writes come in. */
+    u->cap = 512;
+    u->buf = (uint8_t *)kmalloc(u->cap);
+    if (!u->buf) {
+        u->cap = 0;
+        return -ENOMEM;
+    }
+    u->len = 0;
+    return 0;
+}
+
+/* Append bytes to an upload's buffer. */
+static int fw_upload_append(struct firmware_upload *u, const char *data, uint32_t size) {
+    if (!u || !data || size == 0)
+        return -EINVAL;
+
+    if (u->len + size > u->cap) {
+        size_t newcap = u->cap ? u->cap : 512;
+        while (newcap < u->len + size)
+            newcap *= 2;
+        uint8_t *nbuf = (uint8_t *)kmalloc(newcap);
+        if (!nbuf)
+            return -ENOMEM;
+        if (u->len)
+            memcpy(nbuf, u->buf, u->len);
+        if (u->buf)
+            kfree(u->buf);
+        u->buf = nbuf;
+        u->cap = newcap;
+    }
+    memcpy(u->buf + u->len, data, size);
+    u->len += size;
+    return 0;
+}
+
+/* write callback for .../loading */
+static int firmware_loading_write(const char *data, uint32_t size, void *priv) {
+    struct firmware_upload *u = (struct firmware_upload *)priv;
+    /* Interpret the leading character: '1' begin, '0' commit, else abort. */
+    char marker = (size > 0) ? data[0] : '0';
+
+    if (marker == '1') {
+        u->in_progress = 1;
+        return fw_upload_reset(u);
+    }
+    if (marker == '0') {
+        u->in_progress = 0;
+        int ret = firmware_sysfs_commit(u);
+        /* Release the upload buffer after commit. */
+        if (u->buf) {
+            kfree(u->buf);
+            u->buf = NULL;
+            u->len = 0;
+            u->cap = 0;
+        }
+        return ret;
+    }
+    /* Anything else aborts the upload. */
+    if (u->buf) {
+        kfree(u->buf);
+        u->buf = NULL;
+        u->len = 0;
+        u->cap = 0;
+    }
+    u->in_progress = 0;
+    return 0;
+}
+
+/* write callback for .../data */
+static int firmware_data_write(const char *data, uint32_t size, void *priv) {
+    struct firmware_upload *u = (struct firmware_upload *)priv;
+    if (!u->in_progress)
+        return 0; /* ignore writes unless a load was requested */
+    return fw_upload_append(u, data, size);
+}
+
+/*
+ * Register a firmware name for sysfs-driven loading.
+ * Creates /sys/class/firmware/<name>/ with loading and data files.
+ * Returns 0 on success, negative on error.
+ */
+int firmware_sysfs_register(const char *name) {
+    if (!name || name[0] == '\0')
+        return -EINVAL;
+
+    /* Re-registering an existing name is a no-op. */
+    if (fw_upload_lookup(name))
+        return 0;
+
+    struct firmware_upload *u = NULL;
+    for (int i = 0; i < FIRMWARE_UPLOAD_MAX; i++) {
+        if (!g_fw_uploads[i].in_use) {
+            u = &g_fw_uploads[i];
+            break;
+        }
+    }
+    if (!u)
+        return -ENOMEM;
+
+    memset(u, 0, sizeof(*u));
+    snprintf(u->name, sizeof(u->name), "%s", name);
+    u->in_use = 1;
+
+    /* Create the per-firmware directory. */
+    char dirpath[128];
+    snprintf(dirpath, sizeof(dirpath), "/sys/class/firmware/%s", name);
+    if (sysfs_create_dir(dirpath) < 0) {
+        u->in_use = 0;
+        return -EEXIST;
+    }
+
+    char path[160];
+    snprintf(path, sizeof(path), "%s/loading", dirpath);
+    sysfs_create_writable_file(path, "0", u, NULL, firmware_loading_write);
+
+    snprintf(path, sizeof(path), "%s/data", dirpath);
+    sysfs_create_writable_file(path, "", u, NULL, firmware_data_write);
+
+    return 0;
+}
+
+/* Create the /sys/class/firmware/ container (idempotent). */
+void firmware_sysfs_init(void) {
+    sysfs_create_dir("/sys/class/firmware");
+}
+
+/* ── Firmware flush ─────────────────────────────────────────────── */
 int firmware_request(struct firmware **fw, const char *name, void *device)
 {
     (void)fw; (void)name; (void)device;

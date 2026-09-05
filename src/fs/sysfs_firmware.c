@@ -17,13 +17,14 @@
  * compatibility identifiers when available.
  */
 
-#include "sysfs.h"
 #include "acpi.h"
-#include "pci.h"
-#include "string.h"
-#include "printf.h"
-#include "types.h"
+#include "firmware.h" /* firmware_sysfs_init — /sys/class/firmware loader ABI */
 #include "heap.h"
+#include "pci.h"
+#include "printf.h"
+#include "string.h"
+#include "sysfs.h"
+#include "types.h"
 
 /* ── ACPI table information ──────────────────────────────────────── */
 
@@ -478,12 +479,15 @@ void sysfs_create_firmware_dirs(void)
 	sysfs_create_firmware_acpi_runtime();
 	sysfs_create_firmware_devicetree();
 
-	/*
-	 * Add per-device firmware node (of_node) subdirectories to all
-	 * PCI devices.  This must run AFTER sysfs_create_device_dirs()
-	 * has created the PCI device directories.
-	 */
-	sysfs_create_pci_firmware_nodes();
+    /* Create /sys/class/firmware/ for the firmware-loader upload ABI. */
+    firmware_sysfs_init();
+
+    /*
+     * Add per-device firmware node (of_node) subdirectories to all
+     * PCI devices.  This must run AFTER sysfs_create_device_dirs()
+     * has created the PCI device directories.
+     */
+    sysfs_create_pci_firmware_nodes();
 
 	kprintf("[sysfs_firmware] Firmware directory tree created "
 		"under /sys/firmware/\n");
