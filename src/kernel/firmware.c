@@ -173,20 +173,38 @@ static int fw_cache_insert(const char *name, const uint8_t *data, size_t size)
  * Internal: load firmware from /lib/firmware/<name> via VFS.
  * Returns 0 on success with *out_data pointing to a kmalloc'd buffer
  * that the caller owns.
+ *
+ * If @device is non-NULL and non-empty, the device-specific subdirectory
+ * /lib/firmware/<device>/<name> is tried first, falling back to the
+ * generic /lib/firmware/<name>.  This mirrors Linux's per-device firmware
+ * directories (e.g. /lib/firmware/<PCI-DBDF>/rtl_nic/...).
  */
-static int fw_load_from_disk(const char *name, uint8_t **out_data, size_t *out_size)
-{
+static int fw_load_from_disk(const char *name, const char *device, uint8_t **out_data,
+                             size_t *out_size) {
     char path[128];
-    int ret = snprintf(path, sizeof(path), "/lib/firmware/%s", name);
+    int ret;
+    struct vfs_stat st;
+
+    /* Try the device-specific directory first when a device is given. */
+    if (device && device[0] != '\0') {
+        ret = snprintf(path, sizeof(path), "/lib/firmware/%s/%s", device, name);
+        if (ret >= 0 && ret < (int)sizeof(path)) {
+            ret = vfs_stat(path, &st);
+            if (ret == 0)
+                goto have_path;
+        }
+    }
+
+    /* Fall back to the generic firmware directory. */
+    ret = snprintf(path, sizeof(path), "/lib/firmware/%s", name);
     if (ret < 0 || ret >= (int)sizeof(path))
         return -ENAMETOOLONG;
 
-    /* Stat the file first to get size */
-    struct vfs_stat st;
     ret = vfs_stat(path, &st);
     if (ret != 0)
         return -ENOENT;
 
+have_path:
     size_t fw_size = st.size;
     if (fw_size == 0)
         return -ENODATA;
@@ -336,7 +354,7 @@ int request_firmware(const struct firmware **fw_ptr, const char *name)
     {
         uint8_t *disk_data = NULL;
         size_t   disk_size = 0;
-        int ret = fw_load_from_disk(name, &disk_data, &disk_size);
+        int ret = fw_load_from_disk(name, NULL, &disk_data, &disk_size);
         if (ret != 0) {
             /* Disk lookup missed — fall back to a userspace helper.  Expose
              * /sys/class/firmware/<name>/ (loading + data) so a userspace
@@ -382,6 +400,47 @@ int request_firmware(const struct firmware **fw_ptr, const char *name)
         kprintf("[FW] loaded '%s' (%llu bytes, cached)\n", name, (unsigned long long)disk_size);
         return 0;
     }
+}
+
+/* request_firmware_for_device — load firmware preferring the device-specific
+ * subdirectory /lib/firmware/<device>/<name>, falling back to the generic
+ * /lib/firmware/<name>.  Returns 0 on success with *fw owning a blob to be
+ * released via release_firmware(). */
+int request_firmware_for_device(const struct firmware **fw, const char *device, const char *name) {
+    if (!fw || !name)
+        return -EINVAL;
+
+    *fw = NULL;
+
+    /* Try the device-specific path first, then the generic path, then the
+     * built-in table / cache (which are device-agnostic).  Build a plain
+     * disk load for the device-qualified name; if the device dir is absent
+     * we re-run the generic disk load by passing NULL. */
+    uint8_t *data = NULL;
+    size_t size = 0;
+    int ret = fw_load_from_disk(name, device, &data, &size);
+    if (ret != 0)
+        ret = fw_load_from_disk(name, NULL, &data, &size);
+    if (ret != 0)
+        return ret;
+
+    uint8_t *copy = (uint8_t *)kmalloc(size);
+    if (!copy) {
+        kfree(data);
+        return -ENOMEM;
+    }
+    memcpy(copy, data, size);
+    kfree(data);
+
+    struct firmware *blob = (struct firmware *)kmalloc(sizeof(struct firmware));
+    if (!blob) {
+        kfree(copy);
+        return -ENOMEM;
+    }
+    blob->data = copy;
+    blob->size = size;
+    *fw = blob;
+    return 0;
 }
 
 void release_firmware(const struct firmware *fw)

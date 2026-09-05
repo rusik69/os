@@ -48,6 +48,15 @@ int request_firmware_nowait(const struct firmware **fw_ptr, const char *name,
 int request_firmware(const struct firmware **fw, const char *name);
 
 /*
+ * request_firmware_for_device — Load firmware for a specific device.
+ *
+ * Looks up /lib/firmware/<device>/<name> first, falling back to the
+ * generic /lib/firmware/<name>.  Returns 0 on success with *fw pointing to
+ * the loaded blob; caller must release_firmware() when done.
+ */
+int request_firmware_for_device(const struct firmware **fw, const char *device, const char *name);
+
+/*
  * release_firmware — Release firmware blob obtained from
  * request_firmware().  Safe to call with NULL.
  */
