@@ -8,14 +8,17 @@ A practical guide for writing device drivers for the Hermes OS kernel (x86-64, C
 
 1. [Basic Driver Structure](#1-basic-driver-structure)
 2. [PCI Device Discovery](#2-pci-device-discovery)
-3. [MMIO Access](#3-mmio-access)
-4. [Interrupt Registration](#4-interrupt-registration)
-5. [DMA Buffer Allocation](#5-dma-buffer-allocation)
-6. [Timer API](#6-timer-api)
-7. [Locking Requirements](#7-locking-requirements)
-8. [Exporting Symbols](#8-exporting-symbols)
-9. [Makefile Integration](#9-makefile-integration)
-10. [Module Metadata](#10-module-metadata)
+3. [Block Driver Registration](#3-block-driver-registration)
+4. [MMIO Access](#4-mmio-access)
+5. [Interrupt Registration](#5-interrupt-registration)
+6. [Network Driver API](#6-network-driver-api)
+7. [USB Driver Binding](#7-usb-driver-binding)
+8. [DMA Buffer Allocation](#8-dma-buffer-allocation)
+9. [Timer API](#9-timer-api)
+10. [Locking Requirements](#10-locking-requirements)
+11. [Exporting Symbols](#11-exporting-symbols)
+12. [Makefile Integration](#12-makefile-integration)
+13. [Module Metadata](#13-module-metadata)
 
 ---
 
@@ -355,7 +358,7 @@ idt_register_handler_named(32 + irq_line, mydrv_irq_handler, "my_driver");
 ### IRQ handler best practices
 
 - **Keep handlers fast.** Do minimal work (read status, clear source, schedule bottom-half if needed).
-- **Hold spinlocks with IRQs disabled** when touching shared state (see Section 9).
+- **Hold spinlocks with IRQs disabled** when touching shared state (see Section 10).
 - **Use `irq_ack()`** at the end to signal End-Of-Interrupt to the PIC/IOAPIC.
 - **Network drivers** should call `net_rx_signal()` after acking to wake the network poll loop.
 
@@ -422,7 +425,66 @@ device_initcall(eth0_init);
 
 ---
 
-## 7. DMA Buffer Allocation
+## 7. USB Driver Binding
+
+USB drivers bind to devices through the USB core's driver table
+(`src/include/usb_core.h`, `src/drivers/usb_core.c`). A driver provides
+a name, an optional `usb_device_id` match table, and probe/disconnect
+callbacks, then calls `usb_register_driver()`. When a device is
+enumerated, the core walks the driver list and calls the first driver
+whose id table matches the device's vendor/product/class/subclass.
+
+```c
+#include "usb_core.h"
+
+static const struct usb_device_id my_usb_ids[] = {
+    { .match_flags = USB_DEVICE_ID_MATCH_VENDOR | USB_DEVICE_ID_MATCH_PRODUCT,
+      .vendor = 0x1234, .product = 0x5678 },
+    { 0 }
+};
+
+static int my_usb_probe(const struct usb_device *dev)
+{
+    /* dev has vendor, product, class, subclass, endpoints... */
+    /* Submit control/bulk transfers via usb_*_transfer(). */
+    return 0;  /* 0 = claim the device */
+}
+
+static void my_usb_disconnect(const struct usb_device *dev)
+{
+    /* Release driver state for this device. */
+}
+
+static int my_usb_init(void)
+{
+    struct usb_driver drv = {
+        .name       = "mydrv",
+        .id_table   = my_usb_ids,
+        .probe      = my_usb_probe,
+        .disconnect = my_usb_disconnect,
+    };
+    return usb_register_driver(&drv);
+}
+device_initcall(my_usb_init);
+```
+
+**Key points:**
+
+- `struct usb_driver` requires `name` and `probe`; `disconnect` and
+  `id_table` are optional. A NULL `id_table` matches all devices.
+- `usb_register_driver()` rejects drivers with a missing name/probe,
+  a full driver table (`USB_MAX_DRIVERS`), or a duplicate name.
+- Binding is by first matching `usb_device_id` entry, keyed on
+  `match_flags` against vendor/product/class/subclass/protocol.
+- On device removal, the core invokes the bound driver's `disconnect`.
+- `usb_deregister_driver()` removes a driver and unbinds its devices.
+- Host controllers (EHCI/xHCI) expose `usb_hc_ops` (control, bulk,
+  interrupt, isochronous transfers) that a driver uses to talk to the
+  device once bound.
+
+---
+
+## 8. DMA Buffer Allocation
 
 Use the physical memory manager for DMA-capable buffers. The kernel provides `pmm_alloc_frame()` (single 4 KB page) and `pmm_alloc_frames()` (contiguous multi-page block).
 
@@ -488,7 +550,7 @@ cmd.prp1 = data_phys;
 
 ---
 
-## 8. Timer API
+## 9. Timer API
 
 Use the dynamic timer subsystem for delayed work, polling loops, and periodic tasks.
 
@@ -591,7 +653,7 @@ uint64_t ms_to_ticks(uint64_t ms) {
 
 ---
 
-## 9. Locking Requirements
+## 10. Locking Requirements
 
 Drivers that touch shared state (global data, device registers accessed from multiple CPUs) must use spinlocks. The kernel provides both plain and IRQ-safe variants.
 
@@ -665,7 +727,7 @@ static void e1000_irq_handler(struct interrupt_frame *frame)
 
 ---
 
-## 10. Exporting Symbols
+## 11. Exporting Symbols
 
 Drivers that are compiled as loadable modules or provide an API to other modules can export symbols using `EXPORT_SYMBOL()` and `EXPORT_SYMBOL_GPL()`.
 
@@ -713,7 +775,7 @@ EXPORT_SYMBOL(mpath_select_path);
 
 ---
 
-## 11. Makefile Integration
+## 12. Makefile Integration
 
 The kernel has two build models:
 
@@ -787,7 +849,7 @@ For built-in use, `module_init(my_driver_init)` already handles registration via
 
 ---
 
-## 12. Module Metadata
+## 13. Module Metadata
 
 Module metadata is embedded in the `.modinfo` section using macros:
 
