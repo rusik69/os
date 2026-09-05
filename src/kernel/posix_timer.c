@@ -667,6 +667,14 @@ int64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr, uint64_t timerid_
         return (uint64_t)(int64_t)-EINVAL;
     }
 
+    /* ALARM clocks (CLOCK_REALTIME_ALARM / CLOCK_BOOTTIME_ALARM) can
+     * wake the system from suspend, so arming a timer on them requires
+     * CAP_WAKE_ALARM — the same gate clock_settime() enforces. */
+    if (clockid == CLOCK_REALTIME_ALARM || clockid == CLOCK_BOOTTIME_ALARM) {
+        if (cap_capable_audit(CAP_WAKE_ALARM, "timer_create") < 0)
+            return (uint64_t)(int64_t)-EPERM;
+    }
+
     if (sevp_addr) {
         if (copy_from_user(&sev, sevp_addr, sizeof(struct sigevent)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
