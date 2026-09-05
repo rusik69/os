@@ -3048,21 +3048,90 @@ The kernel has three tiers of testing:
 
 ## Build System
 
-The kernel is built with a GCC/ccache cross toolchain (`x86_64-elf-gcc`). The Makefile supports multiple targets:
+The kernel is built with a GCC/ccache cross toolchain (`x86_64-linux-gnu-gcc` /
+`x86_64-elf-gcc`) and assembles a bootable disk image (`build/disk.img`) from
+the kernel ELF, an initramfs root filesystem, and 226 loadable kernel modules.
+The top-level Makefile is the sole build orchestrator; the `userspace/` subtree
+has its own Makefile (`make -C userspace`) invoked as a dependency.
+
+### Toolchain
+
+| Tool | Role |
+|------|------|
+| `x86_64-linux-gnu-gcc` / `x86_64-elf-gcc` | Cross C compiler, `-std=c17 -ffreestanding` |
+| `x86_64-linux-gnu-ld` | Cross linker with `linker.ld` script |
+| `x86_64-linux-gnu-objcopy` | ELF → binary conversion |
+| GNU Make | Top-level orchestration (`make -j$(nproc)`) |
+| ccache | Build cache (optional) |
+
+### Primary Targets
 
 ```
-make              — debug build (no optimization, full assertions) + modules
-make release      — optimized build (-O2, stripped)
-make build-strict — -Werror + cppcheck static analysis
-make modules      — build all kernel modules (.ko files)
-make run          — build + launch QEMU
-make debug        — build + launch QEMU with GDB stub (-s -S)
-make clean        — remove build artifacts
+make               — default: kernel + userspace + disk.img (debug build, assertions)
+make release       — optimized build (-O2, stripped)
+make kernel        — kernel.elf (skip disk image)
+make modules       — all 226 kernel modules (.ko)
+make userspace-build — userspace tree only
+make run           — build + launch QEMU
+make debug         — build + launch QEMU with GDB stub (-s -S)
+make test          — build + run kernel unit tests in QEMU
+make unit-test     — host-side unit tests
+make e2e           — end-to-end tests via telnet
+make e2e-smoke     — fast e2e smoke (40 min budget, continues on error)
+make stress        — QEMU stress run
+make install       — build bootable GRUB ISO (grub-mkrescue) + optional USB write
+make clean         — remove build artifacts
 ```
 
-The linker script (`linker.ld`) defines the memory layout with proper section ordering, alignment, and high-half VMA assignment.
+### Verification Pipeline
 
-**Module build:** 226 `.ko` files produced from `obj-m` entries. Modules are compiled with `-DMODULE` flag and linked as relocatable ELF64 objects. Module region at `0xFFFF800100000000` (64MB) is divided into RX/RO/RW subregions for code, read-only data, and writable data respectively.
+`make verify` is the pre-merge gate:
+
+```
+make verify
+  ├─ make format-check     # clang-format against HEAD~1 (git clang-format)
+  ├─ make lint             # cppcheck + clang-tidy static analysis
+  └─ make check-app-boundary  # verify apps stay within userspace boundary
+```
+
+Additional gates used by CI and the Hermes agent:
+
+```
+make check-whitespace     # no trailing whitespace anywhere
+make check-app-boundary   # ELF/ABI boundary checks
+make doccheck             # required docs exist; markdown validity; TODO scan
+make build-strict         # -Werror + cppcheck
+make check                # disk.img + unit-test
+```
+
+The kernel is compiled with zero-warning policy: `-Wall -Wextra -Werror`
+plus a long list of hardening warnings (`-Wstrict-prototypes`,
+`-Wshadow`, `-Wcast-qual`, `-Wundef`, `-Wimplicit-fallthrough=5`,
+`-Wtautological-compare`, `-Wduplicated-branches/-cond`, `-Wlogical-op`,
+`-Wmaybe-uninitialized`, `-Wrestrict`, `-Warray-bounds=2`) and
+stack-protection (`-fstack-protector-strong -fstack-clash-protection`).
+Any warning is a build failure.
+
+### Module Build
+
+226 `.ko` files are produced from `obj-m` entries across the source tree
+(organized by `src/modules/drivers.mk`). Modules are compiled with `-DMODULE`
+and linked as relocatable ELF64 objects, then compressed (xz/gzip) and bundled
+into initramfs. The module region at `0xFFFF800100000000` (64 MB) is divided
+into RX/RO/RW subregions for code, constants, and writable data. Module
+signatures are RSA-2048/SHA-256; the loader verifies them before `LIVE`.
+
+### Bootstrap Flow
+
+1. Top-level `all` builds `build/kernel.elf` → `kernel.bin` (three-pass
+   kallsyms generation for symbol resolution), then the userspace subtree.
+2. `build/rootfs` is staged (402 files) and formatted as a 64 MB FAT32
+   image (`build/disk.img`) with `mkfatimg`.
+3. `kernel.bin` is booted by GRUB/Multiboot1 into long mode (see Boot
+   Sequence); the disk image provides `/`, `/bin`, and `/modules`.
+
+The linker script (`linker.ld`) defines the memory layout with proper section
+ordering, alignment, and high-half VMA assignment.
 
 ## Recent Improvements
 
