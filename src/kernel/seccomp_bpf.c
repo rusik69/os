@@ -14,11 +14,15 @@
  * and evaluated by the BPF virtual machine before each syscall.
  */
 
-/* A filter is simply a copy of the sock_fprog + the instruction array. */
+/* A filter is simply a copy of the sock_fprog + the instruction array.
+ * Filters form a per-process STACK: install() pushes a new filter onto
+ * the head, chaining via ->prev to the previously installed filter(s).
+ * Nesting depth is capped by SECCOMP_MAX_FILTER_DEPTH (16). */
 struct seccomp_filter {
     struct sock_filter *insns;    /* heap-allocated instruction array */
     uint16_t           len;      /* number of instructions */
     int                refcount;
+    struct seccomp_filter *prev; /* previous (older) filter in the stack */
 };
 
 static int seccomp_initialised = 0;
@@ -203,9 +207,19 @@ int seccomp_filter_install(const struct sock_fprog *prog)
     if (!current->no_new_privs)
         return -EPERM;
 
-    /* If the process already has a seccomp filter, reject */
-    if (current->seccomp_mode != 0 && current->seccomp_filter != NULL)
-        return -EEXIST;
+    /* Nested filters form a stack (newest filter is evaluated first).
+     * Enforce the max nesting depth of SECCOMP_MAX_FILTER_DEPTH (Linux's
+     * MAX_FILTER_DEPTH); installing beyond it returns E2BIG. */
+    struct seccomp_filter *old = NULL;
+    if (current->seccomp_filter) {
+        int depth = 0;
+        for (struct seccomp_filter *f = (struct seccomp_filter *)current->seccomp_filter;
+             f; f = f->prev) {
+            if (++depth >= SECCOMP_MAX_FILTER_DEPTH)
+                return -E2BIG;
+        }
+        old = (struct seccomp_filter *)current->seccomp_filter;
+    }
 
     /* Allocate and copy the filter program */
     size_t insn_size = prog->len * sizeof(struct sock_filter);
@@ -225,6 +239,7 @@ int seccomp_filter_install(const struct sock_fprog *prog)
     filter->insns    = insns;
     filter->len      = prog->len;
     filter->refcount = 1;
+    filter->prev     = old;   /* chain under the previously installed filter */
 
     current->seccomp_filter = filter;
     current->seccomp_mode   = SECCOMP_MODE_FILTER_BPF;   /* SECCOMP_MODE_FILTER_BPF */
@@ -247,13 +262,23 @@ uint32_t seccomp_filter_evaluate(int syscall_nr, uint32_t arch)
     sd.nr   = syscall_nr;
     sd.arch = arch;
 
-    struct seccomp_filter *filter = (struct seccomp_filter *)current->seccomp_filter;
+    /* Walk the nested filter stack newest-first. Each filter is run against
+     * the syscall; the first filter that returns a restrictive (non-ALLOW)
+     * action decides. If every filter in the stack allows, the syscall
+     * proceeds. Nested filters can only further restrict what an older
+     * filter allows. */
+    for (struct seccomp_filter *f = (struct seccomp_filter *)current->seccomp_filter;
+         f; f = f->prev) {
+        uint32_t action = seccomp_run_filter(&sd, f->insns, f->len);
+        if ((action & SECCOMP_RET_ACTION_FULL) != SECCOMP_BPF_RET_ALLOW)
+            return action;
+    }
 
-    return seccomp_run_filter(&sd, filter->insns, filter->len);
+    return SECCOMP_RET_ALLOW;
 }
 
-/* Release the seccomp filter for the current process.
- * Frees the instruction array and the filter wrapper,
+/* Release all seccomp filters for the current process.
+ * Frees the entire nested filter stack (instruction arrays and wrappers),
  * then resets seccomp_mode to disabled. */
 void seccomp_bpf_release(void)
 {
@@ -261,10 +286,14 @@ void seccomp_bpf_release(void)
     if (!current || !current->seccomp_filter)
         return;
 
-    struct seccomp_filter *filter = (struct seccomp_filter *)current->seccomp_filter;
-    if (filter->insns)
-        kfree(filter->insns);
-    kfree(filter);
+    struct seccomp_filter *f = (struct seccomp_filter *)current->seccomp_filter;
+    while (f) {
+        struct seccomp_filter *next = f->prev;
+        if (f->insns)
+            kfree(f->insns);
+        kfree(f);
+        f = next;
+    }
     current->seccomp_filter = NULL;
     current->seccomp_mode   = SECCOMP_MODE_DISABLED;
 }

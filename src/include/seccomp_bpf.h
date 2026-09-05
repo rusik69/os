@@ -95,6 +95,11 @@ struct sock_fprog {
  * Linux enforces exactly BPF_MAXINSNS = 4096. */
 #define SECCOMP_FILTER_MAX_INSNS  4096
 
+/* Maximum nesting depth of per-process seccomp BPF filters.
+ * Matches Linux's MAX_FILTER_DEPTH: a process may install a stack of
+ * filters chained newest-first, but never more than 16 at once. */
+#define SECCOMP_MAX_FILTER_DEPTH  16
+
 /* ── API ──────────────────────────────────────────────────────── */
 
 /* Install a seccomp filter for the current process.
