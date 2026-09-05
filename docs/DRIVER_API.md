@@ -355,13 +355,74 @@ idt_register_handler_named(32 + irq_line, mydrv_irq_handler, "my_driver");
 ### IRQ handler best practices
 
 - **Keep handlers fast.** Do minimal work (read status, clear source, schedule bottom-half if needed).
-- **Hold spinlocks with IRQs disabled** when touching shared state (see Section 7).
+- **Hold spinlocks with IRQs disabled** when touching shared state (see Section 9).
 - **Use `irq_ack()`** at the end to signal End-Of-Interrupt to the PIC/IOAPIC.
 - **Network drivers** should call `net_rx_signal()` after acking to wake the network poll loop.
 
 ---
 
-## 6. DMA Buffer Allocation
+## 6. Network Driver API
+
+Network drivers expose a NIC to the kernel through the **netdevice**
+layer (`src/include/netdevice.h`, `src/net/netdevice.c`). The driver
+fills a `struct net_device` with its name, MAC, and transmit/receive
+callbacks, then calls `netif_register()` to publish the interface to the
+network stack (routing, ARP, IP, sockets).
+
+```c
+#include "netdevice.h"
+
+static int eth0_transmit(struct net_device *dev,
+                         const uint8_t *data, uint16_t len)
+{
+    /* Queue the frame to the NIC's transmit descriptor ring. */
+    /* ... */
+    return 0;  /* 0 = queued, negative = error */
+}
+
+static int eth0_receive(struct net_device *dev,
+                        uint8_t *buf, uint16_t max_len)
+{
+    /* Copy the next received frame from the RX ring into @buf.
+     * Return the frame length, or 0 if no frame is pending. */
+    /* ... */
+    return 0;
+}
+
+static int eth0_init(void)
+{
+    struct net_device dev = {0};
+    strcpy(dev.name, "eth0");
+    memcpy(dev.mac, (uint8_t[]){0x52,0x54,0x00,0x12,0x34,0x56}, 6);
+    dev.transmit  = eth0_transmit;
+    dev.receive   = eth0_receive;
+    dev.mtu       = 1500;
+    dev.flags     = IFF_UP;
+    dev.priv      = /* driver private state */;
+    return netif_register(&dev);
+}
+device_initcall(eth0_init);
+```
+
+**Key points:**
+
+- `dev.transmit` (must be set) queues a frame for TX; `dev.receive`
+  (optional) is polled to drain an RX ring. `dev.priv` carries
+  driver-private state.
+- `netif_register()` assigns `dev.ifindex` and makes the interface
+  visible to the IP stack. The receive path (`net_poll()`) calls the
+  device's `receive` callback through `net_link_recv()`.
+- After a TX/NIC interrupt, call `net_rx_signal()` to wake the network
+  poll loop so pending frames are drained into the stack.
+- Optional callbacks: `set_features` (flag/promisc changes),
+  `set_multicast_list` (hardware multicast filters), and VLAN offload
+  hooks (`vlan_rx_add_vid`, etc.).
+- See `src/drivers/e1000.c` and `src/drivers/virtio_net.c` for complete
+  NIC driver examples.
+
+---
+
+## 7. DMA Buffer Allocation
 
 Use the physical memory manager for DMA-capable buffers. The kernel provides `pmm_alloc_frame()` (single 4 KB page) and `pmm_alloc_frames()` (contiguous multi-page block).
 
@@ -427,7 +488,7 @@ cmd.prp1 = data_phys;
 
 ---
 
-## 7. Timer API
+## 8. Timer API
 
 Use the dynamic timer subsystem for delayed work, polling loops, and periodic tasks.
 
@@ -530,7 +591,7 @@ uint64_t ms_to_ticks(uint64_t ms) {
 
 ---
 
-## 8. Locking Requirements
+## 9. Locking Requirements
 
 Drivers that touch shared state (global data, device registers accessed from multiple CPUs) must use spinlocks. The kernel provides both plain and IRQ-safe variants.
 
@@ -604,7 +665,7 @@ static void e1000_irq_handler(struct interrupt_frame *frame)
 
 ---
 
-## 9. Exporting Symbols
+## 10. Exporting Symbols
 
 Drivers that are compiled as loadable modules or provide an API to other modules can export symbols using `EXPORT_SYMBOL()` and `EXPORT_SYMBOL_GPL()`.
 
@@ -652,7 +713,7 @@ EXPORT_SYMBOL(mpath_select_path);
 
 ---
 
-## 10. Makefile Integration
+## 11. Makefile Integration
 
 The kernel has two build models:
 
@@ -726,7 +787,7 @@ For built-in use, `module_init(my_driver_init)` already handles registration via
 
 ---
 
-## 11. Module Metadata
+## 12. Module Metadata
 
 Module metadata is embedded in the `.modinfo` section using macros:
 
