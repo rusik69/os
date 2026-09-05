@@ -25,6 +25,11 @@ void timer_handler_soft(void);
 /* Initialize the dynamic timer subsystem */
 void timers_init(void);
 
+/* Re-arm dynamic-timer dispatch when a CPU is taken offline (CPU hotplug
+ * notifier target).  The timer table is global, so this just guarantees a
+ * surviving CPU promptly drains any due timers. */
+void timers_cpu_offline(int cpu_id);
+
 /* Returns 1 if timers are available, 0 before timers_init() */
 int timer_available(void);
 

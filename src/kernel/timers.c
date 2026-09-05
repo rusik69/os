@@ -6,11 +6,14 @@
  */
 
 #include "timers.h"
-#include "timer.h"
-#include "string.h"
+
+#include "cpuhp.h"
 #include "printf.h"
-#include "spinlock.h"
+#include "smp.h"
 #include "softirq.h"
+#include "spinlock.h"
+#include "string.h"
+#include "timer.h"
 
 static struct {
     timer_callback_t fn;
@@ -22,6 +25,58 @@ static struct {
 
 static spinlock_t g_timers_lock;
 static int g_timers_initialized = 0;
+
+/*
+ * timers_cpu_offline - Re-arm dynamic-timer dispatch when a CPU goes offline.
+ * @cpu_id: the CPU being taken offline.
+ *
+ * Unlike Linux, this kernel's software timer table (g_timers) is a single
+ * global, lock-guarded array: there is no per-CPU timer list to walk and
+ * migrate.  Dispatch happens from do_softirq() on whichever CPU drains the
+ * global TIMER softirq, so due timers are never stranded on a specific
+ * CPU.  The only per-CPU piece is the dispatch path itself: if the dying
+ * CPU had just raised SOFTIRQ_TIMER but had not yet drained it (or its
+ * ksoftirqd would have been the one to), re-raising the softirq guarantees
+ * a surviving CPU's do_softirq() dispatches any due timers promptly
+ * instead of waiting for the next tick on a survivor.  Harmless when no
+ * timer is pending.  Runs with cpuhp_lock held and interrupts disabled, so
+ * it only does bounded bookkeeping plus a softirq bit-set.
+ */
+void timers_cpu_offline(int cpu_id) {
+    if (cpu_id < 0 || (unsigned int)cpu_id >= SMP_MAX_CPUS)
+        return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_timers_lock, &irq_flags);
+    int pending = 0;
+    for (int i = 0; i < TIMER_MAX; i++) {
+        if (g_timers[i].active) {
+            pending = 1;
+            break;
+        }
+    }
+    spinlock_irqsave_release(&g_timers_lock, irq_flags);
+
+    if (!pending)
+        return;
+
+    /* Fold the dying CPU's pending dispatch into the global softirq mask
+     * so a survivor processes it on its next do_softirq(). */
+    softirq_raise(SOFTIRQ_TIMER);
+    kprintf("[timers] CPU %d offline: re-armed dynamic timer dispatch\n", cpu_id);
+}
+
+/*
+ * CPU hotplug notifier: on a transition to OFFLINE, re-arm dynamic timer
+ * dispatch so due timers are still drained.  Registered by timers_init().
+ * Runs with cpuhp_lock held and interrupts disabled (see cpuhp.h).
+ */
+static void timers_hotplug_notify(int cpu_id, enum cpuhp_state old_state,
+                                  enum cpuhp_state new_state) {
+    (void)old_state;
+    if (new_state == CPUHP_STATE_OFFLINE)
+        timers_cpu_offline(cpu_id);
+}
 
 /**
  * timers_init - Initialise the software timer subsystem
@@ -37,6 +92,12 @@ void __init timers_init(void) {
     /* Register the timer softirq handler so timer_handler_soft() is
      * called from do_softirq() after the timer IRQ fires. */
     softirq_register(SOFTIRQ_TIMER, timer_handler_soft);
+
+    /* Register the CPU-hotplug notifier so timer dispatch is re-armed on a
+     * surviving CPU when one goes offline.  cpuhp_init() already ran (from
+     * smp_init_bsp), so the notifier table is ready. */
+    if (cpuhp_register_notify(timers_hotplug_notify) != 0)
+        kprintf("[timers] failed to register CPU hotplug notifier\n");
 
     kprintf("[OK] Dynamic timers initialized (%d slots)\n", TIMER_MAX);
 }
