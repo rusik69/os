@@ -7826,15 +7826,15 @@ static int64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr, uint64_t write
     return 0;
 
 pselect6_err:
-	/* Restore original signal mask on error - the temporary mask must
-	 * not leak past the syscall boundary on a failure return. */
-	if (have_sigmask) {
-		uint64_t __ps_err_flags;
-		spinlock_irqsave_acquire(&proc->sig_lock, &__ps_err_flags);
-		proc->sig_mask = old_mask;
-		spinlock_irqsave_release(&proc->sig_lock, __ps_err_flags);
-	}
-	return (uint64_t)-1;
+    /* Restore original signal mask on error - the temporary mask must
+     * not leak past the syscall boundary on a failure return. */
+    if (have_sigmask) {
+        uint64_t __ps_err_flags;
+        spinlock_irqsave_acquire(&proc->sig_lock, &__ps_err_flags);
+        proc->sig_mask = old_mask;
+        spinlock_irqsave_release(&proc->sig_lock, __ps_err_flags);
+    }
+    return (uint64_t)-1;
 }
 
 /* ── ppoll — safer poll with atomic signal mask (Item 251) ─────────── */
@@ -7998,15 +7998,15 @@ static int64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_addr
     return 0;
 
 ppoll_err:
-	/* Restore original signal mask on error - the temporary mask must
-	 * not leak past the syscall boundary on a failure return. */
-	if (have_pp_sigmask) {
-		uint64_t __pp_err_flags;
-		spinlock_irqsave_acquire(&proc->sig_lock, &__pp_err_flags);
-		proc->sig_mask = old_mask;
-		spinlock_irqsave_release(&proc->sig_lock, __pp_err_flags);
-	}
-	return (uint64_t)-1;
+    /* Restore original signal mask on error - the temporary mask must
+     * not leak past the syscall boundary on a failure return. */
+    if (have_pp_sigmask) {
+        uint64_t __pp_err_flags;
+        spinlock_irqsave_acquire(&proc->sig_lock, &__pp_err_flags);
+        proc->sig_mask = old_mask;
+        spinlock_irqsave_release(&proc->sig_lock, __pp_err_flags);
+    }
+    return (uint64_t)-1;
 }
 
 /* ── eventfd ──────────────────────────────────────────────────────────── */
@@ -8476,6 +8476,16 @@ static int64_t sys_mount(uint64_t src_addr, uint64_t target_addr, uint64_t fstyp
 
     /* Handle bind mounts (mount --bind) */
     if (flags & MS_BIND) {
+        /* A process with its own mount namespace binds within that
+         * namespace, keeping the binding isolated from the global tree. */
+        struct process *mnp = process_get_current();
+        if (mnp && (mnp->ns_flags & CLONE_NEWNS) && mnp->mnt_ns) {
+            int ns_ret = mnt_ns_bind_mount(mnp->mnt_ns, src, target);
+            if (ns_ret < 0)
+                return (uint64_t)(int64_t)ns_ret;
+            kprintf("[mount] bind (ns): %s at %s\n", src, target);
+            return 0;
+        }
         int ret = vfs_bind_mount(src, target);
         if (ret < 0)
             return (uint64_t)(int64_t)ret;

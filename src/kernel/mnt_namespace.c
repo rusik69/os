@@ -242,6 +242,43 @@ int mnt_ns_umount(struct mnt_namespace *ns, const char *mountpoint) {
     return -1; /* not found */
 }
 
+int mnt_ns_bind_mount(struct mnt_namespace *ns, const char *src, const char *target) {
+    if (!ns)
+        ns = root_ns;
+    if (!ns || !src || !target)
+        return -1;
+
+    /* Resolve the source inside this namespace's own mount table so the
+     * binding is isolated from the global tree. */
+    struct vfs_mount *srcm = mnt_ns_resolve(ns, src);
+    if (!srcm) {
+        kprintf("[MNT_NS] bind: source '%s' not mounted in namespace\n", src);
+        return -1;
+    }
+    if (ns->num_mounts >= VFS_MAX_MOUNTS)
+        return -1;
+
+    struct vfs_mount *m = &ns->mounts[ns->num_mounts];
+    size_t tlen = strlen(target);
+    if (tlen >= sizeof(m->mountpoint))
+        tlen = sizeof(m->mountpoint) - 1;
+    memcpy(m->mountpoint, target, tlen);
+    m->mountpoint[tlen] = '\0';
+
+    m->ops = srcm->ops;
+    m->priv = srcm->priv;
+    m->flags = 0;
+    m->is_bind = 1;
+    strncpy(m->bind_source, srcm->mountpoint, sizeof(m->bind_source) - 1);
+    m->bind_source[sizeof(m->bind_source) - 1] = '\0';
+    m->prop = MNT_PRIVATE;
+    m->peer_group = 0;
+
+    ns->num_mounts++;
+    kprintf("[MNT_NS] bind: %s at %s (namespace)\n", src, target);
+    return 0;
+}
+
 struct vfs_mount *mnt_ns_resolve(struct mnt_namespace *ns, const char *path) {
     if (!ns || !path)
         return NULL;
@@ -304,6 +341,7 @@ void mnt_ns_sync(struct mnt_namespace *ns) {
 
 EXPORT_SYMBOL(mnt_ns_current);
 EXPORT_SYMBOL(mnt_ns_mount);
+EXPORT_SYMBOL(mnt_ns_bind_mount);
 EXPORT_SYMBOL(mnt_ns_resolve);
 EXPORT_SYMBOL(mnt_ns_list_mounts);
 

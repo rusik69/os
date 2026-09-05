@@ -69,6 +69,11 @@ struct mnt_namespace *mnt_ns_root(void);
 int mnt_ns_mount(struct mnt_namespace *ns, const char *mountpoint, struct vfs_ops *ops, void *priv,
                  int flags);
 
+/* Bind-mount @src onto @target within the given namespace.
+ * The source is resolved inside the namespace's own mount table,
+ * so bind mounts are isolated per namespace.  Returns 0 on success. */
+int mnt_ns_bind_mount(struct mnt_namespace *ns, const char *src, const char *target);
+
 /* Unmount a filesystem in the given namespace.  Returns 0 on success. */
 int mnt_ns_umount(struct mnt_namespace *ns, const char *mountpoint);
 
