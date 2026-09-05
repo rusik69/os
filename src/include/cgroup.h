@@ -99,7 +99,8 @@ struct cgroup {
 
     /* cpuset controller: CPUs on which tasks in this cgroup may run */
     cpuset_t cpuset;
-    int cpuset_valid; /* 1 = cpuset active for this cgroup */
+    int cpuset_valid;     /* 1 = cpuset active for this cgroup */
+    int cpuset_exclusive; /* 1 = exclusive cpuset (no overlap with peers) */
 
     /* cpuset controller: memory nodes allowed for tasks in this cgroup */
     cpuset_t nodelist;
@@ -194,5 +195,9 @@ int cgroup_cpuset_set_mems(int cg_id, const cpuset_t *nodes);
 
 /* Read the memory-node list currently allowed for a cgroup. */
 int cgroup_cpuset_get_mems(int cg_id, cpuset_t *nodes);
+
+/* Mark a cpuset exclusive (1) or shared (0).  Exclusive cpusets may not
+ * overlap another exclusive cpuset.  Returns 0 or -EBUSY on conflict. */
+int cgroup_cpuset_set_exclusive(int cg_id, int exclusive);
 
 #endif /* CGROUP_H */

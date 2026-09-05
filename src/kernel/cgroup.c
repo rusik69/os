@@ -533,6 +533,20 @@ EXPORT_SYMBOL(cgroup_controllers);
 
 /* ── cpuset controller (cpuset.cpus) ──────────────────────────────── */
 
+/* Return the ID of another in-use, exclusive cgroup whose cpuset overlaps
+ * @set, or -1 if none.  Caller must hold g_cgroup_lock. */
+static int find_exclusive_overlap(int self, const cpuset_t *set) {
+    for (int i = 0; i < CGROUP_MAX; i++) {
+        if (i == self || !g_cgroups[i].in_use)
+            continue;
+        if (!g_cgroups[i].cpuset_valid || !g_cgroups[i].cpuset_exclusive)
+            continue;
+        if ((g_cgroups[i].cpuset.bits & set->bits) != 0)
+            return i;
+    }
+    return -1;
+}
+
 int cgroup_cpuset_set(int cg_id, const cpuset_t *set) {
     if (!set || cpuset_empty(set))
         return -EINVAL;
@@ -541,6 +555,13 @@ int cgroup_cpuset_set(int cg_id, const cpuset_t *set) {
 
     spinlock_acquire(&g_cgroup_lock);
     struct cgroup *cg = &g_cgroups[cg_id];
+
+    /* An exclusive cpuset may not overlap another exclusive cpuset. */
+    if (cg->cpuset_exclusive && find_exclusive_overlap(cg_id, set) >= 0) {
+        spinlock_release(&g_cgroup_lock);
+        return -EBUSY;
+    }
+
     cg->cpuset = *set;
     cg->cpuset_valid = 1;
 
@@ -640,6 +661,28 @@ int cgroup_cpuset_get_mems(int cg_id, cpuset_t *nodes) {
     return 0;
 }
 EXPORT_SYMBOL(cgroup_cpuset_get_mems);
+
+int cgroup_cpuset_set_exclusive(int cg_id, int exclusive) {
+    if (cg_id < 0 || cg_id >= CGROUP_MAX || !g_cgroups[cg_id].in_use)
+        return -EINVAL;
+
+    spinlock_acquire(&g_cgroup_lock);
+    struct cgroup *cg = &g_cgroups[cg_id];
+
+    /* Enabling exclusivity on a cpuset that already overlaps another
+     * exclusive cpuset is rejected. */
+    if (exclusive && cg->cpuset_valid && find_exclusive_overlap(cg_id, &cg->cpuset) >= 0) {
+        spinlock_release(&g_cgroup_lock);
+        return -EBUSY;
+    }
+
+    cg->cpuset_exclusive = exclusive ? 1 : 0;
+    spinlock_release(&g_cgroup_lock);
+
+    kprintf("[cgroup] cpuset[%d] -> %s\n", cg_id, exclusive ? "exclusive" : "shared");
+    return 0;
+}
+EXPORT_SYMBOL(cgroup_cpuset_set_exclusive);
 
 /* Destroy a cgroup. All member processes are moved to the root cgroup.
  * Returns 0 on success. */
@@ -1261,9 +1304,16 @@ int cgroup_write_control(int cg_id, const char *controller, const char *key, con
         if (strcmp(value, "THAWED") == 0)
             return cgroup_unfreeze(cg_id);
     } else if (strcmp(controller, "cpuset") == 0 || strcmp(key, "cpuset.cpus") == 0 ||
-               strcmp(key, "cpuset.mems") == 0) {
+               strcmp(key, "cpuset.mems") == 0 || strcmp(key, "cpuset.exclusive") == 0) {
         /* cpuset controller: "cpuset cpus <list>", "cpuset.cpus <list>",
-         * or "cpuset.mems <nodelist>". */
+         * "cpuset.mems <nodelist>", or "cpuset.exclusive <0|1>". */
+        if (strcmp(key, "cpuset.exclusive") == 0 || strcmp(key, "exclusive") == 0) {
+            uint64_t excl = 0;
+            const char *sv = value;
+            while (*sv >= '0' && *sv <= '9')
+                excl = excl * 10 + (uint64_t)(*sv++ - '0');
+            return cgroup_cpuset_set_exclusive(cg_id, excl != 0);
+        }
         cpuset_t set;
         int pr = cpuset_parse(value, &set);
         if (pr < 0)
