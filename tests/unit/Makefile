@@ -12,7 +12,7 @@ CFLAGS  = -std=gnu17 -Wall -Werror -Wundef -Wmisleading-indentation -Wduplicated
 
 all: test
 
-test: test_memory test_fs test_socket test_list test_string test_bitmap test_sh
+test: test_memory test_fs test_socket test_list test_string test_bitmap test_sh test_abi
 ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running memory allocator unit tests..."
@@ -35,6 +35,9 @@ ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running shell (D280) unit tests..."
 	@./test_sh
+	@echo ""
+	@echo "Running ABI compatibility checks..."
+	@./test_abi
 else
 	@echo ""
 	@echo "Running unit tests (JUnit output to $(JUNIT_DIR))..."
@@ -45,10 +48,11 @@ else
 	python3 ../../tests/junit_reporter.py unit-string ./test_string
 	python3 ../../tests/junit_reporter.py unit-bitmap ./test_bitmap
 	python3 ../../tests/junit_reporter.py unit-sh ./test_sh
+	python3 ../../tests/junit_reporter.py unit-abi ./test_abi
 	@mv -f unit-memory-results.xml unit-fs-results.xml \
 	      unit-socket-results.xml unit-list-results.xml \
 	      unit-string-results.xml unit-bitmap-results.xml \
-	      unit-sh-results.xml \
+	      unit-sh-results.xml unit-abi-results.xml \
 	      "$(JUNIT_DIR)/" 2>/dev/null || true
 	@echo "JUnit XML: $(JUNIT_DIR)/"
 endif
@@ -75,5 +79,8 @@ test_sh: test_sh.c
 	$(CC) $(CFLAGS) -Wno-format-truncation -Wno-unused-function \
 	    -I../../userspace/bin -o $@ $<
 
+test_abi: test_abi.c
+	$(CC) $(CFLAGS) -o $@ $<
+
 clean:
-	rm -f test_memory test_fs test_socket test_list test_string test_bitmap test_sh
+	rm -f test_memory test_fs test_socket test_list test_string test_bitmap test_sh test_abi
