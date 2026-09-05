@@ -357,6 +357,12 @@ uint32_t seccomp_evaluate_syscall(uint64_t num, uint64_t a1, uint64_t a2,
 
                 switch (action) {
                 case SECCOMP_RET_ALLOW:
+                    /* If the filter-wide LOG flag is set, log this (otherwise
+                     * silent) allow before passing the syscall through. */
+                    if (f->log_all) {
+                        seccomp_audit_log(num, a1, a2, a3, SECCOMP_RET_LOG, rip);
+                        return SECCOMP_RET_ALLOW;
+                    }
                     return SECCOMP_RET_ALLOW;
 
                 case SECCOMP_RET_LOG:
@@ -380,6 +386,10 @@ uint32_t seccomp_evaluate_syscall(uint64_t num, uint64_t a1, uint64_t a2,
          * Linux defaults to SECCOMP_RET_ALLOW if no rule matches,
          * but the filter may have an explicit default.  We follow
          * the Linux convention: if no rule matches, allow. */
+        if (f->log_all) {
+            /* Filter-wide logging: record the default-allow too. */
+            seccomp_audit_log(num, a1, a2, a3, SECCOMP_RET_LOG, rip);
+        }
         return SECCOMP_RET_ALLOW;
     }
 
@@ -444,6 +454,9 @@ int seccomp_set_mode(int mode, unsigned int flags) {
             if (!p->seccomp_filter) return -1;
             memset(p->seccomp_filter, 0, sizeof(struct seccomp_filter));
         }
+        /* SECCOMP_FILTER_FLAG_LOG: log all non-fatal actions, incl. ALLOW */
+        if (flags & SECCOMP_FILTER_FLAG_LOG)
+            p->seccomp_filter->log_all = 1;
     }
 
     /* Propagate to all threads if TSYNC flag is set */

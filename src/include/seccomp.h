@@ -31,6 +31,7 @@
 
 /* Flags for seccomp_set_mode */
 #define SECCOMP_FILTER_FLAG_TSYNC  1U  /* synchronize filters to all threads */
+#define SECCOMP_FILTER_FLAG_LOG 2U     /* log all non-fatal filter actions (including ALLOW) */
 
 /* Filter actions (Linux-compatible high bits) */
 #define SECCOMP_RET_KILL  0x80000000U
@@ -52,6 +53,7 @@ struct seccomp_rule {
 /* Per-process seccomp filter */
 struct seccomp_filter {
     int num_rules;
+    int log_all; /* SECCOMP_FILTER_FLAG_LOG: log non-fatal actions (incl. ALLOW) */
     struct seccomp_rule rules[SECCOMP_FILTER_RULES_MAX];
 };
 
