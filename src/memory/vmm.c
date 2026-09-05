@@ -187,12 +187,16 @@ void __init vmm_nx_init(void) {
     }
 }
 
-/* NX checking is now handled by nx_enforce.c — the per-PTE helper below
- * was a preliminary implementation that has been superseded. */
-
-/* Per-process PML4-based NX check for user page table walks.
- * Returns 1 if the access is allowed, 0 if NX violation (should raise PF).
- * 'write'=1 for write access, 'exec'=1 for instruction fetch. */
+/**
+ * vmm_check_nx - Per-process PML4-based NX check for user page-table walks.
+ * @pml4: Target user PML4.
+ * @virt: Virtual address to check.
+ * @write: Non-zero for a write access (reserved; NX only gates fetch).
+ * @exec:  Non-zero for an instruction fetch.
+ * Return: 1 if the access is allowed, 0 on an NX violation (should raise PF).
+ * Note: The per-PTE helper below was superseded by nx_enforce.c for the
+ *       kernel path; retained for user-walk robustness.
+ */
 int vmm_check_nx(uint64_t *pml4, uint64_t virt, int write, int exec) {
     (void)write;
     if (!nx_enabled || !exec)
@@ -259,9 +263,20 @@ uint64_t vmm_committed_bytes = 0;
  * fork COW clone must never walk these shared kernel tables. */
 #define BOOT_PDPT_PHYS 0x102000ULL
 
+/**
+ * vmm_get_committed - Return the number of committed (overcommit-accounted)
+ *                     pages.
+ * Return: committed byte count divided by PAGE_SIZE.
+ */
 int vmm_get_committed(void) {
     return (int)(__sync_fetch_and_add(&vmm_committed_bytes, 0) / PAGE_SIZE);
 }
+/**
+ * vmm_commit - Account bytes toward the overcommit limit.
+ * @bytes: Number of bytes to commit.
+ * Return: 0 on success, -ENOMEM if the commit would exceed
+ *         VMM_OVERCOMMIT_LIMIT (accounting is rolled back).
+ */
 int vmm_commit(uint64_t bytes) {
     uint64_t old = __sync_fetch_and_add(&vmm_committed_bytes, bytes);
     if (old + bytes > VMM_OVERCOMMIT_LIMIT) {
@@ -270,6 +285,10 @@ int vmm_commit(uint64_t bytes) {
     }
     return 0;
 }
+/**
+ * vmm_uncommit - Release bytes from the overcommit accounting.
+ * @bytes: Number of bytes to release.
+ */
 void vmm_uncommit(uint64_t bytes) {
     __sync_fetch_and_sub(&vmm_committed_bytes, bytes);
 }
@@ -467,6 +486,14 @@ out:
     return ret;
 }
 
+/**
+ * vmm_set_range_uncacheable - Set the cache-disabled (PCD) bit across a
+ *                             kernel virtual address range.
+ * @virt: Starting virtual address.
+ * @size: Size of the range in bytes.
+ * Handles both 4KB pages and 2MB huge pages and performs a batched TLB
+ * flush to avoid deadlock while holding the page-table lock.
+ */
 void vmm_set_range_uncacheable(uint64_t virt, uint64_t size) {
     if (!size)
         return;
@@ -652,6 +679,14 @@ done:
         tlb_flush(virt);
 }
 
+/**
+ * vmm_virt_to_phys - Translate a kernel virtual address to a physical
+ *                    address.
+ * @virt: Kernel virtual address.
+ * @phys: Optional out-parameter receiving the physical address.
+ * Return: 0 on success, -EFAULT if any level of the page table is absent.
+ * Handles 2MB huge pages as well as 4KB pages.
+ */
 int vmm_virt_to_phys(uint64_t virt, uint64_t *phys) {
     int pml4_idx = (virt >> 39) & 0x1FF;
     int pdpt_idx = (virt >> 30) & 0x1FF;
@@ -697,21 +732,36 @@ int vmm_virt_to_phys(uint64_t virt, uint64_t *phys) {
     return 0;
 }
 
+/**
+ * vmm_get_physaddr - Translate a kernel virtual address to a physical
+ *                    address (return-value convenience wrapper).
+ * @virt: Kernel virtual address.
+ * Return: physical address, or 0 if not mapped.
+ */
 uint64_t vmm_get_physaddr(uint64_t virt) {
     uint64_t phys = 0;
     vmm_virt_to_phys(virt, &phys);
     return phys;
 }
 
+/**
+ * vmm_get_pml4 - Return the kernel PML4 pointer.
+ * Return: kernel_pml4 (the global kernel page-table root).
+ */
 uint64_t *vmm_get_pml4(void) {
     return kernel_pml4;
 }
 
-/*
- * Map a region of physical memory in the kernel's high-half VMA space.
- * Returns the virtual address (KERNEL_VMA_OFFSET + phys) on success, NULL on failure.
- * This is the canonical way to map MMIO or temporary physical memory after
- * the identity map is removed.
+/**
+ * vmm_map_phys - Map a region of physical memory in the kernel's high-half
+ *                VMA space.
+ * @phys: Physical address to map (need not be page-aligned).
+ * @size: Size of the region in bytes.
+ * @flags: Page-table flags (e.g. VMM_FLAG_PRESENT, VMM_FLAG_WRITE).
+ * Return: virtual address (KERNEL_VMA_OFFSET + phys) on success, NULL on
+ *         failure; ERR_PTR(-EOVERFLOW)/(-ENOMEM) on error.
+ * The canonical way to map MMIO or temporary physical memory after the
+ * identity map is removed.
  */
 void *vmm_map_phys(uint64_t phys, uint64_t size, uint64_t flags) {
     if (size == 0)
@@ -728,7 +778,11 @@ void *vmm_map_phys(uint64_t phys, uint64_t size, uint64_t flags) {
     return (void *)(KERNEL_VMA_OFFSET + phys);
 }
 
-/* Unmap a region previously mapped with vmm_map_phys. */
+/**
+ * vmm_unmap_phys - Unmap a region previously mapped with vmm_map_phys.
+ * @vaddr: Virtual address of the mapped region.
+ * @size: Size of the region in bytes.
+ */
 void vmm_unmap_phys(void *vaddr, uint64_t size) {
     if (size == 0)
         return;
@@ -798,6 +852,17 @@ static uint64_t *get_or_create_table_in(uint64_t *table, int index, uint64_t fla
     return (uint64_t *)PHYS_TO_VIRT(table[index] & PTE_ADDR_MASK);
 }
 
+/**
+ * vmm_map_user_page - Map a single 4KB physical page into a user PML4.
+ * @pml4: Target user PML4.
+ * @virt: User virtual address (must be < USER_VADDR_MAX).
+ * @phys: Physical address of the page to map.
+ * @flags: Page-table flags (RWX + COW/LAZY/NOEXEC/etc.).
+ * Return: 0 on success, -EINVAL on bad args, -ENOMEM on page-table
+ *         allocation failure, or -EEXIST if the page is already mapped.
+ * Creates intermediate tables as needed and unwinds them on failure to
+ * avoid page-table-page leaks.
+ */
 int vmm_map_user_page(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags) {
     if (!pml4)
         return -EINVAL;
@@ -860,14 +925,17 @@ int vmm_map_user_page(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t fla
     return 0;
 }
 
-/* ── vmm_merge_user_page_flags ───────────────────────────────────────
- * Merge additional permissions into an EXISTING user mapping (the page
- * is already present).  Used when ELF segments overlap on a page — e.g.
- * a tiny RW .data/.bss segment sharing a 4KB page with the tail of an
- * RX .text segment: the first mapping wins in vmm_map_user_page (-EEXIST),
- * so without this the .bss would stay read-only and the program would
- * SIGSEGV on its first write (observed with init's constructor counter).
- * Returns 0 on success, -ENOENT if the page isn't mapped. */
+/**
+ * vmm_merge_user_page_flags - Merge additional permissions into an EXISTING
+ *                             user mapping.
+ * @pml4: Target user PML4.
+ * @virt: User virtual address of the page to modify.
+ * @flags: Flag bits to merge (VMM_FLAG_WRITE, VMM_FLAG_NOEXEC, EXECONLY).
+ * Return: 0 on success, -ENOENT if the page isn't mapped.
+ * Used when ELF segments overlap on a page (e.g. a tiny RW .data/.bss segment
+ * sharing a 4KB page with an RX .text tail). The merge widens permissions
+ * without disturbing the physical frame or COW state.
+ */
 int vmm_merge_user_page_flags(uint64_t *pml4, uint64_t virt, uint64_t flags) {
     if (!pml4 || virt >= USER_VADDR_MAX)
         return -EINVAL;
@@ -911,6 +979,13 @@ int vmm_merge_user_page_flags(uint64_t *pml4, uint64_t virt, uint64_t flags) {
     return 0;
 }
 
+/**
+ * vmm_unmap_user_page - Unmap a single user page from a user PML4.
+ * @pml4: Target user PML4.
+ * @virt: User virtual address.
+ * Clears the PTE (or 2MB PDE) and flushes the TLB for the address. Does not
+ * free the underlying physical frame.
+ */
 void vmm_unmap_user_page(uint64_t *pml4, uint64_t virt) {
     if (!pml4 || virt >= USER_VADDR_MAX)
         return;
@@ -978,6 +1053,16 @@ static uint64_t *vmm_walk_to_pt(uint64_t *pml4, uint64_t virt, uint64_t *pde_out
     return pt;
 }
 
+/**
+ * vmm_user_range_ok - Verify that a user range is fully mapped with the
+ *                     requested access.
+ * @pml4: Target user PML4.
+ * @addr: Starting user address.
+ * @len: Length of the range in bytes.
+ * @write: Non-zero to require write access.
+ * Return: 1 if valid and accessible (or @len == 0), 0 otherwise.
+ * COW pages are considered writable (the first write resolves them).
+ */
 int vmm_user_range_ok(uint64_t *pml4, uint64_t addr, uint64_t len, int write) {
     if (!pml4)
         return 0;
@@ -1026,6 +1111,15 @@ int vmm_user_range_ok(uint64_t *pml4, uint64_t addr, uint64_t len, int write) {
     return 1;
 }
 
+/**
+ * vmm_user_string_ok - Check that a NUL-terminated string fits in mapped
+ *                      user memory.
+ * @pml4: Target user PML4.
+ * @addr: Starting user address of the string.
+ * @max_len: Maximum number of bytes to scan (excluding the terminator).
+ * Return: 1 if a NUL byte is found within @max_len mapped bytes, 0 otherwise.
+ * Reads user memory via PHYS_TO_VIRT so it never faults on user addresses.
+ */
 int vmm_user_string_ok(uint64_t *pml4, uint64_t addr, uint64_t max_len) {
     if (!pml4 || addr >= USER_VADDR_MAX || max_len == 0)
         return 0;
@@ -1055,11 +1149,24 @@ int vmm_user_string_ok(uint64_t *pml4, uint64_t addr, uint64_t max_len) {
     return 0;
 }
 
+/**
+ * vmm_switch_pml4 - Load a PML4 into CR3, switching the address space.
+ * @pml4: Pointer to the new PML4 (kernel-mapped virtual address).
+ */
 void vmm_switch_pml4(uint64_t *pml4) {
     uint64_t phys = VIRT_TO_PHYS((uint64_t)pml4);
     write_cr3(phys);
 }
 
+/**
+ * vmm_clone_user_pml4 - Create a COW-fork clone of a user address space.
+ * @src: Source (parent) user PML4.
+ * Return: New child PML4 sharing the parent's frames, or NULL on allocation
+ *         failure.
+ * Marks all writable user pages read-only + PTE_COW in both parent and child,
+ * refs each shared leaf frame, splits 2MB huge pages into 4KB COW entries,
+ * and flushes the TLB before returning (callers need not flush separately).
+ */
 /*
  * COW fork clone: share all user pages between parent and child as read-only.
  * Both parent and child PTEs are marked !WRITE | PTE_COW.
@@ -1284,6 +1391,13 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
     return dst;
 }
 
+/**
+ * vmm_destroy_user_pml4 - Tear down a user PML4, freeing all resources.
+ * @pml4: PML4 to destroy.
+ * Frees the user-half page-table pages (entries 0-255), unrefs every mapped
+ * leaf frame (handling 2MB huge pages, the shared zero page, and the KPTI
+ * trampoline specially), and frees the PML4 itself.
+ */
 void vmm_destroy_user_pml4(uint64_t *pml4) {
     /* Free user-half page table pages (entries 0-255 only) */
     for (int i = 0; i < 256; i++) {
@@ -1365,6 +1479,12 @@ void vmm_destroy_user_pml4(uint64_t *pml4) {
     pmm_free_frame(pml4_phys);
 }
 
+/**
+ * vmm_handle_cow_fault - Handle a write fault on a copy-on-write page.
+ * @pml4: Target user PML4.
+ * @virt: User virtual address that faulted.
+ * Return: 1 if the fault was a COW fault and was handled, 0 otherwise.
+ */
 /*
  * Handle a write fault on a COW page.
  * Returns 1 if the fault was a COW fault and was handled, 0 otherwise.
@@ -1424,6 +1544,13 @@ int vmm_handle_cow_fault(uint64_t *pml4, uint64_t virt) {
 
 /* ── mmap / munmap / mprotect syscall helpers ───────────────────── */
 
+/**
+ * vmm_page_is_mapped_user - Test whether a user page is present.
+ * @pml4: Target user PML4.
+ * @virt: User virtual address.
+ * Return: 1 if the page (or a 2MB huge page covering it) is present,
+ *         0 if not mapped or args invalid.
+ */
 int vmm_page_is_mapped_user(uint64_t *pml4, uint64_t virt) {
     if (!pml4 || virt >= USER_VADDR_MAX)
         return 0;
@@ -1446,6 +1573,15 @@ int vmm_page_is_mapped_user(uint64_t *pml4, uint64_t virt) {
     return pt[pt_idx] & PTE_PRESENT;
 }
 
+/**
+ * vmm_user_virt_to_phys - Translate a user virtual address to a physical
+ *                         address.
+ * @pml4: Target user PML4.
+ * @virt: User virtual address.
+ * @phys: Out-parameter receiving the physical address.
+ * Return: 0 on success (with @phys set), -EINVAL on bad args, -EFAULT if
+ *         not mapped. Handles 2MB huge pages as well as 4KB pages.
+ */
 /* Walk user page tables to resolve a virtual address to a physical address.
  * Returns 0 on success with phys set, -1 if not mapped. */
 int vmm_user_virt_to_phys(uint64_t *pml4, uint64_t virt, uint64_t *phys) {
@@ -1465,6 +1601,17 @@ int vmm_user_virt_to_phys(uint64_t *pml4, uint64_t virt, uint64_t *phys) {
     return 0;
 }
 
+/**
+ * vmm_map_user_pages - Map a range of user virtual pages.
+ * @pml4: Target user PML4.
+ * @virt: Starting user virtual address.
+ * @num_pages: Number of 4KB pages to map.
+ * @flags: Page-table flags.
+ * Return: 0 on success, -EINVAL/-EOVERFLOW on bad args, -ENOMEM on
+ *         allocation failure (unwinds previously mapped pages).
+ * With VMM_FLAG_LAZY maps to the shared zero page via COW instead of
+ * allocating a frame immediately.
+ */
 int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages, uint64_t flags) {
     if (!pml4 || virt >= USER_VADDR_MAX)
         return -EINVAL;
@@ -1544,6 +1691,16 @@ unwind:
     return -ENOMEM;
 }
 
+/**
+ * vmm_unmap_user_pages - Unmap a range of user virtual pages.
+ * @pml4: Target user PML4.
+ * @virt: Starting user virtual address.
+ * @num_pages: Number of 4KB pages to unmap.
+ * Return: 0 on success, -EINVAL/-EOVERFLOW on bad args, -ENOMEM on
+ *         allocation failure during a partial 2MB-huge-page split.
+ * Unrefs the underlying frames (dropping mapping and any lock refs) and
+ * handles full and partial unmaps of 2MB huge pages.
+ */
 int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
     if (!pml4 || virt >= USER_VADDR_MAX)
         return -EINVAL;
@@ -1678,7 +1835,20 @@ int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
  *  This means a single TLB entry covers 512× the memory of a 4KB page.
  * ══════════════════════════════════════════════════════════════════════ */
 
-/* ── Helper: map a single 2MB-aligned huge page in a user address space ──
+/**
+ * vmm_map_user_hugepage_internal - Map a single 2MB-aligned huge page into a
+ *                                  user address space.
+ * @pml4: Target user PML4.
+ * @virt: User virtual address (must be 2MB-aligned).
+ * @huge_phys: Physical address of a 2MB-aligned contiguous block
+ *             (512 × 4KB frames).
+ * @flags: Page-table flags.
+ * Return: 0 on success, -EINVAL on bad args, -ENOMEM on allocation failure.
+ * Exposed for HugeTLB (MAP_HUGETLB) which pre-allocates its own pool of
+ * huge pages.
+ */
+/*
+ * ── Helper: map a single 2MB-aligned huge page in a user address space ──
  *
  * The caller MUST provide the physical address of a 2MB-aligned contiguous
  * block (512 × 4KB frames).  The virtual address MUST be 2MB-aligned.
@@ -1800,6 +1970,19 @@ int vmm_map_user_hugepage_internal(uint64_t *pml4, uint64_t virt, uint64_t huge_
  * Returns 0 on success, -1 on failure (partial mappings are NOT undone
  * on failure; the caller must handle cleanup).
  */
+/**
+ * vmm_map_user_huge_pages - Map user pages using 2MB huge pages where
+ *                           possible.
+ * @pml4: Target user PML4.
+ * @virt: Starting user virtual address.
+ * @num_4k_pages: Number of 4KB-equivalent pages to map.
+ * @flags: Page-table flags.
+ * Return: 0 on success, -EINVAL/-EOVERFLOW on bad args, -ENOMEM on failure.
+ * Strategy: map unaligned leading/trailing chunks with 4KB pages and the
+ * aligned middle with 2MB huge pages (via pmm_alloc_frames(512)), falling
+ * back to 4KB pages when contiguous allocation fails. Partial mappings are
+ * not undone on failure.
+ */
 int vmm_map_user_huge_pages(uint64_t *pml4, uint64_t virt, size_t num_4k_pages, uint64_t flags) {
     if (!pml4 || virt >= USER_VADDR_MAX)
         return -EINVAL;
@@ -1863,6 +2046,17 @@ int vmm_map_user_huge_pages(uint64_t *pml4, uint64_t virt, size_t num_4k_pages, 
     return 0;
 }
 
+/**
+ * vmm_set_user_pages_flags - Change page-table flags across a user range.
+ * @pml4: Target user PML4.
+ * @virt: Starting user virtual address.
+ * @num_pages: Number of pages (2MB huge pages counted as one PDE).
+ * @new_flags: New page-table flags (RWX, PRESENT, NOEXEC, EXECONLY, etc.).
+ * Return: 0 on success, -EINVAL/-EOVERFLOW on bad args, -EFAULT on an
+ *         unmapped page, -ENOMEM if COW-break allocation fails.
+ * When adding write access to a COW page the COW is broken first so the
+ * shared frame is never made writable in only one process.
+ */
 int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages, uint64_t new_flags) {
     if (!pml4 || virt >= USER_VADDR_MAX)
         return -EINVAL;
@@ -1994,6 +2188,17 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages, ui
  * -ENOMEM if COW-break allocation fails).  On error, already-locked pages
  * are NOT unlocked (caller is expected to munlock on error).
  */
+/**
+ * vmm_lock_user_pages - Wire (lock) user pages in memory.
+ * @pml4: Target user PML4.
+ * @virt: Starting user virtual address.
+ * @num_pages: Number of pages to lock.
+ * Return: 0 on success, -EINVAL/-EOVERFLOW on bad args, -EFAULT if a page is
+ *         unmapped, -ENOMEM if COW-break allocation fails. On error, already-
+ *         locked pages are NOT unlocked (caller should munlock on error).
+ * Resolves COW/lazy pages first, sets VMM_FLAG_LOCKED, and adds an extra
+ * frame refcount (pmm_ref_frame) per page.
+ */
 int vmm_lock_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
     if (!pml4 || virt >= USER_VADDR_MAX)
         return -EINVAL;
@@ -2095,6 +2300,15 @@ int vmm_lock_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
  * Pages without VMM_FLAG_LOCKED are silently skipped (Linux semantics:
  * munlock on non-locked pages is a no-op).
  */
+/**
+ * vmm_unlock_user_pages - Unwire (unlock) user pages.
+ * @pml4: Target user PML4.
+ * @virt: Starting user virtual address.
+ * @num_pages: Number of pages to unlock.
+ * Return: 0 on success, -EINVAL/-EOVERFLOW on bad args.
+ * Clears VMM_FLAG_LOCKED and drops the extra frame refcount. Pages without
+ * VMM_FLAG_LOCKED are silently skipped (Linux munlock semantics).
+ */
 int vmm_unlock_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
     if (!pml4 || virt >= USER_VADDR_MAX)
         return -EINVAL;
@@ -2169,6 +2383,18 @@ int vmm_unlock_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
  * Huge pages (2MB) are counted as 512 × 4KB pages.
  * If dirty_out is non-NULL, receives count of writable/dirty pages.
  * If shared_out is non-NULL, receives count of COW/shared+lazy pages.
+ */
+/**
+ * vmm_count_user_pages_range - Count present 4KB-equivalent pages in a user
+ *                              address range.
+ * @pml4: Target user PML4.
+ * @start_virt: Start of the range (inclusive).
+ * @end_virt: End of the range (exclusive).
+ * @dirty_out: Optional out-parameter receiving the count of writable pages.
+ * @shared_out: Optional out-parameter receiving the count of COW/shared+lazy
+ *              pages.
+ * Return: total present pages. 2MB huge pages count as 512 × 4KB, and only
+ *         the overlapping portion is counted.
  */
 uint64_t vmm_count_user_pages_range(uint64_t *pml4, uint64_t start_virt, uint64_t end_virt,
                                     uint64_t *dirty_out, uint64_t *shared_out) {
@@ -2259,6 +2485,15 @@ done:
 }
 
 /* ── Walk user page table and count present pages (for OOM scoring) ── */
+/**
+ * vmm_count_user_pages - Count all present 4KB-equivalent pages in a user
+ *                        address space (for OOM scoring).
+ * @pml4: Target user PML4.
+ * @dirty_out: Optional out-parameter receiving the count of writable pages.
+ * @shared_out: Optional out-parameter receiving the count of COW/shared+lazy
+ *              pages.
+ * Return: total present pages across the user half of the PML4.
+ */
 uint64_t vmm_count_user_pages(uint64_t *pml4, uint64_t *dirty_out, uint64_t *shared_out) {
     uint64_t total = 0, dirty = 0, shared = 0;
 
@@ -2324,6 +2559,15 @@ done:
  * Used by the page-fault handler and /proc/self/maps to determine
  * whether a page is execute-only (executable but not readable in
  * software-enforced semantics). */
+/**
+ * vmm_page_is_execonly - Test whether a user page is tagged execute-only
+ *                        (EXECONLY software bit).
+ * @pml4: Target user PML4.
+ * @virt: User virtual address.
+ * Return: 1 if the page is present and tagged EXECONLY, 0 otherwise.
+ * Used by the page-fault handler and /proc/self/maps to determine whether a
+ * page is executable-but-not-readable under software-enforced semantics.
+ */
 int vmm_page_is_execonly(uint64_t *pml4, uint64_t virt) {
     if (!pml4 || virt >= USER_VADDR_MAX)
         return 0;
@@ -2359,6 +2603,15 @@ EXPORT_SYMBOL(vmm_user_virt_to_phys);
 EXPORT_SYMBOL(vmm_page_is_execonly);
 
 /* ── vmm_alloc — Allocate virtual memory pages ────────────────── */
+/**
+ * vmm_alloc - Allocate and map user virtual memory pages.
+ * @addr: Desired starting address (0 selects default base 0x10000).
+ * @size: Size in bytes (rounded up to a page).
+ * @flags: PROT bits: 1=READ, 2=WRITE, 4=EXEC.
+ * Return: starting virtual address on success, 0 on failure.
+ * Maps one physical frame per page in the kernel page table, zero-fills each
+ * frame, and unwinds (freeing frames + unmapping) on failure.
+ */
 uint64_t vmm_alloc(uint64_t addr, size_t size, int flags) {
     if (size == 0)
         return 0;
