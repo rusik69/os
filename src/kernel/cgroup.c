@@ -459,6 +459,200 @@ static struct vfs_ops cgroup_v2_vfs_ops = {
 };
 
 /* ═══════════════════════════════════════════════════════════════════════
+ *  Cgroup v1 compatibility layer (D315 task 14)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Extract the cgroup ID a v1 path refers to.  v1 paths look like
+ * /sys/fs/cgroup-v1/<controller>/<name>/<file> or
+ * /sys/fs/cgroup-v1/<name>/<file> for the root of a hierarchy.
+ * Falls back to root cgroup (0) when no named subdirectory is found. */
+static int cgroup_v1_id_from_path(const char *path) {
+    if (!path)
+        return 0;
+    const char *base = "/sys/fs/cgroup-v1/";
+    size_t blen = strlen(base);
+    if (memcmp(path, base, blen) != 0)
+        return 0;
+    const char *p = path + blen;
+    const char *slash = strchr(p, '/');
+    if (!slash || (size_t)(slash - p) >= sizeof(g_cgroups[0].name))
+        return 0;
+    char cg_name[32];
+    size_t nlen = (size_t)(slash - p);
+    if (nlen > 31)
+        nlen = 31;
+    memcpy(cg_name, p, nlen);
+    cg_name[nlen] = '\0';
+    for (int i = 0; i < CGROUP_MAX; i++) {
+        if (g_cgroups[i].in_use && g_cgroups[i].name[0] && strcmp(g_cgroups[i].name, cg_name) == 0)
+            return i;
+    }
+    return 0;
+}
+
+/* Translate a legacy v1 control-file mutation onto the shared v2
+ * controller APIs.  Files that have no v2 twin (e.g. cpu.shares) are
+ * accepted as no-ops so legacy tools keep working. */
+static int cgroup_v1_write(void *priv, const char *path, const void *buf, uint32_t size) {
+    (void)priv;
+    (void)path;
+    if (!buf || size == 0)
+        return 0;
+    int cg_id = cgroup_v1_id_from_path(path);
+
+    char tmp[128];
+    uint32_t len = size > (uint32_t)(sizeof(tmp) - 1) ? (uint32_t)(sizeof(tmp) - 1) : size;
+    memcpy(tmp, buf, len);
+    tmp[len] = '\0';
+    /* Strip trailing newline/space. */
+    while (len > 0 && (tmp[len - 1] == '\n' || tmp[len - 1] == '\r' || tmp[len - 1] == ' ' ||
+                       tmp[len - 1] == '\t'))
+        tmp[--len] = '\0';
+
+    char *space = strchr(tmp, ' ');
+    if (space)
+        *space++ = '\0';
+    char *key = tmp;
+    char *value = space ? space : (char *)"";
+
+    /* tasks / cgroup.procs migration. */
+    if (strcmp(key, "tasks") == 0 || strcmp(key, "cgroup.procs") == 0) {
+        int pid = 0;
+        const char *v = value;
+        while (*v >= '0' && *v <= '9')
+            pid = pid * 10 + (int)(*v++ - '0');
+        return cgroup_attach(cg_id, pid);
+    }
+
+    /* freezer.state FROZEN|THAWED */
+    if (strcmp(key, "freezer.state") == 0) {
+        if (strncmp(value, "FROZEN", 6) == 0)
+            return cgroup_freeze(cg_id);
+        return cgroup_unfreeze(cg_id);
+    }
+
+    /* cpu.cfs_quota_us / cpu.cfs_period_us */
+    if (strcmp(key, "cpu.cfs_quota_us") == 0 || strcmp(key, "cpu.cfs_period_us") == 0) {
+        uint64_t quota = 0, period = CGROUP_CPU_PERIOD_DEFAULT;
+        if (strcmp(key, "cpu.cfs_period_us") == 0) {
+            period = 0;
+            const char *v = value;
+            while (*v >= '0' && *v <= '9')
+                period = period * 10 + (uint64_t)(*v++ - '0');
+            if (period == 0)
+                period = CGROUP_CPU_PERIOD_DEFAULT;
+            uint64_t oldq = 0, oldp = 0;
+            cgroup_cpu_get_max(cg_id, &oldq, &oldp);
+            quota = oldq;
+        } else {
+            quota = 0;
+            if (strncmp(value, "-1", 2) == 0)
+                quota = 0; /* -1 = unlimited */
+            else {
+                const char *v = value;
+                while (*v >= '0' && *v <= '9')
+                    quota = quota * 10 + (uint64_t)(*v++ - '0');
+            }
+            uint64_t oldq = 0, oldp = 0;
+            cgroup_cpu_get_max(cg_id, &oldq, &oldp);
+            if (oldp > 0)
+                period = oldp;
+        }
+        return cgroup_cpu_set_max(cg_id, (int64_t)quota, (int64_t)period);
+    }
+
+    /* cpu.shares / cpu.rt_runtime_us / cpu.rt_period_us — no v2 twin,
+     * accepted as no-op for legacy compatibility. */
+    if (strcmp(key, "cpu.shares") == 0 || strcmp(key, "cpu.rt_runtime_us") == 0 ||
+        strcmp(key, "cpu.rt_period_us") == 0)
+        return 0;
+
+    /* memory.limit_in_bytes / memory.soft_limit_in_bytes / memory.swappiness */
+    if (strcmp(key, "memory.limit_in_bytes") == 0) {
+        uint64_t val = 0;
+        if (strncmp(value, "-1", 2) == 0)
+            val = 0; /* unlimited */
+        else {
+            const char *v = value;
+            while (*v >= '0' && *v <= '9')
+                val = val * 10 + (uint64_t)(*v++ - '0');
+        }
+        return cgroup_mem_set_max(cg_id, val);
+    }
+    if (strcmp(key, "memory.soft_limit_in_bytes") == 0) {
+        uint64_t val = 0;
+        if (strncmp(value, "-1", 2) == 0)
+            val = 0;
+        else {
+            const char *v = value;
+            while (*v >= '0' && *v <= '9')
+                val = val * 10 + (uint64_t)(*v++ - '0');
+        }
+        return cgroup_mem_set_high(cg_id, val);
+    }
+    if (strcmp(key, "memory.swappiness") == 0)
+        return 0; /* no swap controller twin */
+
+    /* pids.max */
+    if (strcmp(key, "pids.max") == 0) {
+        int64_t max = 0;
+        if (strncmp(value, "max", 3) == 0)
+            max = 0;
+        else {
+            max = 0;
+            const char *v = value;
+            while (*v >= '0' && *v <= '9')
+                max = max * 10 + (int64_t)(*v++ - '0');
+        }
+        return cgroup_pids_set_max(cg_id, max);
+    }
+
+    /* blkio.throttle.*.bps_device / .iops_device  "<major>:<minor> <N>" */
+    if (strncmp(key, "blkio.throttle.", 15) == 0 &&
+        (strstr(key, "bps_device") || strstr(key, "iops_device"))) {
+        uint32_t major = 0, minor = 0;
+        const char *v = value;
+        while (*v >= '0' && *v <= '9')
+            major = major * 10 + (uint32_t)(*v++ - '0');
+        if (*v == ':')
+            v++;
+        while (*v >= '0' && *v <= '9')
+            minor = minor * 10 + (uint32_t)(*v++ - '0');
+        uint64_t lim = 0;
+        while (*v == ' ' || *v == '\t')
+            v++;
+        while (*v >= '0' && *v <= '9')
+            lim = lim * 10 + (uint64_t)(*v++ - '0');
+        /* Map onto the shared io.max per-device limit store. */
+        cgroup_io_set_limit(cg_id, major, minor, strstr(key, "read_bps") ? lim : 0,
+                            strstr(key, "write_bps") ? lim : 0, strstr(key, "read_iops") ? lim : 0,
+                            strstr(key, "write_iops") ? lim : 0);
+        return 0;
+    }
+
+    return 0;
+}
+
+/* v1 read: minimal status echo so `cat` on a v1 file succeeds. */
+static int cgroup_v1_read(void *priv, const char *path, void *buf, uint32_t max, uint32_t *out) {
+    (void)priv;
+    (void)path;
+    const char msg[] = "# cgroup v1 compatibility hierarchy (legacy controllers)\n"
+                       "# Files map onto the shared v2 controller state.\n";
+    size_t total = sizeof(msg) - 1;
+    if (total > (size_t)max)
+        total = (size_t)max;
+    memcpy(buf, msg, total);
+    *out = (uint32_t)total;
+    return 0;
+}
+
+static struct vfs_ops cgroup_v1_vfs_ops = {
+    .read = cgroup_v1_read,
+    .write = cgroup_v1_write,
+};
+
+/* ═══════════════════════════════════════════════════════════════════════
  *  Public API — Cgroup management
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -1794,6 +1988,12 @@ void cgroup_init(void) {
         vfs_create("/sys/fs/cgroup", VFS_TYPE_DIR);
         vfs_mount("/sys/fs/cgroup", &cgroup_v2_vfs_ops, NULL);
         kprintf("[OK] cgroup v2 mounted at /sys/fs/cgroup/\n");
+    }
+
+    /* Mount cgroup v1 compatibility hierarchy (D315 task 14). */
+    if (vfs_create("/sys/fs/cgroup-v1", VFS_TYPE_DIR) == 0 ||
+        vfs_mount("/sys/fs/cgroup-v1", &cgroup_v1_vfs_ops, NULL) == 0) {
+        kprintf("[OK] cgroup v1 compat mounted at /sys/fs/cgroup-v1/\n");
     }
 
     kprintf("[OK] Cgroup v2 initialized (cpu, memory, io, pids, freezer, rdma, misc)\n");
