@@ -1,8 +1,8 @@
 #ifndef VFS_H
 #define VFS_H
 
-#include "types.h"
 #include "errno.h"
+#include "types.h"
 
 /*
  * ── VFS (Virtual Filesystem Switch) Architecture ──────────────────────────
@@ -96,51 +96,51 @@
 struct fs_quota;
 #define VFS_O_RDONLY 0
 #define VFS_O_WRONLY 1
-#define VFS_O_RDWR   2
-#define VFS_O_CREAT  0x40
+#define VFS_O_RDWR 2
+#define VFS_O_CREAT 0x40
 
 /* Mount flags */
 #define MS_RDONLY 1
-#define MS_BIND   0x40
+#define MS_BIND 0x40
 
 /* POSIX file type encoding (top bits of mode for mknod) */
-#define S_IFMT   0170000  /* type bit mask */
-#define S_ISUID  0004000  /* set user ID on execution */
-#define S_ISGID  0002000  /* set group ID on execution */
-#define S_ISVTX  0001000  /* sticky bit */
-#define S_IRWXU  00700    /* owner read/write/execute */
-#define S_IRUSR  00400    /* owner read */
-#define S_IWUSR  00200    /* owner write */
-#define S_IXUSR  00100    /* owner execute */
-#define S_IRWXG  00070    /* group read/write/execute */
-#define S_IRGRP  00040    /* group read */
-#define S_IWGRP  00020    /* group write */
-#define S_IXGRP  00010    /* group execute */
-#define S_IRWXO  00007    /* other read/write/execute */
-#define S_IROTH  00004    /* other read */
-#define S_IWOTH  00002    /* other write */
-#define S_IXOTH  00001    /* other execute */
-#define S_IFSOCK 0140000  /* socket */
-#define S_IFLNK  0120000  /* symbolic link */
-#define S_IFREG  0100000  /* regular file */
-#define S_IFBLK  0060000  /* block device */
-#define S_IFDIR  0040000  /* directory */
-#define S_IFCHR  0020000  /* character device */
-#define S_IFIFO  0010000  /* FIFO */
+#define S_IFMT 0170000   /* type bit mask */
+#define S_ISUID 0004000  /* set user ID on execution */
+#define S_ISGID 0002000  /* set group ID on execution */
+#define S_ISVTX 0001000  /* sticky bit */
+#define S_IRWXU 00700    /* owner read/write/execute */
+#define S_IRUSR 00400    /* owner read */
+#define S_IWUSR 00200    /* owner write */
+#define S_IXUSR 00100    /* owner execute */
+#define S_IRWXG 00070    /* group read/write/execute */
+#define S_IRGRP 00040    /* group read */
+#define S_IWGRP 00020    /* group write */
+#define S_IXGRP 00010    /* group execute */
+#define S_IRWXO 00007    /* other read/write/execute */
+#define S_IROTH 00004    /* other read */
+#define S_IWOTH 00002    /* other write */
+#define S_IXOTH 00001    /* other execute */
+#define S_IFSOCK 0140000 /* socket */
+#define S_IFLNK 0120000  /* symbolic link */
+#define S_IFREG 0100000  /* regular file */
+#define S_IFBLK 0060000  /* block device */
+#define S_IFDIR 0040000  /* directory */
+#define S_IFCHR 0020000  /* character device */
+#define S_IFIFO 0010000  /* FIFO */
 
 /* POSIX ACL tags */
-#define ACL_USER_OBJ  1
-#define ACL_USER      2
+#define ACL_USER_OBJ 1
+#define ACL_USER 2
 #define ACL_GROUP_OBJ 3
-#define ACL_GROUP     4
-#define ACL_MASK      5
-#define ACL_OTHER     6
+#define ACL_GROUP 4
+#define ACL_MASK 5
+#define ACL_OTHER 6
 
 /* POSIX ACL entry */
 struct posix_acl_entry {
-    uint16_t tag;   /* ACL_USER_OBJ, ACL_USER, etc. */
-    uint16_t perm;  /* permission bits (r/w/x) */
-    uint32_t id;    /* user/group ID (for ACL_USER/ACL_GROUP) */
+    uint16_t tag;  /* ACL_USER_OBJ, ACL_USER, etc. */
+    uint16_t perm; /* permission bits (r/w/x) */
+    uint32_t id;   /* user/group ID (for ACL_USER/ACL_GROUP) */
 };
 
 /* POSIX ACL: up to 3 entries */
@@ -168,24 +168,24 @@ struct posix_acl {
 /* VFS stat result */
 struct vfs_stat {
     uint64_t size;
-    uint8_t  type;   /* VFS_TYPE_* */
+    uint8_t type; /* VFS_TYPE_* */
     uint16_t uid;
     uint16_t gid;
     uint16_t mode;
     uint32_t atime;
     uint32_t mtime;
-    uint32_t nlink;  /* link count */
-    uint32_t ino;    /* inode number (0 = unknown/not applicable) */
+    uint32_t nlink; /* link count */
+    uint32_t ino;   /* inode number (0 = unknown/not applicable) */
     /* Device info for device nodes (major/minor) */
     uint16_t dev_major;
     uint16_t dev_minor;
 };
 
 /* VFS stat type constants */
-#define VFS_TYPE_FILE   1
-#define VFS_TYPE_DIR    2
-#define VFS_TYPE_LINK   3
-#define VFS_TYPE_CHR    4  /* character device */
+#define VFS_TYPE_FILE 1
+#define VFS_TYPE_DIR 2
+#define VFS_TYPE_LINK 3
+#define VFS_TYPE_CHR 4 /* character device */
 
 /* Maximum symlink traversal depth (Linux: MAXSYMLINKS = 40) */
 #define SYMLINK_MAX 40
@@ -193,25 +193,25 @@ struct vfs_stat {
 /* Maximum hard link count (ext2 inode i_links_count is uint16_t: 65535 max) */
 #define VFS_LINK_MAX 65535
 
-#define VFS_TYPE_BLK    5  /* block device */
-#define VFS_TYPE_FIFO   6  /* named pipe/FIFO */
+#define VFS_TYPE_BLK 5  /* block device */
+#define VFS_TYPE_FIFO 6 /* named pipe/FIFO */
 struct file_lock {
-    int      l_type;    /* F_RDLCK, F_WRLCK, F_UNLCK */
-    int      l_whence;  /* SEEK_SET, SEEK_CUR, SEEK_END */
-    int64_t  l_start;
-    int64_t  l_len;     /* 0 = to EOF */
-    int32_t  l_pid;
-    int      used;
-    int      mandatory; /* 1 = kernel-enforced mandatory lock */
-    char     path_storage[64]; /* path this lock applies to */
+    int l_type;   /* F_RDLCK, F_WRLCK, F_UNLCK */
+    int l_whence; /* SEEK_SET, SEEK_CUR, SEEK_END */
+    int64_t l_start;
+    int64_t l_len; /* 0 = to EOF */
+    int32_t l_pid;
+    int used;
+    int mandatory;         /* 1 = kernel-enforced mandatory lock */
+    char path_storage[64]; /* path this lock applies to */
 };
 
 /* Extended attribute entry */
 struct xattr_entry {
-    char  name[VFS_XATTR_NAME_MAX];
-    char  value[VFS_XATTR_VALUE_MAX];
-    int   size;
-    int   in_use;
+    char name[VFS_XATTR_NAME_MAX];
+    char value[VFS_XATTR_VALUE_MAX];
+    int size;
+    int in_use;
 };
 
 /* statfs structure */
@@ -255,8 +255,7 @@ struct vfs_statfs {
  */
 struct vfs_ops {
     /* Returns byte count read, or <0 on error */
-    int (*read)(void *priv, const char *path, void *buf,
-                uint32_t max_size, uint32_t *out_size);
+    int (*read)(void *priv, const char *path, void *buf, uint32_t max_size, uint32_t *out_size);
     /* Returns 0 on success or <0 on error */
     int (*write)(void *priv, const char *path, const void *data, uint32_t size);
     /* Returns 0 on success or <0 on error */
@@ -287,15 +286,14 @@ struct vfs_ops {
     int (*symlink)(void *priv, const char *target, const char *linkpath);
     int (*readlink)(void *priv, const char *path, char *buf, int bufsize);
     /* Optional: create device node */
-    int (*mknod)(void *priv, const char *path, uint16_t mode,
-                 uint16_t dev_major, uint16_t dev_minor);
+    int (*mknod)(void *priv, const char *path, uint16_t mode, uint16_t dev_major,
+                 uint16_t dev_minor);
     /* Optional: flush / sync all cached data for this filesystem to backing store */
     int (*flush)(void *priv);
     /* Optional: set file timestamps (atime, mtime).  times[0] = atime, times[1] = mtime.
      * Each entry uses tv_sec and tv_nsec; special values UTIME_NOW and UTIME_OMIT
      * are handled by the caller before dispatch.  Returns 0 on success or -errno. */
-    int (*set_time)(void *priv, const char *path,
-                    uint64_t atime_sec, uint64_t atime_nsec,
+    int (*set_time)(void *priv, const char *path, uint64_t atime_sec, uint64_t atime_nsec,
                     uint64_t mtime_sec, uint64_t mtime_nsec);
     /* Optional: rename/move a file or directory from old_path to new_path.
      * Both paths are on the same filesystem (the caller resolves mounts).
@@ -328,10 +326,9 @@ struct vfs_ops {
     /* Optional: extended attribute operations (user. namespace, etc.).
      * If not provided, the VFS layer falls back to the global
      * path-based xattr table. */
-    int (*setxattr)(void *priv, const char *path, const char *name,
-                    const void *value, size_t size, int flags);
-    int (*getxattr)(void *priv, const char *path, const char *name,
-                    void *value, size_t size);
+    int (*setxattr)(void *priv, const char *path, const char *name, const void *value, size_t size,
+                    int flags);
+    int (*getxattr)(void *priv, const char *path, const char *name, void *value, size_t size);
     int (*listxattr)(void *priv, const char *path, char *buf, size_t size);
     int (*removexattr)(void *priv, const char *path, const char *name);
 };
@@ -361,18 +358,22 @@ struct vfs_ops {
  *   Each process may have its own mnt_namespace overriding the global view.
  */
 struct vfs_mount {
-    char          mountpoint[64]; /* e.g. "/" */
+    char mountpoint[64]; /* e.g. "/" */
     const struct vfs_ops *ops;
-    void          *priv;           /* private data passed to ops */
-    int           flags;           /* mount flags (MS_RDONLY, etc.) */
-    char          bind_source[64]; /* source path for bind mounts */
-    int           is_bind;         /* 1 = bind mount */
+    void *priv;           /* private data passed to ops */
+    int flags;            /* mount flags (MS_RDONLY, etc.) */
+    char bind_source[64]; /* source path for bind mounts */
+    int is_bind;          /* 1 = bind mount */
+    /* Mount propagation (see MNT_* in mnt_namespace.h):
+     * 0=MNT_PRIVATE, 1=MNT_SHARED, 2=MNT_SLAVE, 3=MNT_UNBINDABLE */
+    int prop;
+    int peer_group; /* shared peer-group id, 0 = none */
     /* Journal state */
-    int           journal_active;  /* 1 = in transaction */
-    uint32_t      journal_seq;     /* transaction sequence number */
+    int journal_active;   /* 1 = in transaction */
+    uint32_t journal_seq; /* transaction sequence number */
     /* Encryption state */
-    int           encrypted;       /* 1 = encryption enabled */
-    uint8_t       enc_key[16];    /* per-mount encryption key */
+    int encrypted;       /* 1 = encryption enabled */
+    uint8_t enc_key[16]; /* per-mount encryption key */
 };
 
 /*
@@ -442,14 +443,14 @@ int vfs_statfs(const char *path, struct vfs_statfs *st);
 int vfs_fstatfs(int fd, struct vfs_statfs *st);
 
 /* ── Permission helper bits (analogous to MAY_EXEC/MAY_READ/MAY_WRITE) ── */
-#define VFS_X_OK  1  /* execute */
-#define VFS_W_OK  2  /* write */
-#define VFS_R_OK  4  /* read */
-#define VFS_F_OK  0  /* file exists */
+#define VFS_X_OK 1 /* execute */
+#define VFS_W_OK 2 /* write */
+#define VFS_R_OK 4 /* read */
+#define VFS_F_OK 0 /* file exists */
 
 /* Special tv_nsec values for utimensat/futimens */
-#define UTIME_NOW  ((1UL << 30) - 1)   /* set to current time */
-#define UTIME_OMIT ((1UL << 30) - 2)   /* leave unchanged */
+#define UTIME_NOW ((1UL << 30) - 1)  /* set to current time */
+#define UTIME_OMIT ((1UL << 30) - 2) /* leave unchanged */
 
 /* Execute an ioctl command on a file at the given path.
  * Resolves the mount and calls the filesystem's ioctl handler.
@@ -505,9 +506,8 @@ int vfs_removexattr(const char *path, const char *name);
  * @file_gid:  file owner's GID
  * @op:        required permission (4=read, 2=write, 1=execute)
  */
-int generic_permission(const char *path, uint16_t uid, uint16_t gid,
-                        uint16_t mode, uint16_t file_uid, uint16_t file_gid,
-                        uint16_t op);
+int generic_permission(const char *path, uint16_t uid, uint16_t gid, uint16_t mode,
+                       uint16_t file_uid, uint16_t file_gid, uint16_t op);
 
 /* Fallocate: pre-allocate disk space */
 int vfs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len);
@@ -518,8 +518,8 @@ int vfs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len);
 int vfs_seek(const char *path, uint64_t offset, int whence);
 
 /* Flush / sync operations */
-int vfs_flush(const char *path);     /* flush a single filesystem by path */
-int vfs_sync_all(void);              /* sync all mounted filesystems */
+int vfs_flush(const char *path); /* flush a single filesystem by path */
+int vfs_sync_all(void);          /* sync all mounted filesystems */
 
 /*
  * Readahead at VFS level.
@@ -585,8 +585,8 @@ int vfs_set_encryption(const char *path, int enabled);
 int vfs_get_encryption(const char *path);
 
 /* Block device cache stats extended */
-void bufcache_stats_all(uint64_t *hits, uint64_t *misses, uint64_t *writes,
-                        uint64_t *evictions, uint64_t *dirty_writes, uint32_t *ws_est);
+void bufcache_stats_all(uint64_t *hits, uint64_t *misses, uint64_t *writes, uint64_t *evictions,
+                        uint64_t *dirty_writes, uint32_t *ws_est);
 
 /* FS quota enforcement at VFS level */
 int vfs_set_quota(uint16_t uid, uint32_t block_limit, uint32_t inode_limit);
@@ -615,8 +615,7 @@ int vfs_umount(const char *mountpoint);
 /* Check permissions on a path given uid/gid.
  * @op is VFS_R_OK (4), VFS_W_OK (2), VFS_X_OK (1), or VFS_F_OK (0).
  * Returns 0 on success, -EACCES on denial. */
-int vfs_check_perms(const char *path, uint16_t uid, uint16_t gid,
-                     uint16_t op);
+int vfs_check_perms(const char *path, uint16_t uid, uint16_t gid, uint16_t op);
 
 /* Close an open file handle */
 int vfs_close(void *file);

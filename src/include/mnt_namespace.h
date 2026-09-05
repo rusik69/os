@@ -18,10 +18,30 @@
 
 /* Reference-counted mount namespace descriptor */
 struct mnt_namespace {
-    int              refcount;      /* number of processes using this ns */
+    int refcount;                            /* number of processes using this ns */
     struct vfs_mount mounts[VFS_MAX_MOUNTS]; /* per-ns mount table */
-    int              num_mounts;    /* number of valid entries in mounts[] */
+    int num_mounts;                          /* number of valid entries in mounts[] */
+    struct mnt_namespace *next_all;          /* global registry link (propagation) */
 };
+
+/* Mount propagation modes (Linux-style), stored in vfs_mount.prop. */
+#define MNT_PRIVATE 0    /* no propagation (default) */
+#define MNT_SHARED 1     /* mount/umount events propagate to peer namespaces */
+#define MNT_SLAVE 2      /* receives events from its master, never sends */
+#define MNT_UNBINDABLE 3 /* cannot be bind-mounted or shared */
+
+/* Validate a propagation mode; returns the mode clamped to PRIVATE if bad. */
+int mnt_prop_valid(int prop);
+
+/* Set the propagation mode of the mount covering @path in @ns (-1 on error). */
+int mnt_ns_setprop(struct mnt_namespace *ns, const char *path, int prop);
+
+/* Return the propagation mode of the mount covering @path (-1 if none). */
+int mnt_ns_getprop(struct mnt_namespace *ns, const char *path);
+
+/* Apply the stored propagation mode to @m and propagate its mount event
+ * to all peer namespaces (used by mnt_ns_mount/umount). */
+void mnt_propagate_mount(struct mnt_namespace *src, struct vfs_mount *m);
 
 /* ── API ─────────────────────────────────────────────────────────── */
 
@@ -46,8 +66,8 @@ struct mnt_namespace *mnt_ns_current(void);
 struct mnt_namespace *mnt_ns_root(void);
 
 /* Mount a filesystem in the given namespace.  Returns 0 on success. */
-int mnt_ns_mount(struct mnt_namespace *ns, const char *mountpoint,
-                 struct vfs_ops *ops, void *priv, int flags);
+int mnt_ns_mount(struct mnt_namespace *ns, const char *mountpoint, struct vfs_ops *ops, void *priv,
+                 int flags);
 
 /* Unmount a filesystem in the given namespace.  Returns 0 on success. */
 int mnt_ns_umount(struct mnt_namespace *ns, const char *mountpoint);
