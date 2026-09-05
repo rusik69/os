@@ -3099,7 +3099,7 @@ Additional gates used by CI and the Hermes agent:
 ```
 make check-whitespace     # no trailing whitespace anywhere
 make check-app-boundary   # ELF/ABI boundary checks
-make doccheck             # required docs exist; markdown validity; TODO scan
+make doccheck             # required docs exist; markdown validity; marker scan
 make build-strict         # -Werror + cppcheck
 make check                # disk.img + unit-test
 ```
