@@ -1496,12 +1496,13 @@ $(BUILDDIR_CHECK)/kernel/config_gz.o: CHECK_CFLAGS += -I$(BUILDDIR_CHECK) -I$(BU
 $(BUILDDIR_CHECK)/kernel.bin: $(BUILDDIR_CHECK)/kernel.elf
 	cp $< $@
 
-check: $(BUILDDIR)/disk.img unit-test
+check: $(BUILDDIR)/disk.img unit-test doccheck
 	$(MAKE) $(JOBS_FLAG) $(BUILDDIR_CHECK)/kernel.bin
 	@chmod +x tests/run_tests.sh
 	@./tests/run_tests.sh $(BUILDDIR_CHECK)/kernel.bin $(BUILDDIR)/disk.img
 	@echo ""
-	@echo "=== Build-time tests passed, running E2E smoke test ==="
+	@echo "=== Build-time tests passed, running lint + E2E smoke test ==="
+	$(MAKE) lint
 	$(MAKE) e2e-smoke
 
 # ── check-full: build with ALL strict warning flags ───────────────
