@@ -13,6 +13,8 @@
 #include "idt.h"
 #include "io.h"
 #include "ipip.h"
+#include "irq_affinity.h"
+#include "irq_regs.h"
 #include "ipvs.h"
 #include "keyboard.h"
 #include "mouse.h"
@@ -592,6 +594,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* RCU synchronization primitive */
     rcu_init();
+
+    /* IRQ affinity (per-IRQ CPU masks + hotplug migration) */
+    irq_affinity_init();
 
     /* ASLR (Address Space Layout Randomization) */
     aslr_init();

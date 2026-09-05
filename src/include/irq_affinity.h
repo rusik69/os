@@ -7,4 +7,5 @@ int irq_set_affinity(int irq, uint64_t cpu_mask);
 uint64_t irq_get_affinity(int irq);
 int irq_affinity_set(int irq, const struct cpumask *cpus);
 int irq_affinity_get(int irq, struct cpumask *cpus);
+int irq_migrate_offline(int offline_cpu);
 #endif
