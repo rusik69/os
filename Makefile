@@ -1912,6 +1912,7 @@ help:
 	@echo "  userspace-build - Build userspace commands into ELF binaries"
 	@echo "  release         - Build kernel.bin + disk.img + source tarball"
 	@echo "  dist            - Create distribution tarball with source + binaries"
+	@echo "  profile         - Build profiling kernel (frame pointers + -g3) into build_profile/"
 	@echo "  install         - Build bootable ISO (or write to USB via make install USB=/dev/sdX)"
 	@echo "  install-clean   - Remove ISO and staging artifacts"
 	@echo ""
@@ -1991,6 +1992,14 @@ clean:
 
 # Clean everything including ccache statistics
 clean-all: clean
+	# Deep clean: remove all build dirs, stray artifacts and editor swap files.
+	# NOTE: only ever touch build dirs for *.d/*.bin/*.gz — the repo tracks
+	# userspace/bin/cmds/*.d (command docs) and other committed assets.
+	rm -rf build_check* build_analyze build_profile build_test*
+	find . -name '*.o' -o -name '*.elf' -o -name '*.ko' 2>/dev/null | grep -v '^./\.git/' | xargs rm -f 2>/dev/null || true
+	find build build_test build_check* build_analyze build_profile -type f \( -name '*.d' -o -name '*.bin' -o -name '*.gz' \) 2>/dev/null | xargs rm -f 2>/dev/null || true
+	find . \( -name '*.swp' -o -name '*.swo' -o -name '*~' -o -name '*.i' -o -name '*.s' \) -not -path './.git/*' -not -path './userspace/*' 2>/dev/null | xargs rm -f 2>/dev/null || true
+	@echo "=== Deep clean complete ==="
 	@if command -v ccache >/dev/null 2>&1; then \
 		ccache --clear 2>/dev/null; \
 		ccache --zero-stats 2>/dev/null; \
