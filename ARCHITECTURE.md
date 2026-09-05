@@ -458,6 +458,35 @@ Timers:
 
 This kernel uses a hybrid driver model combining **compile-time registration** (via the initcall system), **direct initialization in `kernel_main()`**, and **loadable kernel modules** (for runtime-loaded drivers). There is no unified `struct device_driver`/`struct device` bus abstraction like Linux; instead, each driver subsystem defines its own registration and probe mechanism.
 
+### Driver Registration API Summary
+
+Each driver subsystem exposes a registration entry point that a driver
+calls at init (from an initcall, `kernel_main()`, or its `module_init`):
+
+| Subsystem | Registration call | What it binds |
+|-----------|-------------------|---------------|
+| Initcall | `device_initcall(fn)` | Places `fn` in `.initcall.5`; run by `do_initcalls()` |
+| Kernel module | `module_init(fn)` (+ `sys_init_module`/`finit_module`) | Loadable `.ko` ELF; `fn` runs as `init_module` |
+| Block device | `blockdev_register(id, name, submit_fn, ...)` / `blockdev_register_legacy(...)` / `blockdev_register_scsi_cmd(...)` | Registers a block device with submit (or sync r/w) callbacks and capacity |
+| Network device | `netif_register(struct net_device *dev)` | Binds a NIC name/MAC/`netdev_ops` into the netdevice layer |
+| USB | `usb_register_driver(struct usb_driver *driver)` | Binds a `usb_device_id` table + probe/disconnect to the hub HCI |
+| PCI | `pci_autoprobe_work()` → `request_module(modalias)` | Deferred modalias-based module autoload after boot |
+| Char/dev node | `devtmpfs` + per-driver `mknod` | Creates dynamic device nodes under `/dev` |
+
+The two main discovery paths are:
+
+1. **Compile-time (initcall):** a driver's `device_initcall(fn)` runs once
+   during `do_initcalls()`, calling its registration call directly on
+   hardware that is statically known to exist.
+2. **Deferred autoprobe (modalias):** for buses (notably PCI), discovered
+   devices emit a modalias string; `pci_autoprobe_work()` runs in a
+   workqueue and calls `request_module(modalias)`, which loads the matching
+   `.ko` whose `module_init` then calls its registration call.
+
+Loadable module drivers additionally must be exported (`EXPORT_SYMBOL`)
+so the kernel symbol table can resolve their references; see the module
+loading phases in the Boot Sequence section.
+
 ### Initcall-Based Driver Registration
 
 The initcall system (`src/include/initcall.h`) provides a linker-section-based mechanism for registering driver initialization functions at compile time:
