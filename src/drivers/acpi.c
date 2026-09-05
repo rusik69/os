@@ -627,10 +627,21 @@ static void acpi_parse_lpit(struct acpi_header *hdr) {
 static struct nfit_spa_range_info g_nfit_spa_ranges[NFIT_MAX_SPA_RANGES];
 static int g_nfit_spa_count = 0;
 
+/**
+ * acpi_nfit_get_count - Return the number of NFIT SPA ranges
+ * Returns the count of System Physical Address ranges reported by the NFIT table.
+ */
 int acpi_nfit_get_count(void) {
     return g_nfit_spa_count;
 }
 
+/**
+ * acpi_nfit_get_spa - Fetch an NFIT SPA range by index
+ * @index: Zero-based index into the SPA range list
+ * @info: Buffer receiving the nfit_spa_range_info
+ *
+ * Copies the SPA range at @index into @info. Returns 0 on success or a negative error code.
+ */
 int acpi_nfit_get_spa(int index, struct nfit_spa_range_info *info) {
     if (index < 0 || index >= g_nfit_spa_count || !info)
         return -1;
@@ -1150,6 +1161,10 @@ skip_dsdt:
     }
 }
 
+/**
+ * acpi_shutdown - Shut down the ACPI subsystem
+ * Releases ACPI resources and prepares for kernel shutdown or power-off.
+ */
 void acpi_shutdown(void) {
     if (acpi_ready && pm1a_cnt) {
         outw(pm1a_cnt, (slp_typa_s5 << 10) | 0x2000);
@@ -1163,14 +1178,26 @@ void acpi_shutdown(void) {
     __asm__ volatile("cli; hlt");
 }
 
+/**
+ * acpi_find_reset_register - Locate the ACPI reset register
+ * Returns the FADT reset register address if the machine advertises one, or 0 if unavailable.
+ */
 int acpi_find_reset_register(void) {
     return reset_reg_available;
 }
 
+/**
+ * acpi_get_sci_irq - Return the system-control interrupt number
+ * Returns the SCI (System Control Interrupt) vector from the FADT used for ACPI event delivery.
+ */
 uint16_t acpi_get_sci_irq(void) {
     return g_sci_irq;
 }
 
+/**
+ * acpi_reboot - Reboot the machine via the ACPI reset mechanism
+ * Writes to the FADT reset register to trigger a system reset. Returns void.
+ */
 void acpi_reboot(void) {
     if (reset_reg_available) {
         kprintf("ACPI: Using reset register\n");
@@ -1198,6 +1225,10 @@ void acpi_reboot(void) {
 
 /* ── Power button API ──────────────────────────────────────────────── */
 
+/**
+ * acpi_power_button_read - Read the power button status
+ * Returns the current power button press state.
+ */
 int acpi_power_button_read(void) {
     if (!acpi_ready) return 0;
 
@@ -1218,6 +1249,13 @@ int acpi_power_button_read(void) {
 
 /* ── Dock/Undock Notification API (Item 106) ─────────────────────── */
 
+/**
+ * acpi_dock_register_notify - Register a dock/undock notification callback
+ * @cb: Callback invoked on dock status change
+ * @user_data: Opaque pointer passed to @cb
+ *
+ * Registers a callback for ACPI dock/undock events. Returns 0 on success or a negative error code.
+ */
 int acpi_dock_register_notify(acpi_dock_callback_t cb, void *user_data) {
     if (!cb)
         return -1;
@@ -1236,6 +1274,13 @@ int acpi_dock_register_notify(acpi_dock_callback_t cb, void *user_data) {
     return -1;
 }
 
+/**
+ * acpi_dock_unregister_notify - Unregister a dock notification callback
+ * @cb: Callback previously registered
+ * @user_data: Opaque pointer matching the registration
+ *
+ * Removes the matching dock notification callback from the list.
+ */
 void acpi_dock_unregister_notify(acpi_dock_callback_t cb, void *user_data) {
     if (!cb)
         return;
@@ -1252,6 +1297,10 @@ void acpi_dock_unregister_notify(acpi_dock_callback_t cb, void *user_data) {
     }
 }
 
+/**
+ * acpi_dock_get_state - Query the current dock state
+ * Returns non-zero if the system is docked, zero otherwise.
+ */
 int acpi_dock_get_state(void) {
     return g_dock_state;
 }
@@ -1298,6 +1347,11 @@ static void acpi_dock_manual_transition(int new_state) {
     acpi_dock_fire_callbacks(new_state);
 }
 
+/**
+ * acpi_dock_poll - Poll dock status transitions
+ * Checks for dock/undock transitions and invokes any registered notification callbacks. Called
+ * periodically.
+ */
 void acpi_dock_poll(void) {
     if (g_dock_device_addr == 0 && !g_dock_manual_override)
         return;  /* no dock hardware */
@@ -1334,6 +1388,12 @@ void acpi_dock_poll(void) {
 
 /* ── Sleep API ─────────────────────────────────────────────────────── */
 
+/**
+ * acpi_sleep_supported - Check whether an ACPI sleep state is supported
+ * @state: Sleep state (e.g. S1, S3, S5)
+ *
+ * Returns non-zero if the platform supports the given ACPI sleep state.
+ */
 int acpi_sleep_supported(uint32_t state) {
     switch (state) {
     case ACPI_S0: return 1;  /* always running */
@@ -1344,6 +1404,13 @@ int acpi_sleep_supported(uint32_t state) {
     }
 }
 
+/**
+ * acpi_sleep - Enter an ACPI sleep state
+ * @state: Sleep state to enter
+ *
+ * Transitions the machine into the requested ACPI sleep state. Returns 0 on success or a negative
+ * error code.
+ */
 int acpi_sleep(uint32_t state) {
     if (!acpi_ready) return -1;
 
@@ -1936,6 +2003,10 @@ static int acpi_load_ssdts(void)
 /*
  * Compute the total size of all AML bytecode across DSDT and all SSDTs.
  * Used by the AML interpreter to allocate a unified namespace.
+ */
+/**
+ * acpi_get_total_aml_size - Return the total AML table size
+ * Returns the combined size of the embedded ACPI Machine Language tables.
  */
 uint32_t acpi_get_total_aml_size(void)
 {
