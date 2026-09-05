@@ -153,7 +153,8 @@ static struct wait_queue net_rx_wq;
 
 /**
  * net_rx_signal - Signal that a network packet is ready
- * Wakes any task blocked in net_wait_for_packet() to indicate that the receive ring has data pending.
+ * Wakes any task blocked in net_wait_for_packet() to indicate that the receive ring has data
+ * pending.
  */
 void net_rx_signal(void) {
     net_rx_flag = 1;
@@ -173,7 +174,8 @@ int net_rx_pending(void) {
  * @buf: Destination buffer
  * @max_len: Capacity of @buf in bytes
  *
- * Copies the next pending network frame into @buf and returns its length, or zero if none is available.
+ * Copies the next pending network frame into @buf and returns its length, or zero if none is
+ * available.
  */
 int net_link_recv(void *buf, uint16_t max_len) {
     if (virtio_net_present()) {
@@ -191,7 +193,8 @@ int net_link_recv(void *buf, uint16_t max_len) {
  * @data: Frame data to transmit
  * @len: Length of the frame in bytes
  *
- * Queues the given frame for transmission on the active NIC. Returns 0 on success or a negative error code.
+ * Queues the given frame for transmission on the active NIC. Returns 0 on success or a negative
+ * error code.
  */
 int net_link_send(const void *data, uint16_t len) {
     /* Prefer the netdevice layer if interfaces are registered.
@@ -234,7 +237,8 @@ static volatile uint32_t trace_reply_ip = 0;
  * @gw: Gateway next-hop address
  * @iface: Interface index
  *
- * Inserts a route into the forwarding table. Returns 0 on success or a negative error code if the table is full.
+ * Inserts a route into the forwarding table. Returns 0 on success or a negative error code if the
+ * table is full.
  */
 int rt_add(uint32_t dst, uint32_t mask, uint32_t gw, int iface) {
     spinlock_acquire(&net_lock);
@@ -284,7 +288,8 @@ int rt_del(uint32_t dst, uint32_t mask) {
  * @gw_out: Optional buffer receiving the gateway address
  * @iface_out: Optional buffer receiving the interface index
  *
- * Finds the longest-prefix route matching @ip and returns it via the out-parameters. Returns 0 if a route was found, -ENOENT otherwise.
+ * Finds the longest-prefix route matching @ip and returns it via the out-parameters. Returns 0 if a
+ * route was found, -ENOENT otherwise.
  */
 int rt_lookup(uint32_t ip, uint32_t *gw_out, int *iface_out) {
     int best = -1;
@@ -360,7 +365,8 @@ void arp_announce(void) {
  * @ip: IPv4 address
  * @mac: Associated MAC address (6 bytes)
  *
- * Records the MAC-to-IP mapping in the ARP cache, updating the timestamp so the entry is not prematurely gc'd.
+ * Records the MAC-to-IP mapping in the ARP cache, updating the timestamp so the entry is not
+ * prematurely gc'd.
  */
 void arp_cache_add(uint32_t ip, const uint8_t *mac) {
     uint64_t now = timer_get_ticks();
@@ -736,7 +742,8 @@ uint32_t net_get_dns(void) {
  * @gw: Gateway IPv4 address
  * @mask: Subnet mask
  *
- * Sets the primary interface address, gateway and netmask, clearing or populating the routing table as appropriate.
+ * Sets the primary interface address, gateway and netmask, clearing or populating the routing table
+ * as appropriate.
  */
 void net_set_ip(uint32_t ip, uint32_t gw, uint32_t mask) {
     net_our_ip = ip;
@@ -829,7 +836,8 @@ static void send_ip_fragmented(uint32_t dst_ip, uint8_t protocol, const void *pa
  * @payload: Packet payload
  * @len: Length of @payload in bytes
  *
- * Builds and sends an IPv4 datagram to @dst_ip using the default TTL, resolving the next-hop MAC via ARP as needed.
+ * Builds and sends an IPv4 datagram to @dst_ip using the default TTL, resolving the next-hop MAC
+ * via ARP as needed.
  */
 void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t len) {
     send_ip_with_ttl(dst_ip, protocol, payload, len, 64);
@@ -843,7 +851,8 @@ void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t le
  * @len: Length of @payload in bytes
  * @ttl: IP time-to-live field value
  *
- * Builds and sends an IPv4 datagram with the given TTL, used by traceroute implementation to elicit ICMP time-exceeded responses.
+ * Builds and sends an IPv4 datagram with the given TTL, used by traceroute implementation to elicit
+ * ICMP time-exceeded responses.
  */
 void send_ip_with_ttl(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t len,
                       uint8_t ttl) {
@@ -1359,7 +1368,8 @@ static void handle_ip(uint8_t *data, uint16_t len) {
  * net_ping - Send an ICMP echo request
  * @target_ip: IPv4 address to ping
  *
- * Transmits an ICMP echo request to @target_ip and returns the round-trip status code (positive response, 0 timeout, negative error).
+ * Transmits an ICMP echo request to @target_ip and returns the round-trip status code (positive
+ * response, 0 timeout, negative error).
  */
 int net_ping(uint32_t target_ip) {
     uint8_t buf[64];
@@ -1444,7 +1454,8 @@ int net_trace(uint32_t target_ip, uint8_t ttl) {
  * @pkt: Pointer to the raw received frame
  * @len: Length of the frame in bytes
  *
- * Parses the Ethernet/IP headers and routes the packet to the correct protocol handler (ARP, ICMP, TCP, UDP, IPv6) or reports unknown types.
+ * Parses the Ethernet/IP headers and routes the packet to the correct protocol handler (ARP, ICMP,
+ * TCP, UDP, IPv6) or reports unknown types.
  */
 void net_rx_dispatch(uint8_t *pkt, uint16_t len) {
     if (len < (int)sizeof(struct eth_header))
@@ -1527,7 +1538,8 @@ void net_rx_dispatch(uint8_t *pkt, uint16_t len) {
 
 /**
  * net_poll - Poll the network interface for incoming packets
- * Drives the NIC receive path: drains any pending frames, dispatches each to net_rx_dispatch(), and re-arms the interface for further interrupts. Called from the softirq/tasklet context.
+ * Drives the NIC receive path: drains any pending frames, dispatches each to net_rx_dispatch(), and
+ * re-arms the interface for further interrupts. Called from the softirq/tasklet context.
  */
 void net_poll(void) {
     static int poll_count = 0;
@@ -1673,7 +1685,8 @@ static int net_stack_initialized = 0;
  * from the timer tick only after the net stack state is set up. */
 /**
  * net_stack_ready - Check whether the network stack is ready
- * Returns non-zero once the interface is up, IP is configured and the stack can send/receive traffic.
+ * Returns non-zero once the interface is up, IP is configured and the stack can send/receive
+ * traffic.
  */
 int net_stack_ready(void) {
     return net_stack_initialized;
@@ -1689,7 +1702,9 @@ void net_wait_for_packet(void) {
 
 /**
  * net_init - Initialise the network stack
- * Sets up the NIC, configures IP addressing, builds the routing table, starts ARP resolution for the gateway, and registers loopback. Called once during kernel bring-up after NIC drivers are probed.
+ * Sets up the NIC, configures IP addressing, builds the routing table, starts ARP resolution for
+ * the gateway, and registers loopback. Called once during kernel bring-up after NIC drivers are
+ * probed.
  */
 void net_init(void) {
     net_stack_initialized = 0;

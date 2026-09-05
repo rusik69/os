@@ -72,6 +72,13 @@ struct blk_request *blk_request_alloc(void) {
     return req;
 }
 
+/**
+ * blk_request_free - Free a block request and its resources
+ * @req: blk_request to free
+ *
+ * Releases the buffers and request structure associated with @req after its completion callback has
+ * run.
+ */
 void blk_request_free(struct blk_request *req) {
     if (req)
         kfree(req);
@@ -176,6 +183,12 @@ void blockdev_stats_update(int dev_id, int is_write, int is_discard, int is_flus
     spinlock_irqsave_release(&g_dev_lock, irq_flags);
 }
 
+/**
+ * blockdev_stats_reset - Reset I/O statistics for a device
+ * @dev_id: Logical block device id
+ *
+ * Zeroes the device's I/O counters.
+ */
 void blockdev_stats_reset(int dev_id) {
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES)
         return;
@@ -186,6 +199,14 @@ void blockdev_stats_reset(int dev_id) {
     spinlock_irqsave_release(&g_dev_lock, irq_flags);
 }
 
+/**
+ * blockdev_get_stats - Return I/O statistics for a device
+ * @dev: Logical block device id
+ * @s: Buffer receiving the blockdev_stats snapshot
+ *
+ * Copies the cumulative read/write/discard sector and request counters for @dev into @s. Returns 0
+ * on success or a negative error code.
+ */
 int blockdev_get_stats(int dev, struct blockdev_stats *s) {
     if (!g_initialized)
         return -EINVAL;
@@ -306,6 +327,13 @@ int blockdev_stats_format(char *buf, int size, int dev) {
 
 /* ── Core submission path ─────────────────────────────────────────── */
 
+/**
+ * blk_submit_async - Submit an asynchronous block I/O request
+ * @req: Prepared blk_request to submit
+ *
+ * Queues an asynchronous I/O request on its device queue, returning immediately. The completion
+ * callback is invoked when the driver finishes. Returns 0 on success or a negative error code.
+ */
 int blk_submit_async(struct blk_request *req) {
     if (!req || !g_initialized)
         return -EINVAL;
@@ -432,6 +460,17 @@ int blk_submit_async(struct blk_request *req) {
     return 0;
 }
 
+/**
+ * blk_submit_sync - Submit a synchronous block I/O request
+ * @dev_id: Logical block device id
+ * @lba: Starting logical block address
+ * @count: Number of sectors
+ * @buf: Data buffer
+ * @flags: Request flags (WRITE, DISCARD, FUA, ...)
+ *
+ * Performs a synchronous I/O operation on @dev_id, blocking until the request completes. Returns
+ * the number of sectors transferred or a negative error code.
+ */
 int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count, void *buf, uint32_t flags) {
     if (!g_initialized)
         return -EINVAL;
@@ -585,6 +624,15 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count, void *buf, uint32_
  *
  * Returns 0 on success, -errno on error.
  */
+/**
+ * blockdev_discard - Issue a discard (TRIM) on a block device
+ * @dev_id: Logical block device id
+ * @lba: Starting logical block address
+ * @count: Number of sectors to discard
+ *
+ * Informs the device that the given range is no longer in use so it may reclaim the physical
+ * blocks. Returns the number of sectors or a negative error code.
+ */
 int blockdev_discard(int dev_id, uint64_t lba, uint32_t count) {
     if (!g_initialized)
         return -EINVAL;
@@ -678,6 +726,13 @@ int blockdev_discard(int dev_id, uint64_t lba, uint32_t count) {
     return ret;
 }
 
+/**
+ * blk_request_done - Signal completion of a block request
+ * @req: Request that has completed
+ *
+ * Called by a driver when an asynchronous request finishes, waking waiters and running the
+ * request's completion callback.
+ */
 void blk_request_done(struct blk_request *req) {
     if (!req)
         return;
@@ -711,6 +766,14 @@ void blk_request_done(struct blk_request *req) {
     }
 }
 
+/**
+ * blk_request_dequeue - Dequeue the next pending request
+ * @q: Request queue to dequeue from
+ * @out: Receives the dequeued blk_request
+ *
+ * Pops the next request from queue @q into @out, or returns a negative error code if the queue is
+ * empty.
+ */
 int blk_request_dequeue(struct blk_request_queue *q, struct blk_request **out) {
     if (!q || !out)
         return 0;
@@ -768,6 +831,17 @@ void __init blockdev_init(void) {
     g_initialized = 1;
 }
 
+/**
+ * blockdev_register - Register a block device driver
+ * @id: Logical block device id (partition/disk index)
+ * @name: Device name (e.g. "sda", "nvme0")
+ * @submit_fn: Driver submit callback for async I/O
+ * @capacity: Total capacity in sectors
+ * @sector_size: Logical sector size in bytes
+ *
+ * Registers a block device with the block layer, installing the driver's submit callback and
+ * recording capacity. Returns 0 on success or a negative error code if the id is already in use.
+ */
 int blockdev_register(int id, const char *name, blk_driver_submit_fn submit_fn,
                       blk_driver_idle_fn idle_fn, uint64_t sector_count, int flags) {
     if (id < 0 || id >= BLOCKDEV_MAX_DEVICES)
@@ -889,6 +963,16 @@ static int legacy_submit_fn_adapter(struct blk_request *req) {
     return req->result;
 }
 
+/**
+ * blockdev_register_legacy - Register a block driver using the legacy sync API
+ * @id: Logical block device id
+ * @name: Device name
+ * @read_fn: Synchronous read callback
+ * @write_fn: Synchronous write callback
+ *
+ * Registers a block device whose driver exposes the older synchronous read/write interface. The
+ * block layer wraps it in the async submit path. Returns 0 on success or a negative error code.
+ */
 int blockdev_register_legacy(int id, const char *name, blockdev_read_fn read_fn,
                              blockdev_write_fn write_fn, blockdev_size_fn size_fn) {
     if (id < 0 || id >= BLOCKDEV_MAX_DEVICES)
@@ -909,12 +993,25 @@ int blockdev_register_legacy(int id, const char *name, blockdev_read_fn read_fn,
 }
 #endif
 
+/**
+ * blockdev_is_registered - Test whether a block device is registered
+ * @id: Logical block device id
+ *
+ * Returns non-zero if the device @id is currently registered with the block layer.
+ */
 int blockdev_is_registered(int id) {
     if (id < 0 || id >= BLOCKDEV_MAX_DEVICES)
         return 0;
     return g_blockdevs[id].active;
 }
 
+/**
+ * blockdev_unregister - Unregister a block device
+ * @id: Logical block device id
+ *
+ * Removes the device from the block layer, flushing any outstanding requests and releasing its
+ * resources. Returns 0 on success or -ENOENT if the device is not registered.
+ */
 int blockdev_unregister(int id) {
     if (id < 0 || id >= BLOCKDEV_MAX_DEVICES)
         return -EINVAL;
@@ -952,6 +1049,14 @@ struct blk_request_queue *blockdev_get_queue(int id) {
     return &g_queues[id];
 }
 
+/**
+ * blockdev_set_scheduler - Select the I/O scheduler for a device
+ * @id: Logical block device id
+ * @sched: Desired blk_scheduler (none, fifo, noop, ...)
+ *
+ * Sets the I/O scheduler policy used for the device's request queue. Returns 0 on success or a
+ * negative error code.
+ */
 int blockdev_set_scheduler(int id, enum blk_scheduler sched) {
     if (!blockdev_is_registered(id))
         return -EINVAL;
@@ -969,6 +1074,14 @@ enum blk_scheduler blockdev_get_scheduler(int id) {
 
 /* ── Transfer limit configuration (Item 328) ──────────────────────── */
 
+/**
+ * blockdev_set_max_transfer - Set the maximum transfer size for a device
+ * @dev_id: Logical block device id
+ * @max_sectors: Maximum allowed sectors per request
+ *
+ * Clamps the maximum request size the device will accept, protecting against oversized
+ * scatter/gather I/O. Returns 0 on success.
+ */
 int blockdev_set_max_transfer(int dev_id, uint32_t max_sectors) {
     if (!g_initialized)
         return -EINVAL;
@@ -982,6 +1095,12 @@ int blockdev_set_max_transfer(int dev_id, uint32_t max_sectors) {
     return 0;
 }
 
+/**
+ * blockdev_get_max_transfer - Query the maximum transfer size of a device
+ * @dev_id: Logical block device id
+ *
+ * Returns the maximum number of sectors accepted per request for @dev_id, or a negative error code.
+ */
 uint32_t blockdev_get_max_transfer(int dev_id) {
     if (!blockdev_is_registered(dev_id))
         return 0;
@@ -990,6 +1109,13 @@ uint32_t blockdev_get_max_transfer(int dev_id) {
 
 /* ── SCSI generic passthrough (SG_IO) ───────────────────────────── */
 
+/**
+ * blockdev_register_scsi_cmd - Register a SCSI pass-through command handler
+ * @dev_id: Logical block device id
+ * @fn: SCSI command submit callback
+ *
+ * Installs a driver callback for SCSI CDB pass-through requests on @dev_id. Returns 0 on success.
+ */
 int blockdev_register_scsi_cmd(int dev_id, scsi_submit_cmd_fn fn) {
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
         return -EINVAL;
@@ -1001,6 +1127,18 @@ int blockdev_register_scsi_cmd(int dev_id, scsi_submit_cmd_fn fn) {
     return 0;
 }
 
+/**
+ * blockdev_scsi_submit - Submit a SCSI pass-through command
+ * @dev_id: Logical block device id
+ * @cdb: SCSI command descriptor block
+ * @cdb_len: Length of @cdb
+ * @data: Data buffer for the command
+ * @data_len: Length of @data
+ * @write: Non-zero for write transfers, zero for reads
+ *
+ * Dispatches a SCSI command to the device's registered handler. Returns the command result or a
+ * negative error code.
+ */
 int blockdev_scsi_submit(int dev_id, const uint8_t *cdb, int cdb_len, void *data, int data_len,
                          int dir, uint8_t *sense, int *sense_len, int timeout_ms) {
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
@@ -1015,6 +1153,12 @@ int blockdev_scsi_submit(int dev_id, const uint8_t *cdb, int cdb_len, void *data
 
 /* ── Find a block device by name ──────────────────────────────────── */
 
+/**
+ * blockdev_find_by_name - Look up a block device by name
+ * @name: Device name to search for
+ *
+ * Returns the block device id matching @name, or a negative error code if not found.
+ */
 int blockdev_find_by_name(const char *name) {
     if (!name || !name[0])
         return -EINVAL;
