@@ -827,6 +827,10 @@ OBJS = $(ASM_OBJS) $(C_OBJS)
 # Header dependency tracking: include .d files when they exist
 DEPS = $(C_OBJS:.o=.d)
 
+# All kernel headers — used to drive PCH regeneration on any header change.
+# `**` is not expanded by make's $(wildcard), so use shell find at parse time.
+KERNEL_HDRS := $(shell find src -name '*.h' 2>/dev/null)
+
 # ── Kernel module build rules (M39) ──────────────────────────────────
 # Loadable kernel modules (.ko) are compiled with -DMODULE and partially
 # linked via `ld -r` to produce relocatable files for the module loader.
@@ -1098,8 +1102,10 @@ PCH_FILE   = src/include/kernel_pch.h.gch
 PCH_CFLAGS = $(filter-out -include kernel_pch.h -MMD -MP, $(CFLAGS))
 
 # Rebuild the PCH when the header itself or any headers it includes change.
-# We generate a .d file listing header dependencies.
-$(PCH_FILE): $(PCH_HEADER)
+# We depend on ALL kernel headers so a header edit always regenerates the
+# PCH (the -MM deps alone aren't enough: the .d is only written when the
+# PCH rebuilds). We generate a .d file listing header dependencies.
+$(PCH_FILE): $(PCH_HEADER) $(KERNEL_HDRS)
 	@mkdir -p $(BUILDDIR)
 	$(CC) $(PCH_CFLAGS) -MM -MP -MF $(BUILDDIR)/kernel_pch.d -x c-header $<
 	$(CC) $(PCH_CFLAGS) -x c-header $< -o $@
@@ -1887,7 +1893,7 @@ help:
 
 clean:
 	rm -rf $(BUILDDIR) $(BUILDDIR_TEST)
-	rm -f $(PCH_FILE) $(BUILDDIR)/kernel_pch.d
+	rm -f $(PCH_FILE) $(BUILDDIR)/kernel_pch.d $(BUILDDIR)/*.d
 
 # Clean everything including ccache statistics
 clean-all: clean
