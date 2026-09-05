@@ -240,7 +240,7 @@ int64_t sys_brk(uint64_t addr) {
 
     /* Track heap start/end — initialized lazily with ASLR offset */
     if (p->heap_end == 0) {
-        uint64_t brk_aslr = aslr_brk_offset() * PAGE_SIZE;
+        uint64_t brk_aslr = execshield_brk_base_offset();
         p->heap_start = 0x0000000002000000ULL + brk_aslr;
         p->heap_end = p->heap_start;
     }

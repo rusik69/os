@@ -131,31 +131,53 @@ uint64_t execshield_aslr_base_offset(const struct elf64_header *ehdr) {
     return 0;
 }
 
-/* ── mmap_base random entropy expansion (D316 task 1) ────────────────── */
+/* ── mmap_base + brk random entropy expansion (D316 tasks 1-2) ────────────────── */
+
+/* Exec Shield widens the base ASLR randomization windows.  Values are in
+ * PAGEs and kept page-aligned so the returned offsets can be used directly
+ * as an mmap/brk base (both must stay page-aligned). */
+#define EXECSHIELD_MMAP_RANDOM_PAGES 4096 /* up to 16 MiB of mmap base jitter */
+#define EXECSHIELD_BRK_RANDOM_PAGES 2048  /* up to 8 MiB of brk base jitter */
 
 /**
- * execshield_mmap_base_offset - Expanded random byte offset for mmap base
+ * execshield_mmap_base_offset - Expanded random page offset for mmap base
  *
- * The plain page-granular ASLR offset (aslr_mmap_offset(), up to
- * ASLR_MMAP_RANDOM_PAGES) provides only log2(256) ≈ 8 bits of entropy
- * and always lands on a page boundary.  Exec Shield expands this by
- * combining the page-level random offset with a random intra-page byte
- * offset, yielding (ASLR_MMAP_RANDOM_PAGES+1) * 4096 distinct bases —
- * ~19 bits of entropy for anonymous/file mappings.  The intra-page
- * jitter is masked to keep the base page-aligned when the caller needs
- * it (huge mappings realign anyway).
+ * Entropy expansion over the base aslr_mmap_offset() window
+ * (ASLR_MMAP_RANDOM_PAGES).  Draws from a wider random page range while
+ * remaining page-aligned, giving log2(EXECSHIELD_MMAP_RANDOM_PAGES+1)
+ * ≈ 12 bits of base entropy for anonymous/file mappings.
  *
  * Context: Any context; acquires the PRNG lock internally.
- * Return: Random byte offset (0 .. ASLR_MMAP_RANDOM_PAGES*PAGE_SIZE)
- *         0 if ASLR is globally disabled.
+ * Return: Random page-aligned byte offset (0 ..
+ *         EXECSHIELD_MMAP_RANDOM_PAGES*PAGE_SIZE); 0 if ASLR disabled.
  */
 uint64_t execshield_mmap_base_offset(void) {
     if (aslr_disabled)
         return 0;
+    uint64_t pages = prng_rand64() % (EXECSHIELD_MMAP_RANDOM_PAGES + 1ULL);
+    return pages * PAGE_SIZE;
+}
 
-    uint64_t base_pages = aslr_mmap_offset();                  /* 0..256 pages */
-    uint64_t page_jitter = prng_rand64() & (PAGE_SIZE - 1ULL); /* byte offset */
-    return base_pages * PAGE_SIZE + page_jitter;
+/* ── brk randomization (D316 task 2) ─────────────────────────────────── */
+
+/**
+ * execshield_brk_base_offset - Expanded random page offset for the brk base
+ *
+ * Parallel to execshield_mmap_base_offset(): widens the base
+ * aslr_brk_offset() window (ASLR_BRK_RANDOM_PAGES) while staying
+ * page-aligned, yielding log2(EXECSHIELD_BRK_RANDOM_PAGES+1) ≈ 11 bits of
+ * heap/program-break base entropy.  The caller (sys_brk) maps page-aligned
+ * pages from this base.
+ *
+ * Context: Any context; acquires the PRNG lock internally.
+ * Return: Random page-aligned byte offset (0 ..
+ *         EXECSHIELD_BRK_RANDOM_PAGES*PAGE_SIZE); 0 if ASLR disabled.
+ */
+uint64_t execshield_brk_base_offset(void) {
+    if (aslr_disabled)
+        return 0;
+    uint64_t pages = prng_rand64() % (EXECSHIELD_BRK_RANDOM_PAGES + 1ULL);
+    return pages * PAGE_SIZE;
 }
 
 /* ── mprotect enforcement ─────────────────────────────────── */

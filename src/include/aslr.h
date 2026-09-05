@@ -90,4 +90,8 @@ uint64_t aslr_get_random_offset(uint64_t max_pages);
  * src/kernel/execshield.c. */
 uint64_t execshield_mmap_base_offset(void);
 
+/* Exec Shield (D316 tasks 1-2): expanded random page-aligned offsets for
+ * the mmap and brk bases (src/kernel/execshield.c). */
+uint64_t execshield_brk_base_offset(void);
+
 #endif
