@@ -79,7 +79,8 @@ Upper  0xFFFF800000000000   0xFFFFFFFFFFFFFFFF  Kernel space   All processes sha
 0xFFFF80001xxxxxxx │  .data / .bss                         │ RW│
        │  └─────────────────────────────────────────────┘   │
        │  ┌─────────────────────────────────────────────┐   │
-0xFFFF800020000000 │  Kernel heap (kmalloc arena)           │ RW│
+0xFFFF800004200000 │  Kernel heap (kmalloc arena)           │ RW│
+       │  │   HEAP_PHYS_BASE = 0x04200000 (66 MB)      │   │
        │  │   HEAP_MAX_SIZE = 64 MB                       │   │
        │  │   First-fit free-list with coalescing         │   │
        │  │   Initial: 16 KB, grows via heap_expand()     │   │
