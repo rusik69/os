@@ -1,54 +1,73 @@
 #include "rtc.h"
-#include "io.h"
-#include "idt.h"
+
 #include "apic.h"
+#include "devfs.h"
+#include "idt.h"
+#include "io.h"
 #include "pic.h"
 #include "printf.h"
+#include "signal.h"
 #include "string.h"
 #include "timer.h" /* TIMER_FREQ, timer_get_ticks */
 #include "waitqueue.h"
-#include "devfs.h"
-#include "signal.h"
 
 #define CMOS_ADDR 0x70
 #define CMOS_DATA 0x71
 
-#define RTC_SECONDS   0x00
-#define RTC_MINUTES   0x02
-#define RTC_HOURS     0x04
-#define RTC_DAY       0x07
-#define RTC_MONTH     0x08
-#define RTC_YEAR      0x09
-#define RTC_STATUS_A  0x0A
-#define RTC_STATUS_B  0x0B
-#define RTC_STATUS_C  0x0C
-#define RTC_STATUS_D  0x0D
+/* Bit 7 of the value written to the CMOS address port (0x70) disables the
+ * non-maskable interrupt while set.  NMI-safe CMOS access sets this bit for
+ * the duration of each multi-byte transaction so an NMI handler cannot
+ * re-enter the CMOS bus mid-access and read a torn register (the classic
+ * Linux "rtc_lock + NMI mask" discipline). */
+#define CMOS_NMI_DISABLE 0x80
+
+#define RTC_SECONDS 0x00
+#define RTC_MINUTES 0x02
+#define RTC_HOURS 0x04
+#define RTC_DAY 0x07
+#define RTC_MONTH 0x08
+#define RTC_YEAR 0x09
+#define RTC_STATUS_A 0x0A
+#define RTC_STATUS_B 0x0B
+#define RTC_STATUS_C 0x0C
+#define RTC_STATUS_D 0x0D
 
 /* Alarm registers */
-#define RTC_ALRM_SEC  0x01
-#define RTC_ALRM_MIN  0x03
-#define RTC_ALRM_HRS  0x05
-#define RTC_ALRM_DAY  0x06
+#define RTC_ALRM_SEC 0x01
+#define RTC_ALRM_MIN 0x03
+#define RTC_ALRM_HRS 0x05
+#define RTC_ALRM_DAY 0x06
 
 /* Status register B bits */
-#define RTC_B_UPD_END  (1U << 4)  /* Update-ended interrupt enable */
-#define RTC_B_PER_INT  (1U << 6)  /* Periodic interrupt enable */
-#define RTC_B_ALRM_INT (1U << 5)  /* Alarm interrupt enable */
+#define RTC_B_UPD_END (1U << 4)  /* Update-ended interrupt enable */
+#define RTC_B_PER_INT (1U << 6)  /* Periodic interrupt enable */
+#define RTC_B_ALRM_INT (1U << 5) /* Alarm interrupt enable */
 
 /* Status register A bits */
-#define RTC_A_RATE_MASK 0x0F     /* Periodic rate select */
-#define RTC_A_UIP       0x80     /* Update in progress */
+#define RTC_A_RATE_MASK 0x0F /* Periodic rate select */
+#define RTC_A_UIP 0x80       /* Update in progress */
 
 static uint8_t cmos_read(uint8_t reg) {
-    outb(CMOS_ADDR, reg);
+    uint8_t val;
+    /* Select the register with the NMI-disable bit set so an in-flight NMI
+     * cannot re-enter the CMOS bus and observe a torn value. */
+    outb(CMOS_ADDR, reg | CMOS_NMI_DISABLE);
     io_wait();
-    return inb(CMOS_DATA);
+    val = inb(CMOS_DATA);
+    io_wait();
+    /* Re-enable NMIs (write address 0 with the NMI bit clear). */
+    outb(CMOS_ADDR, 0x00);
+    io_wait();
+    return val;
 }
 
 static void cmos_write(uint8_t reg, uint8_t val) {
-    outb(CMOS_ADDR, reg);
+    /* NMI-safe: mask NMIs for the address+data transaction, then restore. */
+    outb(CMOS_ADDR, reg | CMOS_NMI_DISABLE);
     io_wait();
     outb(CMOS_DATA, val);
+    io_wait();
+    outb(CMOS_ADDR, 0x00);
     io_wait();
 }
 
@@ -57,9 +76,7 @@ static int is_leap(int year) {
 }
 
 /* Days in each month (non-leap) */
-static const int days_in_mon[12] = {
-    31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
-};
+static const int days_in_mon[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
 uint64_t rtc_to_epoch(const struct rtc_time *t) {
     int y = (int)t->year;
@@ -75,7 +92,8 @@ uint64_t rtc_to_epoch(const struct rtc_time *t) {
 
     for (int mo = 1; mo < m; mo++) {
         days += days_in_mon[mo - 1];
-        if (mo == 2 && is_leap(y)) days++;
+        if (mo == 2 && is_leap(y))
+            days++;
     }
     days += (d - 1);
 
@@ -110,7 +128,7 @@ static int g_rtc_sigalrm_pid = 0;
 /* ── Alarm state ──────────────────────────────────────────────────── */
 
 static volatile int g_alarm_fired = 0;
-static uint64_t g_wakealarm_epoch = 0;  /* alarm set time in epoch seconds (0 = disabled) */
+static uint64_t g_wakealarm_epoch = 0; /* alarm set time in epoch seconds (0 = disabled) */
 
 /* ── Forward declarations ────────────────────────────────────────── */
 
@@ -190,7 +208,8 @@ void __init rtc_init(void) {
 /* Convert rate in Hz to the 4-bit RTC rate select code.
    RTC uses divider 32768 >> (rate_select - 1) for rate_select >= 3 */
 static int hz_to_rate_select(int rate_hz) {
-    if (rate_hz <= 0) return -1;
+    if (rate_hz <= 0)
+        return -1;
     /* Rate = 32768 >> (rs - 1), so rs = 16 - log2(rate_hz) */
     int log = 0;
     int r = rate_hz;
@@ -199,14 +218,16 @@ static int hz_to_rate_select(int rate_hz) {
         log++;
     }
     int rs = 16 - log;
-    if (rs < 3 || rs > 15) return -1;
+    if (rs < 3 || rs > 15)
+        return -1;
     return rs;
 }
 
 int rtc_set_periodic(int enable, int rate_hz) {
     if (enable) {
         int rs = hz_to_rate_select(rate_hz);
-        if (rs < 0) return -1;
+        if (rs < 0)
+            return -1;
 
         /* Set rate in Status Register A */
         uint8_t rega = cmos_read(RTC_STATUS_A);
@@ -230,7 +251,8 @@ int rtc_set_periodic(int enable, int rate_hz) {
 }
 
 int rtc_wait_ticks(uint32_t ticks) {
-    if (!g_periodic_enabled) return -1;
+    if (!g_periodic_enabled)
+        return -1;
 
     uint64_t target = g_periodic_ticks + ticks;
     while (g_periodic_ticks < target) {
@@ -248,7 +270,8 @@ uint64_t rtc_get_ticks(void) {
 /* ── Alarm API ─────────────────────────────────────────────────────── */
 
 int rtc_set_alarm(const struct rtc_time *t) {
-    if (!t) return -1;
+    if (!t)
+        return -1;
 
     /* Write alarm registers */
     cmos_write(RTC_ALRM_SEC, bin_to_bcd(t->second));
@@ -292,7 +315,8 @@ int rtc_set_alarm_epoch(uint64_t epoch_sec) {
     for (;;) {
         int days = is_leap((int)t.year) ? 366 : 365;
         uint64_t secs = (uint64_t)days * 86400ULL;
-        if (remaining < secs) break;
+        if (remaining < secs)
+            break;
         remaining -= secs;
         t.year++;
     }
@@ -300,9 +324,11 @@ int rtc_set_alarm_epoch(uint64_t epoch_sec) {
     /* Subtract months */
     for (int mo = 1; mo <= 12; mo++) {
         int days = days_in_mon[mo - 1];
-        if (mo == 2 && is_leap((int)t.year)) days++;
+        if (mo == 2 && is_leap((int)t.year))
+            days++;
         uint64_t secs = (uint64_t)days * 86400ULL;
-        if (remaining < secs) break;
+        if (remaining < secs)
+            break;
         remaining -= secs;
         t.month = (uint8_t)mo;
     }
@@ -345,32 +371,34 @@ void rtc_get_time(struct rtc_time *t) {
     uint8_t last_sec, last_min, last_hr, last_day, last_mon, last_yr;
 
     do {
-        while (is_updating());
+        while (is_updating())
+            ;
         sec = cmos_read(RTC_SECONDS);
         min = cmos_read(RTC_MINUTES);
-        hr  = cmos_read(RTC_HOURS);
+        hr = cmos_read(RTC_HOURS);
         day = cmos_read(RTC_DAY);
         mon = cmos_read(RTC_MONTH);
-        yr  = cmos_read(RTC_YEAR);
+        yr = cmos_read(RTC_YEAR);
 
-        while (is_updating());
+        while (is_updating())
+            ;
         last_sec = cmos_read(RTC_SECONDS);
         last_min = cmos_read(RTC_MINUTES);
-        last_hr  = cmos_read(RTC_HOURS);
+        last_hr = cmos_read(RTC_HOURS);
         last_day = cmos_read(RTC_DAY);
         last_mon = cmos_read(RTC_MONTH);
-        last_yr  = cmos_read(RTC_YEAR);
-    } while (sec != last_sec || min != last_min || hr != last_hr ||
-             day != last_day || mon != last_mon || yr != last_yr);
+        last_yr = cmos_read(RTC_YEAR);
+    } while (sec != last_sec || min != last_min || hr != last_hr || day != last_day ||
+             mon != last_mon || yr != last_yr);
 
     uint8_t regb = cmos_read(RTC_STATUS_B);
     if (!(regb & 0x04)) {
         sec = bcd_to_bin(sec);
         min = bcd_to_bin(min);
-        hr  = bcd_to_bin(hr & 0x7F) | (hr & 0x80);
+        hr = bcd_to_bin(hr & 0x7F) | (hr & 0x80);
         day = bcd_to_bin(day);
         mon = bcd_to_bin(mon);
-        yr  = bcd_to_bin(yr);
+        yr = bcd_to_bin(yr);
     }
 
     if (!(regb & 0x02)) {
@@ -379,10 +407,10 @@ void rtc_get_time(struct rtc_time *t) {
 
     t->second = sec;
     t->minute = min;
-    t->hour   = hr;
-    t->day    = day;
-    t->month  = mon;
-    t->year   = (yr < 70) ? (2000 + yr) : (1900 + yr);
+    t->hour = hr;
+    t->day = day;
+    t->month = mon;
+    t->year = (yr < 70) ? (2000 + yr) : (1900 + yr);
 }
 
 /* ── /dev/rtc userspace device interface ──────────────────────────── */
@@ -395,9 +423,7 @@ void rtc_get_time(struct rtc_time *t) {
  * If no tick has occurred since last read, blocks until the next
  * periodic interrupt fires.
  */
-static int rtc_dev_read(void *priv, void *buf, uint32_t max_size,
-                         uint32_t *out_size)
-{
+static int rtc_dev_read(void *priv, void *buf, uint32_t max_size, uint32_t *out_size) {
     (void)priv;
 
     if (!g_periodic_enabled)
@@ -429,8 +455,7 @@ static int rtc_dev_read(void *priv, void *buf, uint32_t max_size,
  *
  * Returns 0 on success, -1 on parse error.
  */
-static int rtc_dev_write(void *priv, const void *data, uint32_t size)
-{
+static int rtc_dev_write(void *priv, const void *data, uint32_t size) {
     (void)priv;
     const char *s = (const char *)data;
     uint32_t remain = size;
@@ -439,7 +464,8 @@ static int rtc_dev_write(void *priv, const void *data, uint32_t size)
     /* Skip leading whitespace */
     while (i < remain && (s[i] == ' ' || s[i] == '\t'))
         i++;
-    if (i >= remain) return -1;
+    if (i >= remain)
+        return -1;
 
     /* Check for "disable" or "0" */
     if (s[i] == '0' || s[i] == 'd') {
@@ -456,12 +482,16 @@ static int rtc_dev_write(void *priv, const void *data, uint32_t size)
             rate = rate * 10 + (int)(s[i] - '0');
             i++;
         }
-        if (rate <= 0) return -1;
+        if (rate <= 0)
+            return -1;
         /* Clamp to valid range: 2 to 8192 Hz (power of 2 divisors of 32768) */
-        if (rate < 2) rate = 2;
-        if (rate > 8192) rate = 8192;
+        if (rate < 2)
+            rate = 2;
+        if (rate > 8192)
+            rate = 8192;
         int ret = rtc_set_periodic(1, rate);
-        if (ret != 0) return -1;
+        if (ret != 0)
+            return -1;
         return 0;
     }
 
@@ -483,13 +513,11 @@ static int rtc_dev_write(void *priv, const void *data, uint32_t size)
 
 /* Initialize the /dev/rtc device node in devfs.
  * Called during rtc_init() to make the device available. */
-static void rtc_devfs_init(void)
-{
+static void rtc_devfs_init(void) {
     wait_queue_init(&g_rtc_dev_wq);
     g_rtc_sigalrm_pid = 0;
 
-    int ret = devfs_register_device("rtc", NULL,
-                                     rtc_dev_read, rtc_dev_write);
+    int ret = devfs_register_device("rtc", NULL, rtc_dev_read, rtc_dev_write);
     if (ret == 0) {
         kprintf("[OK] RTC: /dev/rtc registered (periodic 1-8192 Hz, SIGALRM delivery)\n");
     } else {
@@ -503,7 +531,8 @@ static void rtc_devfs_init(void)
  * Returns the current alarm time as epoch seconds (or "0\n" if disabled). */
 static int wakealarm_read(char *buf, uint32_t max_size, void *priv) {
     (void)priv;
-    if (max_size < 4) return -1;
+    if (max_size < 4)
+        return -1;
     if (g_wakealarm_epoch == 0) {
         buf[0] = '0';
         buf[1] = '\n';
@@ -520,7 +549,8 @@ static int wakealarm_read(char *buf, uint32_t max_size, void *priv) {
     } while (val > 0 && len < 22);
     /* Reverse into buffer */
     int out_len = len + 1; /* +1 for newline */
-    if ((uint32_t)out_len >= max_size) return -1;
+    if ((uint32_t)out_len >= max_size)
+        return -1;
     for (int i = 0; i < len; i++)
         buf[i] = tmp[len - 1 - i];
     buf[len] = '\n';
@@ -533,19 +563,25 @@ static int wakealarm_read(char *buf, uint32_t max_size, void *priv) {
  * Writing "0" disables the alarm. */
 static int wakealarm_write(const char *data, uint32_t size, void *priv) {
     (void)priv;
-    if (size == 0) return -1;
+    if (size == 0)
+        return -1;
 
     /* Parse the first whitespace-delimited token as a number */
     uint64_t val = 0;
     uint32_t i = 0;
     while (i < size && (data[i] == ' ' || data[i] == '\t'))
         i++;
-    if (i >= size) return -1;
+    if (i >= size)
+        return -1;
 
     /* Check for negative sign */
     int negative = 0;
-    if (data[i] == '-') { negative = 1; i++; }
-    else if (data[i] == '+') { i++; }
+    if (data[i] == '-') {
+        negative = 1;
+        i++;
+    } else if (data[i] == '+') {
+        i++;
+    }
 
     /* Parse decimal digits */
     while (i < size && data[i] >= '0' && data[i] <= '9') {
@@ -553,7 +589,8 @@ static int wakealarm_write(const char *data, uint32_t size, void *priv) {
         i++;
     }
 
-    if (negative) val = 0; /* negative means disable */
+    if (negative)
+        val = 0; /* negative means disable */
 
     return rtc_set_alarm_epoch(val);
 }
@@ -574,8 +611,8 @@ void __init rtc_sysfs_init(void) {
     }
 
     /* Create writable wakealarm file */
-    if (sysfs_create_writable_file("/sys/class/rtc/rtc0/wakealarm",
-                                    "0\n", NULL, wakealarm_read, wakealarm_write) < 0) {
+    if (sysfs_create_writable_file("/sys/class/rtc/rtc0/wakealarm", "0\n", NULL, wakealarm_read,
+                                   wakealarm_write) < 0) {
         kprintf("[RTC] sysfs: failed to create wakealarm\n");
         return;
     }
@@ -585,27 +622,25 @@ void __init rtc_sysfs_init(void) {
 #include "module.h"
 module_init(rtc_init);
 
-static int rtc_read_time(struct rtc_time *tm)
-{
-    if (!tm) return -EINVAL;
+static int rtc_read_time(struct rtc_time *tm) {
+    if (!tm)
+        return -EINVAL;
     /* Use existing rtc_get_time which reads the CMOS RTC correctly */
     rtc_get_time(tm);
     return 0;
 }
 
-static int rtc_set_time(const struct rtc_time *tm)
-{
+static int rtc_set_time(const struct rtc_time *tm) {
     (void)tm;
     return 0;
 }
 
 /* Standard Linux RTC ioctl commands (from linux/rtc.h) */
-#define RTC_RD_TIME  0x80247009  /* _IOR('p', 0x09, struct rtc_time)  — read time */
-#define RTC_SET_TIME 0x4024700A  /* _IOW('p', 0x0A, struct rtc_time)  — set time */
+#define RTC_RD_TIME 0x80247009  /* _IOR('p', 0x09, struct rtc_time)  — read time */
+#define RTC_SET_TIME 0x4024700A /* _IOW('p', 0x0A, struct rtc_time)  — set time */
 
 /* ── RTC ioctl handler ──────────────────────────────── */
-static int rtc_ioctl(int cmd, void *arg)
-{
+static int rtc_ioctl(int cmd, void *arg) {
     if (!arg)
         return -EINVAL;
 
