@@ -163,6 +163,33 @@ if (pci_find_msi_cap(dev.bus, dev.slot, dev.func, &info) == 0) {
 }
 ```
 
+### PCI driver binding (discovery → autoprobe)
+
+Binding a driver to a PCI device follows a two-phase discovery flow. The
+device is first located by vendor/device id (as above) or — for modular
+drivers — matched automatically by **modalias**:
+
+1. **Enumeration.** `pci_init()` scans all 256 buses × 32 slots × 8
+   functions; a device exists when its vendor id is not `0xFFFF`.
+2. **Modalias generation.** Each device yields a standard string
+   `pci:vXXXXdXXXXsvXXXXsdXXXXbcXXccXX` (vendor, device, subsystem,
+   class/subclass).
+3. **Deferred autoprobe.** During early boot (interrupts disabled, no
+   preemptible context yet) devices are queued in
+   `g_autoprobe_queue[PCI_AUTOPROBE_MAX_ENTRIES]`. Later,
+   `pci_autoprobe_work()` runs in a **workqueue context** and issues
+   `request_module(modalias)` for each queued device, which loads the
+   matching `.ko` whose `MODULE_DEVICE_TABLE(pci, table)` alias pattern
+   (`pci:v0000VVVVd*`, etc.) matches.
+4. **Driver init.** The loaded module's `module_init()` runs the actual
+   probe (typically `pci_find_device` by its own vendor/device id,
+   enables bus mastering / MSI, and registers an IRQ handler).
+
+The same flow applies whether the driver is built in (its initcall probes
+during `do_initcalls()`) or loaded on demand (its `.ko` is autoloaded via
+modalias). Either way the driver ends up with a validated
+`struct pci_device` (BARs, IRQ line, bus address) ready to be enabled.
+
 ---
 
 ## 3. MMIO Access
