@@ -171,6 +171,13 @@ static int evm_verify_xattr(const char *path)
  * flag short-circuits that re-entry so verification does not recurse. */
 static int evm_verify_reentrant = 0;
 
+/* Set while EVM recomputes security.evm after a protected xattr change,
+ * so verification/recursion are suppressed during maintenance. */
+static int evm_update_active = 0;
+
+/* Forward declaration (defined below): recompute + write security.evm. */
+static int evm_protect_file(const char *path);
+
 /*
  * evm_verify_get — EVM integrity verification on xattr read (D312 item 9).
  *
@@ -203,6 +210,10 @@ int evm_verify_get(const char *path, const char *xattr_name) {
     if (evm_verify_reentrant)
         return 0;
 
+    /* Skip verification during EVM's own update maintenance. */
+    if (evm_update_active)
+        return 0;
+
     /* A file with no security.evm xattr is not protected — allow it. */
     if (vfs_getxattr(path, "security.evm", present, sizeof(present)) < 0)
         return 0;
@@ -221,6 +232,61 @@ int evm_verify_get(const char *path, const char *xattr_name) {
 
     kprintf("[EVM] Warning: integrity check failed reading %s on %s\n", xattr_name, path);
     return 0;
+}
+
+/*
+ * evm_setxattr_check — Protect the security.evm xattr during setxattr.
+ *
+ * security.evm is maintained exclusively by the EVM subsystem (see
+ * evm_update_after_set).  Direct modification by any other writer is
+ * denied.  Returns 0 to allow, -EPERM to deny.
+ */
+int evm_setxattr_check(const char *path, const char *name) {
+    if (!path || !name)
+        return 0;
+
+    if (strcmp(name, "security.evm") != 0)
+        return 0; /* not the EVM attribute itself */
+
+    if (evm_update_active)
+        return 0; /* EVM's own keyed maintenance */
+
+    kprintf("[EVM] Denied direct setxattr of security.evm on %s\n", path);
+    return -EPERM;
+}
+
+/*
+ * evm_setxattr_must_update — Does a name change invalidate the EVM HMAC?
+ * Returns 1 for protected security.* xattrs other than security.evm
+ * itself; 0 otherwise.
+ */
+int evm_setxattr_must_update(const char *name) {
+    if (!name)
+        return 0;
+
+    if (strncmp(name, "security.", 9) != 0)
+        return 0;
+    if (strcmp(name, "security.evm") == 0)
+        return 0;
+    return 1;
+}
+
+/*
+ * evm_update_after_set — Recompute security.evm after a protected xattr
+ * changed, keeping the file's EVM HMAC consistent.  Called right after
+ * a successful setxattr of a protected xattr.
+ */
+int evm_update_after_set(const char *path) {
+    if (!path || !g_evm_initialized || !g_evm_key_set)
+        return 0;
+
+    if (evm_update_active)
+        return 0; /* re-entrancy guard */
+
+    evm_update_active = 1;
+    int r = evm_protect_file(path);
+    evm_update_active = 0;
+    return r;
 }
 
 /*

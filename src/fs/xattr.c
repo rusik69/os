@@ -264,11 +264,19 @@ int xattr_remove(const char *path, const char *name) {
  */
 int vfs_setxattr(const char *path, const char *name, const void *value, int size)
 {
+    int ret;
+    int handled = 0;
+
     if (!path || !name || !value)
         return -EINVAL;
 
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
+
+    /* EVM: protect the security.evm xattr from direct modification —
+     * it is maintained only by the EVM subsystem. */
+    if (evm_setxattr_check(ap, name) < 0)
+        return -EPERM;
 
     /* Try filesystem-specific handler first */
     for (int i = 0; i < num_mounts; i++) {
@@ -276,15 +284,25 @@ int vfs_setxattr(const char *path, const char *name, const void *value, int size
         if (mlen == 0) continue;
         if (strncmp(ap, mounts[i].mountpoint, mlen) == 0) {
             if (ap[mlen] == '\0' || ap[mlen] == '/') {
-                if (mounts[i].ops->setxattr)
-                    return mounts[i].ops->setxattr(mounts[i].priv, ap, name,
-                                                   (const void *)value,
-                                                   (size_t)size, 0);
+                if (mounts[i].ops->setxattr) {
+                    ret = mounts[i].ops->setxattr(mounts[i].priv, ap, name, (const void *)value,
+                                                  (size_t)size, 0);
+                    handled = 1;
+                    break;
+                }
                 break;  /* filesystem mounted here but no handler - fall back */
             }
         }
     }
-    return xattr_set(ap, name, value, (size_t)size);
+    if (!handled)
+        ret = xattr_set(ap, name, value, (size_t)size);
+
+    /* EVM: keep the security.evm HMAC consistent after a protected
+     * xattr changed, so the file remains integral. */
+    if (ret >= 0 && evm_setxattr_must_update(name))
+        (void)evm_update_after_set(ap);
+
+    return ret;
 }
 
 /*
