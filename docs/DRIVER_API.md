@@ -192,7 +192,59 @@ modalias). Either way the driver ends up with a validated
 
 ---
 
-## 3. MMIO Access
+## 3. Block Driver Registration
+
+Block drivers (disks, RAM disks, NVMe, virtio-blk, loop, device-mapper)
+register a device with the block layer via `blockdev_register()` (async
+submit API) or `blockdev_register_legacy()` (simple synchronous
+read/write API, which the block layer adapts to the async path).
+
+```c
+#include "blockdev.h"
+
+/* Asynchronous API: implement a per-request submit callback.
+ * blk_driver_submit_fn: int fn(struct blk_request *req) */
+static int mydisk_submit(struct blk_request *req)
+{
+    /* req->lba, req->count, req->buf, req->flags (BLK_WRITE/...) */
+    /* ... start the I/O, then call blk_request_done(req) when finished ...
+     */
+    return 0;
+}
+
+/* Synchronous API: read/write on (lba, count, buf) triplets */
+static int mydisk_read(uint32_t lba, uint8_t count, void *buf) { /* ... */ return 0; }
+static int mydisk_write(uint32_t lba, uint8_t count, const void *buf) { /* ... */ return 0; }
+
+static int mydisk_init(void)
+{
+    /* Async: register with submit callback + capacity in sectors */
+    int r = blockdev_register(0 /*id*/, "mydisk", mydisk_submit,
+                              NULL, 65536 /*512-byte sectors*/, 0);
+    /* or Sync:
+     * r = blockdev_register_legacy(0, "mydisk", mydisk_read, mydisk_write, mydisk_size); */
+    return r;
+}
+device_initcall(mydisk_init);
+```
+
+**Key points:**
+
+- `blockdev_register(id, name, submit_fn, idle_fn, sector_count, flags)` —
+  registers the device with a `blk_driver_submit_fn` request callback.
+  Capacity is expressed in 512-byte sectors.
+- `blockdev_register_legacy(id, name, read_fn, write_fn, size_fn)` — for
+  drivers that prefer simple `(lba, count, buf)` calls; the block layer
+  wraps them into `blk_request`s via `legacy_submit_fn_adapter`.
+- IDs must be `< BLOCKDEV_MAX_DEVICES` and unique; `submit_fn` is required.
+- `blk_request_done(req)` is how an async driver signals completion, waking
+  the submitting task (used by the synchronous submit path too).
+- After registration, higher layers (VFS `open/read/write`, filesystems,
+  `mkfatimg`) address the device through its id.
+
+---
+
+## 4. MMIO Access
 
 Memory-mapped I/O (MMIO) registers are accessed through the kernel's high-half virtual memory mapping. The key function is `vmm_map_phys()`.
 
@@ -250,7 +302,7 @@ static inline uint32_t tis_read32(struct tpm_device *dev, uint16_t off) {
 
 ---
 
-## 4. Interrupt Registration
+## 5. Interrupt Registration
 
 Register interrupt handlers with the IDT subsystem (`idt_register_handler`) and handle PIC/IOAPIC unmasking.
 
@@ -309,7 +361,7 @@ idt_register_handler_named(32 + irq_line, mydrv_irq_handler, "my_driver");
 
 ---
 
-## 5. DMA Buffer Allocation
+## 6. DMA Buffer Allocation
 
 Use the physical memory manager for DMA-capable buffers. The kernel provides `pmm_alloc_frame()` (single 4 KB page) and `pmm_alloc_frames()` (contiguous multi-page block).
 
@@ -375,7 +427,7 @@ cmd.prp1 = data_phys;
 
 ---
 
-## 6. Timer API
+## 7. Timer API
 
 Use the dynamic timer subsystem for delayed work, polling loops, and periodic tasks.
 
@@ -478,7 +530,7 @@ uint64_t ms_to_ticks(uint64_t ms) {
 
 ---
 
-## 7. Locking Requirements
+## 8. Locking Requirements
 
 Drivers that touch shared state (global data, device registers accessed from multiple CPUs) must use spinlocks. The kernel provides both plain and IRQ-safe variants.
 
@@ -552,7 +604,7 @@ static void e1000_irq_handler(struct interrupt_frame *frame)
 
 ---
 
-## 8. Exporting Symbols
+## 9. Exporting Symbols
 
 Drivers that are compiled as loadable modules or provide an API to other modules can export symbols using `EXPORT_SYMBOL()` and `EXPORT_SYMBOL_GPL()`.
 
@@ -600,7 +652,7 @@ EXPORT_SYMBOL(mpath_select_path);
 
 ---
 
-## 9. Makefile Integration
+## 10. Makefile Integration
 
 The kernel has two build models:
 
@@ -674,7 +726,7 @@ For built-in use, `module_init(my_driver_init)` already handles registration via
 
 ---
 
-## 10. Module Metadata
+## 11. Module Metadata
 
 Module metadata is embedded in the `.modinfo` section using macros:
 
