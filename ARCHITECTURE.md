@@ -2619,6 +2619,43 @@ Architecture:
 - **Gossip:** suspicion-based failure detection, infection-style state dissemination
 - **orchctl** — CLI tool for cluster management (list nodes, manage pods, inspect services)
 
+### Orchestration Workflow
+
+Cluster orchestration coordinates the Raft consensus engine and the
+gossip membership protocol to place and manage workloads:
+
+```
+Node Join / Membership
+    node start → clusterd runs gossip (SWIM-style membership)
+    existing nodes detect newcomer via suspicion/infection dissemination
+    node reported healthy → added to member list, replicated via Raft log
+
+Leader Election (Raft)
+    Follower → (election timeout) → Candidate
+    Candidate → (majority of votes) → Leader
+    Leader owns: log replication, KV store writes, orchestration decisions
+    All writes go through the Raft log; followers apply entries in order
+
+Deploy a Workload
+    orchctl / REST → leader
+    leader appends "deploy pod <id>" to Raft log → replicates to followers
+    leader selects a target node (resource-aware placement)
+    kernel hooks: IPVS load-balancer + conntrack NAT configured via netlink
+
+Service Exposure
+    Service (ClusterIP/NodePort/LoadBalancer) mapped to selectors
+    IPVS VIP + real servers synced to kernel over netlink
+    Conntrack tracks flows for NAT and policies
+```
+
+The state machine in `clusterd.c` is explicit:
+`RAFT_FOLLOWER → RAFT_CANDIDATE → RAFT_LEADER` (then back to
+`FOLLOWER` on timeout/term change). Because all orchestration writes are
+durably replicated through the Raft log before clusterd acts on them,
+and gossip provides an eventually-consistent membership view, the
+control plane tolerates individual node failure without a single point
+of coordination.
+
 ## Shell Subsystem
 
 **Files:** `src/shell/`, `cmd_table.inc`, `cmds/`
