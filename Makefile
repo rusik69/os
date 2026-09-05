@@ -1789,6 +1789,40 @@ release: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 DIST_DIR = $(BUILDDIR)/dist-$(RELEASE_VERSION)
 DIST_TAR = $(BUILDDIR)/hermes-$(RELEASE_VERSION)-dist.tar.gz
 
+# ── Debian package (make deb) ────────────────────────────────────────
+# Builds a .deb containing the kernel image and disk image using dpkg-deb.
+PKG_DEB = $(BUILDDIR)/hermes-$(RELEASE_VERSION).deb
+deb: release
+	@echo "=== Building Debian package $(PKG_DEB) ==="
+	@rm -rf $(BUILDDIR)/pkgdeb && mkdir -p $(BUILDDIR)/pkgdeb/DEBIAN $(BUILDDIR)/pkgdeb/opt/hermes
+	@cp $(RELEASE_DIR)/kernel.bin $(BUILDDIR)/pkgdeb/opt/hermes/
+	@cp $(RELEASE_DIR)/disk.img $(BUILDDIR)/pkgdeb/opt/hermes/
+	@cp $(BUILDDIR)/hermes-$(RELEASE_VERSION)-src.tar.gz $(BUILDDIR)/pkgdeb/opt/hermes/ 2>/dev/null || true
+	@printf 'Package: hermes\nVersion: %s\nSection: os\nPriority: optional\nArchitecture: amd64\nMaintainer: rusik69 <rusik69@gmail.com>\nDescription: Hermes OS kernel and disk image\n' "$(RELEASE_VERSION)" > $(BUILDDIR)/pkgdeb/DEBIAN/control
+	@printf '#!/bin/sh\necho "Hermes OS installed at /opt/hermes"\n' > $(BUILDDIR)/pkgdeb/DEBIAN/postinst && chmod 755 $(BUILDDIR)/pkgdeb/DEBIAN/postinst
+	@dpkg-deb --build --root-owner-group $(BUILDDIR)/pkgdeb $(PKG_DEB) >/dev/null 2>&1
+	@rm -rf $(BUILDDIR)/pkgdeb
+	@echo "=== Debian package built: $(PKG_DEB) ==="
+	@ls -lh $(PKG_DEB)
+
+# ── RPM package (make rpm) ──────────────────────────────────────────
+# Builds an .rpm with rpmbuild (skips gracefully if rpmbuild absent).
+PKG_RPM = $(BUILDDIR)/hermes-$(RELEASE_VERSION).rpm
+rpm: release
+	@if command -v rpmbuild >/dev/null 2>&1; then \
+		rm -rf $(BUILDDIR)/rpmspec && mkdir -p $(BUILDDIR)/rpmspec/SOURCES/opt/hermes; \
+		cp $(RELEASE_DIR)/kernel.bin $(BUILDDIR)/rpmspec/SOURCES/opt/hermes/; \
+		cp $(RELEASE_DIR)/disk.img $(BUILDDIR)/rpmspec/SOURCES/opt/hermes/; \
+		printf 'Name: hermes\nVersion: %s\nRelease: 1\nSummary: Hermes OS kernel\nLicense: GPL-2.0\nBuildArch: x86_64\nPackager: rusik69 <rusik69@gmail.com>\n\n%%description\nHermes OS kernel and disk image.\n\n%%install\nmkdir -p %%{buildroot}/opt/hermes\ncp -r SOURCES/opt/hermes/* %%{buildroot}/opt/hermes/\n\n%%files\n/opt/hermes/kernel.bin\n/opt/hermes/disk.img\n' "$(RELEASE_VERSION)" > $(BUILDDIR)/rpmspec/hermes.spec; \
+		( cd $(BUILDDIR)/rpmspec && rpmbuild --define '_topdir $(BUILDDIR)/rpmspec' -bb hermes.spec >/dev/null 2>&1 && \
+		  cp RPMS/*/hermes-*.rpm $(PKG_RPM) && echo "=== RPM built: $(PKG_RPM) ===" && ls -lh $(PKG_RPM) ) || \
+		{ echo "rpmbuild failed or unavailable — skipping RPM (dpkg-deb still available)"; }; \
+	else \
+		echo "rpmbuild not found — install with: sudo apt install rpm"; \
+	fi
+
+# ── New run targets (SMP, GDB, UEFI) ──────────────────────────────────
+
 dist: release
 	@echo "=== Creating distribution tarball ==="
 	@mkdir -p $(DIST_DIR)
