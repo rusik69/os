@@ -12,6 +12,7 @@
 #include "printf.h"
 #include "timer.h"
 #include "time.h"
+#include "timekeeping.h"
 
 /* Timeout for NTP response (seconds) */
 #define NTP_TIMEOUT_SEC 5
@@ -137,16 +138,20 @@ int ntp_sync(void)
     kprintf("[ntp] ntp_sync: triggering NTP synchronization (stub)\n");
     return -EOPNOTSUPP;
 }
-/* ── Implement: ntp_update ────────────────── */
+/* ── Implement: ntp_update ──────────────────
+ * Adopt an authoritative NTP timestamp as the realtime clock, converting
+ * the server's Unix epoch (UTC seconds) into a hard step via the
+ * timekeeping adjustment interface. */
 int ntp_update(uint64_t timestamp)
 {
     if (timestamp == 0) {
         kprintf("[ntp] ntp_update: invalid timestamp 0\n");
         return -EINVAL;
     }
-    kprintf("[ntp] ntp_update: timestamp=%llu (stub)\n",
+    timekeeping_ntp_settime(timestamp);
+    kprintf("[ntp] ntp_update: clock stepped to %llu\n",
             (unsigned long long)timestamp);
-    return -EOPNOTSUPP;
+    return 0;
 }
 /* ── Implement: ntp_set_server ────────────────── */
 int ntp_set_server(const char *host)

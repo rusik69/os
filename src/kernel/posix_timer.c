@@ -27,6 +27,7 @@
 #include "syscall.h"
 #include "timer.h"
 #include "timers.h"
+#include "timekeeping.h"
 #include "types.h"
 #include "uaccess.h"
 
@@ -186,8 +187,22 @@ int64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr) {
     case CLOCK_REALTIME_COARSE:
     case CLOCK_REALTIME_ALARM: {
         uint64_t epoch = rtc_get_epoch();
+        int64_t ns;
+        int64_t off = timekeeping_get_rt_offset();
         ts.tv_sec = epoch + (ticks / TIMER_FREQ);
         ts.tv_nsec = (ticks % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+        /* Fold any NTP-applied slew offset into the reported time,
+         * carrying into the seconds field to keep tv_nsec in range. */
+        ns = (int64_t)ts.tv_nsec + off;
+        while (ns >= 1000000000LL) {
+            ts.tv_sec += 1;
+            ns -= 1000000000LL;
+        }
+        while (ns < 0) {
+            ts.tv_sec -= 1;
+            ns += 1000000000LL;
+        }
+        ts.tv_nsec = (uint64_t)ns;
         break;
     }
 

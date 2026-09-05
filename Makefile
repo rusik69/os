@@ -152,6 +152,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/syscall_new.c \
          src/kernel/syscall_linux.c \
          src/kernel/posix_timer.c \
+         src/kernel/timekeeping.c \
          src/kernel/sys_process.c \
          src/kernel/sys_mmap.c \
          src/kernel/sys_nl.c \
