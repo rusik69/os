@@ -64,6 +64,11 @@ OBJCOPY = x86_64-elf-objcopy
 else ifeq ($(origin OBJCOPY), default)
 OBJCOPY = x86_64-elf-objcopy
 endif
+ifeq ($(origin STRIP), undefined)
+STRIP = x86_64-elf-strip
+else ifeq ($(origin STRIP), default)
+STRIP = x86_64-elf-strip
+endif
 
 # Number of parallel jobs (all available CPU cores)
 NPROCS := $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4)
@@ -1742,8 +1747,25 @@ RELEASE_TAR = $(BUILDDIR)/hermes-$(RELEASE_VERSION)-src.tar.gz
 release: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 	@echo "=== Creating release $(RELEASE_VERSION) ==="
 	@mkdir -p $(RELEASE_DIR)
+	@# Strip debug info from the kernel ELF for the release artifact
+	@if command -v $(STRIP) >/dev/null 2>&1; then \
+		$(STRIP) -o $(RELEASE_DIR)/kernel.elf.stripped $(BUILDDIR)/kernel.elf && \
+		echo "  stripped kernel.elf -> $(RELEASE_DIR)/kernel.elf.stripped"; \
+	else \
+		cp $(BUILDDIR)/kernel.elf $(RELEASE_DIR)/kernel.elf.stripped; \
+	fi
 	@cp $(BUILDDIR)/kernel.bin $(RELEASE_DIR)/
 	@cp $(BUILDDIR)/disk.img $(RELEASE_DIR)/
+	@# Strip kernel modules (.ko) for a smaller release footprint
+	@mkdir -p $(RELEASE_DIR)/modules
+	@for ko in $$(find build -name '*.ko' 2>/dev/null); do \
+		base=$$(basename "$$ko"); \
+		if command -v $(STRIP) >/dev/null 2>&1; then \
+			$(STRIP) -o $(RELEASE_DIR)/modules/$$base "$$ko" 2>/dev/null || cp "$$ko" $(RELEASE_DIR)/modules/; \
+		else \
+			cp "$$ko" $(RELEASE_DIR)/modules/; \
+		fi; \
+	done
 	@# Create source tarball
 	@if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then \
 		git archive --format=tar.gz --prefix=hermes-$(RELEASE_VERSION)/ -o $(RELEASE_TAR) HEAD 2>/dev/null || \
