@@ -39,6 +39,10 @@ void apic_write(uint32_t reg, uint32_t val) {
     lapic[reg / 4] = val;
 }
 
+/**
+ * apic_get_id - Return the current CPU's local APIC id
+ * Reads the local APIC id register to identify the running processor.
+ */
 uint32_t apic_get_id(void) {
     return (apic_read(LAPIC_ID) >> 24) & 0xFF;
 }
@@ -51,6 +55,10 @@ int apic_is_init_complete(void) {
     return apic_initialized;
 }
 
+/**
+ * apic_eoi - Signal end-of-interrupt to the local APIC
+ * Writes the EOI register to re-open the APIC for the next interrupt.
+ */
 void apic_eoi(void) {
     apic_write(LAPIC_EOI, 0);
 }
@@ -97,6 +105,14 @@ void apic_init_local(void) {
 
 /* ── IPI (Inter-Processor Interrupts) ─────────────────────────────── */
 
+/**
+ * apic_send_ipi - Send an inter-processor interrupt to one APIC
+ * @apic_id: Destination local APIC id
+ * @vector: Interrupt vector to deliver
+ *
+ * Writes the interrupt command register to deliver @vector to the APIC with id @apic_id. Used for
+ * reschedule, TLB shootdown and other IPIs.
+ */
 void apic_send_ipi(uint32_t apic_id, uint32_t vector) {
     apic_write(LAPIC_ICR_HIGH, apic_id << 24);
     apic_write(LAPIC_ICR_LOW,  vector | ICR_DEST_FIXED);
@@ -105,6 +121,13 @@ void apic_send_ipi(uint32_t apic_id, uint32_t vector) {
         __asm__ volatile("pause");
 }
 
+/**
+ * apic_send_ipi_all_except - Send an IPI to every APIC except one
+ * @vector: Interrupt vector to deliver
+ *
+ * Broadcasts @vector to all local APICs other than the sender, used for synchronous cross-CPU
+ * operations.
+ */
 void apic_send_ipi_all_except(uint32_t vector) {
     apic_write(LAPIC_ICR_HIGH, 0);
     apic_write(LAPIC_ICR_LOW, vector | ICR_ALL_EXCL);
@@ -112,6 +135,12 @@ void apic_send_ipi_all_except(uint32_t vector) {
         __asm__ volatile("pause");
 }
 
+/**
+ * apic_send_init_ipi - Send an INIT IPI to an APIC
+ * @apic_id: Destination local APIC id
+ *
+ * Delivers an INIT deassert IPI to wake a sleeping AP during SMP bring-up.
+ */
 void apic_send_init_ipi(uint32_t apic_id) {
     apic_write(LAPIC_ICR_HIGH, apic_id << 24);
     apic_write(LAPIC_ICR_LOW,  ICR_INIT | ICR_LEVEL);
@@ -122,6 +151,14 @@ void apic_send_init_ipi(uint32_t apic_id) {
     for (volatile int i = 0; i < 10000000; i++) __asm__ volatile("pause");
 }
 
+/**
+ * apic_send_startup_ipi - Send a STARTUP IPI to an AP
+ * @apic_id: Destination local APIC id
+ * @page_num: Startup code page number (vector-ish target)
+ *
+ * Delivers a STARTUP IPI pointing the AP to its trampoline for boot assembly, used during SMP
+ * bring-up.
+ */
 void apic_send_startup_ipi(uint32_t apic_id, uint32_t page_num) {
     apic_write(LAPIC_ICR_HIGH, apic_id << 24);
     apic_write(LAPIC_ICR_LOW,  ICR_STARTUP | (page_num & 0xFF));
@@ -394,6 +431,11 @@ void ipi_backtrace_handler(struct interrupt_frame *frame) {
 }
 
 /* Register IPI handlers in the IDT */
+/**
+ * ipi_init - Initialise the inter-processor interrupt handlers
+ * Wires the IPI vector handlers (reschedule, TLB shootdown, membarrier, panic halt) into the IDT.
+ * Called during SMP setup.
+ */
 void ipi_init(void) {
     idt_register_handler(IPI_VECTOR_RESCHEDULE, ipi_reschedule_handler);
     idt_register_handler(IPI_VECTOR_TLB_SHOOT,   ipi_tlb_shootdown_handler);
@@ -409,12 +451,25 @@ void ipi_init(void) {
 /* Reschedule IPI: triggers the receiving CPU to re-evaluate the scheduler.
  * The next timer tick or interrupt will cause a reschedule anyway, so this
  * is mainly a kick to get out of HLT. */
+/**
+ * ipi_reschedule_handler - Handle a reschedule IPI
+ * @frame: Interrupt frame
+ *
+ * Sets the receiving CPU's resched flag so the scheduler picks a new task on return from interrupt.
+ */
 void ipi_reschedule_handler(struct interrupt_frame *frame) {
     (void)frame;
     apic_eoi();
 }
 
 /* TLB shootdown IPI: invalidate all pending addresses on this CPU */
+/**
+ * ipi_tlb_shootdown_handler - Handle a TLB shootdown IPI
+ * @frame: Interrupt frame
+ *
+ * Flushes the TLB entries invalidated by the requesting CPU to preserve memory consistency across
+ * cores.
+ */
 void ipi_tlb_shootdown_handler(struct interrupt_frame *frame) {
     (void)frame;
     int cpu_id = smp_get_cpu_id();

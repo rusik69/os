@@ -29,6 +29,13 @@ enum cpuhp_state cpuhp_cpu_state[CPUHP_MAX_CPUS];
 #include "errno.h"
 
 /* ── GS.base accessor ──────────────────────────────────────────────── */
+/**
+ * smp_set_gs_base - Set the GS base for a CPU's per-CPU data
+ * @info: Per-CPU cpu_info whose GS base to configure
+ *
+ * Programs the kernel GS base to point at @info's per-CPU area so percpu accesses resolve on the
+ * current CPU.
+ */
 void smp_set_gs_base(struct cpu_info *info) {
     uint64_t base = (uint64_t)info;
     uint32_t lo = (uint32_t)(base & 0xFFFFFFFF);
@@ -268,6 +275,11 @@ static int detect_cpus_from_madt(void) {
     return smp_cpu_count;
 }
 
+/**
+ * smp_boot_aps - Bring up the application processors (APs)
+ * Finds each AP via the MP table, sends INIT/SIPI sequences and waits for the APs to enter their
+ * trampoline and report-ready. Returns the number of APs booted or a negative error code.
+ */
 int smp_boot_aps(void) {
     int ap_count = 0;
 
@@ -372,6 +384,10 @@ int smp_boot_aps(void) {
     return ap_count;
 }
 
+/**
+ * smp_get_cpu_count - Return the number of online CPUs
+ * Returns the total count of online logical processors, including the boot CPU.
+ */
 int smp_get_cpu_count(void) {
     return smp_cpu_count;
 }
@@ -388,6 +404,13 @@ EXPORT_SYMBOL(smp_get_cpu_count);
  * Returns 0 on success, or a negative CPUHP_ERR_* code on failure.
  *
  * Usage:  smp_cpu_disable(1);   // offline CPU 1
+ */
+/**
+ * smp_cpu_disable - Take a CPU offline
+ * @cpu_id: Logical CPU id to disable
+ *
+ * Stops scheduling on @cpu_id, migrates its runnable tasks and removes it from the online mask.
+ * Returns 0 on success or a negative error code.
  */
 int smp_cpu_disable(int cpu_id)
 {
@@ -425,6 +448,13 @@ int smp_cpu_disable(int cpu_id)
  * Returns 0 on success, or a negative CPUHP_ERR_* code on failure.
  *
  * Usage:  smp_cpu_enable(1);   // online CPU 1
+ */
+/**
+ * smp_cpu_enable - Bring a CPU back online
+ * @cpu_id: Logical CPU id to re-enable
+ *
+ * Re-adds @cpu_id to the online mask and resumes scheduling on it. Returns 0 on success or a
+ * negative error code.
  */
 int smp_cpu_enable(int cpu_id)
 {
@@ -473,6 +503,10 @@ static int smp_call_function(void *func, void *info, int wait)
     return 0;
 }
 /* ── smp_stop_cpus ─────────────────────────────── */
+/**
+ * smp_stop_cpus - Halt all application processors
+ * Sends an IPI to every AP to stop it before a halt/panic, leaving only the boot CPU running.
+ */
 void smp_stop_cpus(void)
 {
     int cpu_count = smp_get_cpu_count();
