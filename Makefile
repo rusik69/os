@@ -68,6 +68,16 @@ endif
 # Number of parallel jobs (all available CPU cores)
 NPROCS := $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4)
 
+# ── Parallel build (jobserver) safety ───────────────────────────────
+# When make is invoked with -j (e.g. `make -j$(nproc)`), the top-level
+# establishes a jobserver that is automatically propagated to sub-makes
+# via MAKEFLAGS. Forcing `-j$(NPROCS)` on a recursive submake in that
+# case resets/ignores the jobserver and can over-subscribe cores.
+# So: only add -j to sub-makes when NO jobserver is already active.
+# NOTE: MAKEFLAGS is empty at parse time (jobserver flags appear only in
+# recipes), so this must be a recursive `=` variable expanded at use time.
+JOBS_FLAG = $(if $(filter -j%,$(MAKEFLAGS)),,-j$(NPROCS))
+
 # Kernel version string — used in module vermagic checking
 KVERSION ?= 6.1.0-osdev
 
@@ -988,7 +998,7 @@ $(BUILDDIR)/kernel/kpti.o: $(KPTI_TRAMP_H)
 .DEFAULT_GOAL := all
 
 all: $(BUILDDIR)/disk.img
-	$(MAKE) -j$(NPROCS) $(BUILDDIR)/kernel.bin
+	$(MAKE) $(JOBS_FLAG) $(BUILDDIR)/kernel.bin
 
 # Build kernel.elf only (skip disk image)
 kernel: $(BUILDDIR)/kernel.elf
@@ -1042,7 +1052,7 @@ check-app-boundary:
 check-debug:
 	@echo "=== check-debug: Building with all debug options ==="
 	$(MAKE) CFLAGS_EXTRA="-DCONFIG_DEBUG_STACK_USAGE -DCONFIG_DEBUG_PAGEALLOC -DCONFIG_DEBUG_SPINLOCK -DCONFIG_DEBUG_ATOMIC_SLEEP -DCONFIG_DEBUG_KMEMLEAK -DCONFIG_DEBUG_FAULT_INJECT -Werror" \
-	       -j$(NPROCS) $(BUILDDIR)/kernel.bin 2>&1
+	       $(JOBS_FLAG) $(BUILDDIR)/kernel.bin 2>&1
 	@echo "=== check-debug: Build successful ==="
 	@# If static analysis tools are available, run them
 	@if which cppcheck >/dev/null 2>&1; then \
@@ -1294,7 +1304,7 @@ $(BUILDDIR_TEST)/kernel.bin: $(BUILDDIR_TEST)/kernel.elf
 
 # Build the test kernel binary (parallel via recursive make)
 test-kernel:
-	$(MAKE) -j$(NPROCS) $(BUILDDIR_TEST)/kernel.bin
+	$(MAKE) $(JOBS_FLAG) $(BUILDDIR_TEST)/kernel.bin
 
 # Run headless QEMU on serial TCP 4444 for manual inspection of test kernel
 test-serial: $(BUILDDIR_TEST)/kernel.bin $(BUILDDIR)/disk.img
@@ -1308,7 +1318,7 @@ test-serial: $(BUILDDIR_TEST)/kernel.bin $(BUILDDIR)/disk.img
 # Run tests: clean build + host-side unit tests + KUnit + QEMU boot test
 test: $(BUILDDIR)/disk.img
 	@echo "=== Building test kernel (clean build) ==="
-	$(MAKE) -j$(NPROCS) test-kernel
+	$(MAKE) $(JOBS_FLAG) test-kernel
 	@echo ""
 	@echo "=== Running host-side unit tests ==="
 	$(MAKE) unit-test
@@ -1487,7 +1497,7 @@ $(BUILDDIR_CHECK)/kernel.bin: $(BUILDDIR_CHECK)/kernel.elf
 	cp $< $@
 
 check: $(BUILDDIR)/disk.img unit-test
-	$(MAKE) -j$(NPROCS) $(BUILDDIR_CHECK)/kernel.bin
+	$(MAKE) $(JOBS_FLAG) $(BUILDDIR_CHECK)/kernel.bin
 	@chmod +x tests/run_tests.sh
 	@./tests/run_tests.sh $(BUILDDIR_CHECK)/kernel.bin $(BUILDDIR)/disk.img
 	@echo ""
@@ -1531,7 +1541,7 @@ $(BUILDDIR_CHECK_FULL)/kernel.bin: $(BUILDDIR_CHECK_FULL)/kernel.elf
 
 check-full: $(BUILDDIR)/disk.img
 	@echo "=== check-full: building with ALL strict warning flags (includes -Wpadded for struct alignment) ==="
-	$(MAKE) -j$(NPROCS) $(BUILDDIR_CHECK_FULL)/kernel.bin
+	$(MAKE) $(JOBS_FLAG) $(BUILDDIR_CHECK_FULL)/kernel.bin
 	@echo "=== check-full build complete (kernel.bin at $(BUILDDIR_CHECK_FULL)/kernel.bin) ==="
 	@rm -rf $(BUILDDIR_CHECK_FULL)
 
@@ -1578,7 +1588,7 @@ $(BUILDDIR_CHECK_PADDED)/kernel.elf: check-app-boundary $(CHECK_PADDED_OBJS)
 check-padded:
 	@echo "=== check-padded: Building with -Wpadded to detect struct alignment bugs ==="
 	@mkdir -p build
-	@$(MAKE) -j$(NPROCS) $(BUILDDIR_CHECK_PADDED)/kernel.elf 2>&1 | \
+	@$(MAKE) $(JOBS_FLAG) $(BUILDDIR_CHECK_PADDED)/kernel.elf 2>&1 | \
 	  tee build/check-padded-report.txt | \
 	  grep -E 'warning:.*padding|error:|===' || true
 	@echo ""
@@ -2141,7 +2151,7 @@ analyze:
 	@echo "=== GCC -fanalyzer static analysis ==="
 	@echo "Note: -fanalyzer may report issues in freestanding kernel code."
 	@echo "Review findings manually rather than relying solely on exit code.\n"
-	@$(MAKE) -j$(NPROCS) $(BUILDDIR_ANALYZE)/kernel.bin || \
+	@$(MAKE) $(JOBS_FLAG) $(BUILDDIR_ANALYZE)/kernel.bin || \
 	  (echo "\nWARNING: -fanalyzer found issues (some may be false positives)"; exit 1)
 	@echo "OK -fanalyzer analysis complete - no issues found"
 	@rm -rf $(BUILDDIR_ANALYZE)
