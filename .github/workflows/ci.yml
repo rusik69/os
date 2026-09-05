@@ -464,6 +464,24 @@ jobs:
           echo "## Valgrind Memory Check" >> $GITHUB_STEP_SUMMARY
           echo "- Host unit tests run under valgrind --leak-check=summary (skipped if valgrind absent)" >> $GITHUB_STEP_SUMMARY
 
+  # ── Documentation build check ────────────────────────────────────
+  # Runs make doccheck: verifies required docs exist, markdown validity,
+  # and scans for TODO/FIXME markers. Also runs make verify checks.
+  docs:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Documentation check
+        run: |
+          make doccheck
+
+      - name: Summary
+        run: |
+          echo "## Documentation Build Check" >> $GITHUB_STEP_SUMMARY
+          echo "- make doccheck passed (required docs present, markdown valid)" >> $GITHUB_STEP_SUMMARY
+
   # ── Fast pre-merge verification ────────────────────────────────────
   verify:
     runs-on: [self-hosted, linux, x64]
