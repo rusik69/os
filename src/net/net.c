@@ -151,15 +151,30 @@ static uint8_t pkt_buf[2048];
 static volatile int net_rx_flag = 0;
 static struct wait_queue net_rx_wq;
 
+/**
+ * net_rx_signal - Signal that a network packet is ready
+ * Wakes any task blocked in net_wait_for_packet() to indicate that the receive ring has data pending.
+ */
 void net_rx_signal(void) {
     net_rx_flag = 1;
     wait_queue_wake(&net_rx_wq);
 }
 
+/**
+ * net_rx_pending - Check whether a network packet is pending
+ * Returns non-zero if a frame is waiting in the receive queue.
+ */
 int net_rx_pending(void) {
     return net_rx_flag;
 }
 
+/**
+ * net_link_recv - Receive a raw link-layer frame
+ * @buf: Destination buffer
+ * @max_len: Capacity of @buf in bytes
+ *
+ * Copies the next pending network frame into @buf and returns its length, or zero if none is available.
+ */
 int net_link_recv(void *buf, uint16_t max_len) {
     if (virtio_net_present()) {
         int n = virtio_net_receive(buf, max_len);
@@ -171,6 +186,13 @@ int net_link_recv(void *buf, uint16_t max_len) {
     return 0;
 }
 
+/**
+ * net_link_send - Send a raw link-layer frame
+ * @data: Frame data to transmit
+ * @len: Length of the frame in bytes
+ *
+ * Queues the given frame for transmission on the active NIC. Returns 0 on success or a negative error code.
+ */
 int net_link_send(const void *data, uint16_t len) {
     /* Prefer the netdevice layer if interfaces are registered.
      * Find the interface whose MAC matches our MAC (the primary NIC). */
@@ -205,6 +227,15 @@ static volatile uint32_t trace_reply_ip = 0;
 
 /* ── IP routing table ───────────────────────────────────────────── */
 
+/**
+ * rt_add - Add a route to the routing table
+ * @dst: Destination network address
+ * @mask: Subnet mask
+ * @gw: Gateway next-hop address
+ * @iface: Interface index
+ *
+ * Inserts a route into the forwarding table. Returns 0 on success or a negative error code if the table is full.
+ */
 int rt_add(uint32_t dst, uint32_t mask, uint32_t gw, int iface) {
     spinlock_acquire(&net_lock);
     if (rt_num_entries >= RT_MAX_ENTRIES) {
@@ -225,6 +256,13 @@ int rt_add(uint32_t dst, uint32_t mask, uint32_t gw, int iface) {
     return 0;
 }
 
+/**
+ * rt_del - Remove a route from the routing table
+ * @dst: Destination network address
+ * @mask: Subnet mask
+ *
+ * Removes the first matching route. Returns 0 on success or -ENOENT if no route matched.
+ */
 int rt_del(uint32_t dst, uint32_t mask) {
     spinlock_acquire(&net_lock);
     for (int i = 0; i < rt_num_entries; i++) {
@@ -240,6 +278,14 @@ int rt_del(uint32_t dst, uint32_t mask) {
     return -1;
 }
 
+/**
+ * rt_lookup - Resolve the next hop for a destination address
+ * @ip: Destination IPv4 address
+ * @gw_out: Optional buffer receiving the gateway address
+ * @iface_out: Optional buffer receiving the interface index
+ *
+ * Finds the longest-prefix route matching @ip and returns it via the out-parameters. Returns 0 if a route was found, -ENOENT otherwise.
+ */
 int rt_lookup(uint32_t ip, uint32_t *gw_out, int *iface_out) {
     int best = -1;
     uint32_t best_mask = 0;
@@ -271,12 +317,20 @@ static void rt_clear(void) {
 }
 
 /* ── rt_flush — flush routing table (alias for tests) ────────────── */
+/**
+ * rt_flush - Clear the routing table
+ * Removes all routes from the forwarding table.
+ */
 void rt_flush(void) {
     rt_clear();
 }
 
 /* ── Gratuitous ARP ────────────────────────────────────────────── */
 
+/**
+ * arp_announce - Announce the local address on the network
+ * Sends gratuitous ARP advertisements for the local IP so peers refresh their MAC caches.
+ */
 void arp_announce(void) {
     if (!net_our_ip)
         return;
@@ -301,6 +355,13 @@ void arp_announce(void) {
 
 /* --- ARP cache --- */
 
+/**
+ * arp_cache_add - Add or refresh an ARP cache entry
+ * @ip: IPv4 address
+ * @mac: Associated MAC address (6 bytes)
+ *
+ * Records the MAC-to-IP mapping in the ARP cache, updating the timestamp so the entry is not prematurely gc'd.
+ */
 void arp_cache_add(uint32_t ip, const uint8_t *mac) {
     uint64_t now = timer_get_ticks();
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
@@ -634,6 +695,12 @@ uint16_t net_checksum(const void *data, int len) {
 
 /* --- IP getters/setters --- */
 
+/**
+ * net_get_ip - Return the configured local IP address
+ * @ip: 4-byte buffer that receives the local IP
+ *
+ * Copies the primary interface IPv4 address, in network byte order, into @ip.
+ */
 void net_get_ip(uint8_t *ip) {
     ip[0] = (uint8_t)((net_our_ip >> 24) & 0xFF);
     ip[1] = (uint8_t)((net_our_ip >> 16) & 0xFF);
@@ -641,16 +708,36 @@ void net_get_ip(uint8_t *ip) {
     ip[3] = (uint8_t)(net_our_ip & 0xFF);
 }
 
+/**
+ * net_get_gateway - Return the configured default gateway
+ * Returns the default gateway IPv4 address in host byte order.
+ */
 uint32_t net_get_gateway(void) {
     return net_gateway_ip;
 }
+/**
+ * net_get_mask - Return the configured subnet mask
+ * Returns the primary interface subnet mask in host byte order.
+ */
 uint32_t net_get_mask(void) {
     return net_subnet_mask;
 }
+/**
+ * net_get_dns - Return the configured DNS server address
+ * Returns the DNS server IPv4 address in host byte order.
+ */
 uint32_t net_get_dns(void) {
     return net_dns_server;
 }
 
+/**
+ * net_set_ip - Configure the interface IP addressing
+ * @ip: Local IPv4 address
+ * @gw: Gateway IPv4 address
+ * @mask: Subnet mask
+ *
+ * Sets the primary interface address, gateway and netmask, clearing or populating the routing table as appropriate.
+ */
 void net_set_ip(uint32_t ip, uint32_t gw, uint32_t mask) {
     net_our_ip = ip;
     net_gateway_ip = gw;
@@ -662,6 +749,15 @@ void net_set_ip(uint32_t ip, uint32_t gw, uint32_t mask) {
 
 static volatile int send_ip_resolving = 0; /* prevent recursive ARP resolve */
 
+/**
+ * send_eth - Transmit an Ethernet frame
+ * @dst_mac: Destination MAC address (6 bytes)
+ * @type: EtherType (ETH_P_IP, ETH_P_ARP, ...)
+ * @payload: Payload after the Ethernet header
+ * @len: Length of @payload in bytes
+ *
+ * Builds an Ethernet header with the source MAC and transmits the frame via net_link_send().
+ */
 void send_eth(const uint8_t *dst_mac, uint16_t type, const void *payload, uint16_t len) {
     uint8_t frame[1518];
     if (len > 1518 - sizeof(struct eth_header)) {
@@ -726,10 +822,29 @@ static void send_ip_fragmented(uint32_t dst_ip, uint8_t protocol, const void *pa
     }
 }
 
+/**
+ * send_ip - Transmit an IPv4 packet
+ * @dst_ip: Destination IPv4 address
+ * @protocol: IP protocol number (IPPROTO_TCP, IPPROTO_UDP, ICMP)
+ * @payload: Packet payload
+ * @len: Length of @payload in bytes
+ *
+ * Builds and sends an IPv4 datagram to @dst_ip using the default TTL, resolving the next-hop MAC via ARP as needed.
+ */
 void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t len) {
     send_ip_with_ttl(dst_ip, protocol, payload, len, 64);
 }
 
+/**
+ * send_ip_with_ttl - Transmit an IPv4 packet with an explicit TTL
+ * @dst_ip: Destination IPv4 address
+ * @protocol: IP protocol number
+ * @payload: Packet payload
+ * @len: Length of @payload in bytes
+ * @ttl: IP time-to-live field value
+ *
+ * Builds and sends an IPv4 datagram with the given TTL, used by traceroute implementation to elicit ICMP time-exceeded responses.
+ */
 void send_ip_with_ttl(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t len,
                       uint8_t ttl) {
     if (len > 1500 - sizeof(struct ip_header)) {
@@ -1240,6 +1355,12 @@ static void handle_ip(uint8_t *data, uint16_t len) {
 
 /* --- Ping --- */
 
+/**
+ * net_ping - Send an ICMP echo request
+ * @target_ip: IPv4 address to ping
+ *
+ * Transmits an ICMP echo request to @target_ip and returns the round-trip status code (positive response, 0 timeout, negative error).
+ */
 int net_ping(uint32_t target_ip) {
     uint8_t buf[64];
     struct icmp_header *icmp = (struct icmp_header *)buf;
@@ -1317,6 +1438,13 @@ int net_trace(uint32_t target_ip, uint8_t ttl) {
  *
  * This function handles Ethernet type dispatch: ARP, IPv4, IPv6,
  * and runs netfilter hooks at PRE_ROUTING and LOCAL_IN.
+ */
+/**
+ * net_rx_dispatch - Dispatch an incoming network frame
+ * @pkt: Pointer to the raw received frame
+ * @len: Length of the frame in bytes
+ *
+ * Parses the Ethernet/IP headers and routes the packet to the correct protocol handler (ARP, ICMP, TCP, UDP, IPv6) or reports unknown types.
  */
 void net_rx_dispatch(uint8_t *pkt, uint16_t len) {
     if (len < (int)sizeof(struct eth_header))
@@ -1397,6 +1525,10 @@ void net_rx_dispatch(uint8_t *pkt, uint16_t len) {
     }
 }
 
+/**
+ * net_poll - Poll the network interface for incoming packets
+ * Drives the NIC receive path: drains any pending frames, dispatches each to net_rx_dispatch(), and re-arms the interface for further interrupts. Called from the softirq/tasklet context.
+ */
 void net_poll(void) {
     static int poll_count = 0;
     /* Safe before net_init: the net stack isn't up yet — skip everything
@@ -1539,14 +1671,26 @@ static int net_stack_initialized = 0;
 
 /* Returns 1 once net_init() has completed — net_poll() is safe to call
  * from the timer tick only after the net stack state is set up. */
+/**
+ * net_stack_ready - Check whether the network stack is ready
+ * Returns non-zero once the interface is up, IP is configured and the stack can send/receive traffic.
+ */
 int net_stack_ready(void) {
     return net_stack_initialized;
 }
 
+/**
+ * net_wait_for_packet - Block until a network packet arrives
+ * Sleeps the calling task until net_rx_signal() indicates pending data.
+ */
 void net_wait_for_packet(void) {
     wait_queue_sleep(&net_rx_wq);
 }
 
+/**
+ * net_init - Initialise the network stack
+ * Sets up the NIC, configures IP addressing, builds the routing table, starts ARP resolution for the gateway, and registers loopback. Called once during kernel bring-up after NIC drivers are probed.
+ */
 void net_init(void) {
     net_stack_initialized = 0;
     net_our_ip = 0;
