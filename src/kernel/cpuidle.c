@@ -27,6 +27,7 @@
 #include "printf.h"
 #include "cpu.h"
 #include "smp.h"
+#include "cpuhp.h"
 #include "timer.h"
 #include "string.h"
 #include "preempt.h"   /* for need_resched() */
@@ -741,6 +742,24 @@ int cpuidle_acpi_register_states(const struct acpi_cstate_desc *descs, int count
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /**
+ * cpuidle_hotplug_notify() — disable/enable cpuidle on CPU hotplug.
+ *
+ * When a CPU goes offline it can no longer receive wakeup interrupts, so it
+ * must not enter a deep, timer-stopping C-state while parked; we disable its
+ * idle data, causing the idle loop to fall back to a plain HLT (see
+ * cpuidle_idle()).  When the same CPU comes back online its per-CPU idle
+ * data is restored.  Idempotent; runs in cpuhp_notify() context (cpuhp_lock
+ * held, interrupts disabled), so it is kept to cheap bookkeeping.
+ */
+static void cpuidle_hotplug_notify(int cpu_id, enum cpuhp_state old_state,
+                                   enum cpuhp_state new_state) {
+    if (old_state == CPUHP_STATE_ONLINE && new_state != CPUHP_STATE_ONLINE)
+        cpuidle_cpu_offline(cpu_id);
+    else if (new_state == CPUHP_STATE_ONLINE && old_state != CPUHP_STATE_ONLINE)
+        cpuidle_cpu_online(cpu_id);
+}
+
+/**
  * cpuidle_init - Initialise the CPU idle management subsystem
  *
  * Detects CPU idle capabilities via CPUID (MWAIT/MONITOR support),
@@ -758,6 +777,10 @@ void cpuidle_init(void)
 
     /* Register the built-in menu governor */
     cpuidle_register_governor(&menu_governor);
+
+    /* Mirror CPU hotplug: disable idle on an offlined CPU, re-enable it
+     * when the CPU comes back online. */
+    cpuhp_register_notify(cpuidle_hotplug_notify);
 
     g_cpuidle_initialized = 1;
 
