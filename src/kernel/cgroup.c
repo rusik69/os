@@ -139,10 +139,216 @@ static int cgroup_alloc_id(void) {
 
 /* ── Cgroupv2 filesystem ──────────────────────────────────────────── */
 
+/* Given a cgroup v2 path (/sys/fs/cgroup/[<name>/]<file>), write the
+ * file's basename into @fname and fill @cg_id with the resolved cgroup
+ * (root 0 when no named subdirectory prefixes it). */
+static void cgroup_v2_split_path(const char *path, int *cg_id, char *fname, size_t fname_sz) {
+    *cg_id = 0;
+    fname[0] = '\0';
+    if (!path)
+        return;
+    const char *base = "/sys/fs/cgroup/";
+    size_t blen = strlen(base);
+    const char *p = path;
+    if (memcmp(p, base, blen) == 0)
+        p += blen;
+    /* Find last '/' → base of the requested file. */
+    const char *last = strrchr(p, '/');
+    const char *file = last ? last + 1 : p;
+    size_t fl = strlen(file);
+    if (fl >= fname_sz)
+        fl = fname_sz - 1;
+    memcpy(fname, file, fl);
+    fname[fl] = '\0';
+    /* Whatever precedes the file name (if non-empty) is a cgroup name. */
+    if (last && last > p) {
+        size_t nl = (size_t)(last - p);
+        if (nl > 0 && nl < sizeof(g_cgroups[0].name)) {
+            char cg_name[32];
+            memcpy(cg_name, p, nl);
+            cg_name[nl] = '\0';
+            for (int i = 0; i < CGROUP_MAX; i++) {
+                if (g_cgroups[i].in_use && g_cgroups[i].name[0] &&
+                    strcmp(g_cgroups[i].name, cg_name) == 0) {
+                    *cg_id = i;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/* Render a single cgroup controller file into @out (cgroup file
+ * interface, D315 task 15).  Returns bytes written. */
+static size_t cgroup_v2_read_file(int cg_id, const char *file, char *out, size_t out_sz) {
+    if (!cgroup_valid(cg_id) || !file || out_sz == 0)
+        return 0;
+    struct cgroup *cg = &g_cgroups[cg_id];
+    int pos = 0;
+
+    if (strcmp(file, "cgroup.procs") == 0 || strcmp(file, "tasks") == 0) {
+        spinlock_acquire(&g_cgroup_lock);
+        for (int i = 0; i < CGROUP_MAX_PIDS && pos < (int)out_sz; i++) {
+            if (cg->members[i] != 0) {
+                int n = snprintf(out + pos, out_sz - (size_t)pos, "%d\n", cg->members[i]);
+                if (n > 0 && pos + n < (int)out_sz)
+                    pos += n;
+            }
+        }
+        spinlock_release(&g_cgroup_lock);
+    } else if (strcmp(file, "cgroup.subtree_control") == 0 ||
+               strcmp(file, "cgroup.controllers") == 0) {
+        char ctrl[128] = "";
+        uint32_t mask = cg->ctrl_mask;
+        if (mask & CG_CTRL_CPU)
+            strlcat(ctrl, "cpu ", sizeof(ctrl));
+        if (mask & CG_CTRL_MEMORY)
+            strlcat(ctrl, "memory ", sizeof(ctrl));
+        if (mask & CG_CTRL_IO)
+            strlcat(ctrl, "io ", sizeof(ctrl));
+        if (mask & CG_CTRL_PIDS)
+            strlcat(ctrl, "pids ", sizeof(ctrl));
+        if (mask & CG_CTRL_FREEZER)
+            strlcat(ctrl, "freezer ", sizeof(ctrl));
+        if (mask & CG_CTRL_RDMA)
+            strlcat(ctrl, "rdma ", sizeof(ctrl));
+        if (mask & CG_CTRL_MISC)
+            strlcat(ctrl, "misc ", sizeof(ctrl));
+        int n = snprintf(out, out_sz, "%s\n", ctrl[0] ? ctrl : "-");
+        return n > 0 ? (size_t)n : 0;
+    } else if (strcmp(file, "cpu.max") == 0) {
+        uint64_t q = 0, p = 0;
+        cgroup_cpu_get_max(cg_id, &q, &p);
+        int n = snprintf(out, out_sz, "%llu %llu\n", (unsigned long long)q, (unsigned long long)p);
+        return n > 0 ? (size_t)n : 0;
+    } else if (strcmp(file, "cpu.stat") == 0) {
+        uint64_t usage = 0, user = 0, sys = 0, nr_th = 0, th_us = 0;
+        cgroup_cpu_stat(cg_id, &usage, &user, &sys, &nr_th, &th_us);
+        int n =
+            snprintf(out, out_sz,
+                     "usage_usec %llu\nuser_usec %llu\nsystem_usec %llu\n"
+                     "nr_throttled %llu\nthrottled_usec %llu\n",
+                     (unsigned long long)usage, (unsigned long long)user, (unsigned long long)sys,
+                     (unsigned long long)nr_th, (unsigned long long)th_us);
+        return n > 0 ? (size_t)n : 0;
+    } else if (strcmp(file, "memory.max") == 0 || strcmp(file, "memory.high") == 0 ||
+               strcmp(file, "memory.current") == 0) {
+        uint64_t usage = 0, max_usage = 0, limit = 0, high = 0;
+        int oom = 0;
+        cgroup_mem_stat(cg_id, &usage, &max_usage, &limit, &high, &oom);
+        uint64_t v = 0;
+        if (strcmp(file, "memory.max") == 0)
+            v = limit;
+        else if (strcmp(file, "memory.high") == 0)
+            v = high;
+        else
+            v = usage;
+        int n = snprintf(out, out_sz, "%llu\n", (unsigned long long)v);
+        return n > 0 ? (size_t)n : 0;
+    } else if (strcmp(file, "io.max") == 0 || strcmp(file, "io.stat") == 0) {
+        struct cgroup_io_device devs[CGROUP_IO_MAX_DEVICES];
+        int nd = cgroup_io_stat(cg_id, devs, CGROUP_IO_MAX_DEVICES);
+        for (int i = 0; i < nd; i++) {
+            int n = snprintf(out + pos, out_sz - (size_t)pos,
+                             "%u:%u rbps=%llu wbps=%llu "
+                             "riops=%llu wiops=%llu\n",
+                             devs[i].major, devs[i].minor, (unsigned long long)devs[i].rbps,
+                             (unsigned long long)devs[i].wbps, (unsigned long long)devs[i].riops,
+                             (unsigned long long)devs[i].wiops);
+            if (n > 0 && pos + n < (int)out_sz)
+                pos += n;
+        }
+    } else if (strcmp(file, "pids.max") == 0 || strcmp(file, "pids.current") == 0) {
+        uint64_t cur = 0, mx = 0;
+        cgroup_pids_stat(cg_id, &cur, &mx);
+        uint64_t v = strcmp(file, "pids.current") == 0 ? cur : mx;
+        int n = snprintf(out, out_sz, "%llu\n", (unsigned long long)v);
+        return n > 0 ? (size_t)n : 0;
+    } else if (strcmp(file, "freezer.state") == 0) {
+        const char *st = cgroup_freezer_state(cg_id) == CGROUP_FROZEN ? "frozen" : "thawed";
+        int n = snprintf(out, out_sz, "%s\n", st);
+        return n > 0 ? (size_t)n : 0;
+    } else if (strcmp(file, "rdma.max") == 0 || strcmp(file, "rdma.current") == 0) {
+        struct cgroup_rdma_device devs[CGROUP_RDMA_MAX_DEVS];
+        int nd = cgroup_rdma_stat(cg_id, devs, CGROUP_RDMA_MAX_DEVS);
+        for (int i = 0; i < nd; i++) {
+            int n;
+            if (strcmp(file, "rdma.current") == 0)
+                n = snprintf(out + pos, out_sz - (size_t)pos,
+                             "%s hca_handle=%llu hca_object=%llu\n", devs[i].name,
+                             (unsigned long long)devs[i].hca_handle_usage,
+                             (unsigned long long)devs[i].hca_object_usage);
+            else
+                n = snprintf(out + pos, out_sz - (size_t)pos,
+                             "%s hca_handle=%llu hca_object=%llu\n", devs[i].name,
+                             (unsigned long long)devs[i].hca_handle_limit,
+                             (unsigned long long)devs[i].hca_object_limit);
+            if (n > 0 && pos + n < (int)out_sz)
+                pos += n;
+        }
+    } else if (strcmp(file, "misc.max") == 0 || strcmp(file, "misc.current") == 0) {
+        struct cgroup_misc_resource res[CGROUP_MISC_MAX_RES];
+        int nr = cgroup_misc_stat(cg_id, res, CGROUP_MISC_MAX_RES);
+        for (int i = 0; i < nr; i++) {
+            int n = snprintf(out + pos, out_sz - (size_t)pos, "%s %llu\n", res[i].name,
+                             (unsigned long long)(strcmp(file, "misc.current") == 0 ? res[i].current
+                                                                                    : res[i].max));
+            if (n > 0 && pos + n < (int)out_sz)
+                pos += n;
+        }
+    } else if (strcmp(file, "cpuset.cpus") == 0 || strcmp(file, "cpuset.mems") == 0) {
+        /* Render the active cpuset/nodelist as a comma list (best-effort). */
+        cpuset_t set;
+        int has = 0;
+        if (strcmp(file, "cpuset.cpus") == 0 && cg->cpuset_valid) {
+            set = cg->cpuset;
+            has = 1;
+        } else if (strcmp(file, "cpuset.mems") == 0 && cg->nodelist_valid) {
+            set = cg->nodelist;
+            has = 1;
+        }
+        if (has) {
+            int first = 1;
+            for (int cpu = 0; cpu < 256 && pos < (int)out_sz; cpu++) {
+                if (cpuset_isset(cpu, &set)) {
+                    int n =
+                        snprintf(out + pos, out_sz - (size_t)pos, "%s%d", first ? "" : ",", cpu);
+                    if (n > 0 && pos + n < (int)out_sz)
+                        pos += n;
+                    first = 0;
+                }
+            }
+            int n = snprintf(out + pos, out_sz - (size_t)pos, "\n");
+            if (n > 0 && pos + n < (int)out_sz)
+                pos += n;
+        }
+    }
+
+    return (size_t)pos > 0 ? (size_t)pos : 0;
+}
+
 static int cgroup_v2_read(void *priv, const char *path, void *buf, uint32_t max, uint32_t *out) {
     (void)priv;
-    (void)path;
-    /* Build hierarchy info listing all mounted cgroups and their controllers */
+    if (!buf || max == 0) {
+        *out = 0;
+        return 0;
+    }
+    int cg_id = 0;
+    char fname[32];
+    cgroup_v2_split_path(path, &cg_id, fname, sizeof(fname));
+
+    if (fname[0]) {
+        char filebuf[512];
+        size_t fl = cgroup_v2_read_file(cg_id, fname, filebuf, sizeof(filebuf));
+        if (fl > 0) {
+            size_t total = fl < (size_t)max ? fl : (size_t)max;
+            memcpy(buf, filebuf, total);
+            *out = (uint32_t)total;
+            return 0;
+        }
+    }
+
+    /* Unknown / bare path → hierarchy listing (compatibility). */
     char tmp[512];
     int pos = 0;
     {
@@ -158,7 +364,6 @@ static int cgroup_v2_read(void *priv, const char *path, void *buf, uint32_t max,
     for (int i = 0; i < CGROUP_MAX; i++) {
         if (!g_cgroups[i].in_use)
             continue;
-        /* Build controller list for this cgroup (driven by the enable mask) */
         char ctrl[128] = "";
         uint32_t mask = g_cgroups[i].ctrl_mask;
         if (mask & CG_CTRL_CPU)
@@ -178,14 +383,12 @@ static int cgroup_v2_read(void *priv, const char *path, void *buf, uint32_t max,
         if (ctrl[0] == '\0')
             strlcpy(ctrl, "-", sizeof(ctrl));
 
-        {
-            int n = snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
-                             "  cgroup[%d]  parent=%d  pids=%lu/%lu  controllers=%s\n", i,
-                             g_cgroups[i].parent_id, (unsigned long)g_cgroups[i].pids.current,
-                             (unsigned long)g_cgroups[i].pids.max, ctrl);
-            if (n > 0 && pos + n < (int)sizeof(tmp))
-                pos += n;
-        }
+        int n = snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
+                         "  cgroup[%d]  parent=%d  pids=%lu/%lu  controllers=%s\n", i,
+                         g_cgroups[i].parent_id, (unsigned long)g_cgroups[i].pids.current,
+                         (unsigned long)g_cgroups[i].pids.max, ctrl);
+        if (n > 0 && pos + n < (int)sizeof(tmp))
+            pos += n;
     }
     spinlock_release(&g_cgroup_lock);
 
