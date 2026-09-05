@@ -13,6 +13,7 @@
  * Item S101 — IMA appraisal
  */
 
+#include "audit.h"
 #include "errno.h"
 #include "heap.h"
 #include "ima.h"
@@ -85,28 +86,41 @@ static void ima_appraise_hash_to_hex(const uint8_t *hash, char *hex, int hex_len
 }
 
 int ima_appraise_eval(int match, const char *path, const uint8_t *hash) {
-    if (match)
-        return 0; /* integral — allow */
+    char abuf[256];
+    const char *pname = path ? path : "?";
+
+    if (match) {
+        /* integral — audit the pass and allow access. */
+        snprintf(abuf, sizeof(abuf), "ima appraise=ok path=%s", pname);
+        audit_log(abuf);
+        return 0;
+    }
 
     /* Hash mismatch or missing/invalid xattr. */
     switch (ima_appraise_mode) {
     case IMA_APPRAISE_FIX:
         /* Allow access and repair: rewrite security.ima with the correct
          * hash so the file is integral on the next appraisal. */
-        kprintf("[IMA-APPRAISE] Fix: %s (rewriting security.ima)\n", path ? path : "?");
+        kprintf("[IMA-APPRAISE] Fix: %s (rewriting security.ima)\n", pname);
         if (path && hash) {
             char hex[SHA256_DIGEST_SIZE * 2 + 1];
             ima_appraise_hash_to_hex(hash, hex, (int)sizeof(hex));
             (void)vfs_setxattr(path, "security.ima", hex, SHA256_DIGEST_SIZE * 2);
         }
+        snprintf(abuf, sizeof(abuf), "ima appraise=fix repaired path=%s", pname);
+        audit_log(abuf);
         return 0;
     case IMA_APPRAISE_LOG:
         /* Allow access but log the failure. */
-        kprintf("[IMA-APPRAISE] LOG: %s failed appraisal (permissive)\n", path ? path : "?");
+        kprintf("[IMA-APPRAISE] LOG: %s failed appraisal (permissive)\n", pname);
+        snprintf(abuf, sizeof(abuf), "ima appraise=log-fail path=%s", pname);
+        audit_log(abuf);
         return 0;
     case IMA_APPRAISE_ENFORCE:
     default:
-        kprintf("[IMA-APPRAISE] Denied access to %s (appraisal failed)\n", path ? path : "?");
+        kprintf("[IMA-APPRAISE] Denied access to %s (appraisal failed)\n", pname);
+        /* Emit a proper audit denial record in addition to the event log. */
+        audit_log_denial("kernel", pname, "ima_appraise");
         return -EACCES;
     }
 }
