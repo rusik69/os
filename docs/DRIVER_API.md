@@ -16,12 +16,13 @@ A practical guide for writing device drivers for the Hermes OS kernel (x86-64, C
 8. [VirtIO Driver API](#8-virtio-driver-api)
 9. [Character Device (devfs) Driver API](#9-character-device-devfs-driver-api)
 10. [Platform Device Driver API](#10-platform-device-driver-api)
-11. [DMA Buffer Allocation](#11-dma-buffer-allocation)
-12. [Timer API](#12-timer-api)
-13. [Locking Requirements](#13-locking-requirements)
-14. [Exporting Symbols](#14-exporting-symbols)
-15. [Makefile Integration](#15-makefile-integration)
-16. [Module Metadata](#16-module-metadata)
+11. [I2C / SPI Driver API](#11-i2c--spi-driver-api)
+12. [DMA Buffer Allocation](#12-dma-buffer-allocation)
+13. [Timer API](#13-timer-api)
+14. [Locking Requirements](#14-locking-requirements)
+15. [Exporting Symbols](#15-exporting-symbols)
+16. [Makefile Integration](#16-makefile-integration)
+17. [Module Metadata](#17-module-metadata)
 
 ---
 
@@ -361,7 +362,7 @@ idt_register_handler_named(32 + irq_line, mydrv_irq_handler, "my_driver");
 ### IRQ handler best practices
 
 - **Keep handlers fast.** Do minimal work (read status, clear source, schedule bottom-half if needed).
-- **Hold spinlocks with IRQs disabled** when touching shared state (see Section 13).
+- **Hold spinlocks with IRQs disabled** when touching shared state (see Section 14).
 - **Use `irq_ack()`** at the end to signal End-Of-Interrupt to the PIC/IOAPIC.
 - **Network drivers** should call `net_rx_signal()` after acking to wake the network poll loop.
 
@@ -653,7 +654,79 @@ device_initcall(my_platform_init);
 
 ---
 
-## 11. DMA Buffer Allocation
+## 11. I2C / SPI Driver API
+
+The kernel has bit-banged **I2C** (`src/drivers/i2c.c`) and **SPI**
+(`src/drivers/spi.c`, generic + bitbang) controllers for attaching
+sensor/bus peripherals. Both expose low-level primitives plus
+master/slave registration.
+
+### I2C
+
+`i2c_init(scl_port, sda_port)` configures the two GPIO/PPI lines the bit
+banger drives. Master mode drives a device address + register/byte
+transfers; slave mode lets a driver answer bus requests.
+
+```c
+#include "i2c.h"
+
+i2c_init(/* scl port */, /* sda port */);
+
+/* Master write to a 7-bit-addressed device (raw bytes, no reg offset): */
+i2c_start();
+if (i2c_write_byte(dev_addr << 1) >= 0) {
+    i2c_write_byte(data[0]);  /* ... */
+    i2c_stop();
+}
+
+/* Slave: register an address + callbacks for incoming requests. */
+i2c_slave_register(0x50, slave_read_cb, slave_write_cb);
+/* ... poll for processed slave requests ... */
+i2c_slave_unregister();
+```
+
+Key calls: `i2c_start()/repeated_start()/stop()`,
+`i2c_write_byte()/i2c_read_byte()`, `i2c_arbitration_lost()/clear()`,
+`i2c_slave_register()/unregister()`, `i2c_slave_poll()`.
+
+### SPI
+
+A bus master is registered per bus id with a `struct spi_master_ops`
+(low-level transfer primitives); devices attach to a master via
+`spi_device_register()` and exchange data with full-duplex
+`spi_transfer()` or half-duplex `spi_write_then_read()`.
+
+```c
+#include "spi.h"
+
+static int spi_driver_init(void)
+{
+    /* 1. Register the master bus with its ops (or use the bitbang
+     *    master from spi.c's g_bitbang_ops). */
+    int r = spi_master_register(0 /*bus_id*/, &my_ops, /*max_speed*/, /*mode*/);
+    if (r < 0)
+        return r;
+
+    /* 2. Attach a device on that bus (chip select 0). */
+    struct spi_device *dev = spi_device_register(/*master*/, 0, /*mode*/, /*speed*/);
+    if (!dev)
+        return -ENODEV;
+
+    /* 3. Full-duplex transfer or write-then-read. */
+    struct spi_transfer t = { .tx_buf = tx, .rx_buf = rx, .len = 4 };
+    spi_transfer(dev, &t, 1);
+    return 0;
+}
+device_initcall(spi_driver_init);
+```
+
+Key calls: `spi_master_register()/unregister()`,
+`spi_device_register()/unregister()`, `spi_transfer()`,
+`spi_write_then_read()`, and the `spi_write()/spi_read()` inline helpers.
+
+---
+
+## 12. DMA Buffer Allocation
 
 Use the physical memory manager for DMA-capable buffers. The kernel provides `pmm_alloc_frame()` (single 4 KB page) and `pmm_alloc_frames()` (contiguous multi-page block).
 
@@ -719,7 +792,7 @@ cmd.prp1 = data_phys;
 
 ---
 
-## 12. Timer API
+## 13. Timer API
 
 Use the dynamic timer subsystem for delayed work, polling loops, and periodic tasks.
 
@@ -822,7 +895,7 @@ uint64_t ms_to_ticks(uint64_t ms) {
 
 ---
 
-## 13. Locking Requirements
+## 14. Locking Requirements
 
 Drivers that touch shared state (global data, device registers accessed from multiple CPUs) must use spinlocks. The kernel provides both plain and IRQ-safe variants.
 
@@ -896,7 +969,7 @@ static void e1000_irq_handler(struct interrupt_frame *frame)
 
 ---
 
-## 14. Exporting Symbols
+## 15. Exporting Symbols
 
 Drivers that are compiled as loadable modules or provide an API to other modules can export symbols using `EXPORT_SYMBOL()` and `EXPORT_SYMBOL_GPL()`.
 
@@ -944,7 +1017,7 @@ EXPORT_SYMBOL(mpath_select_path);
 
 ---
 
-## 15. Makefile Integration
+## 16. Makefile Integration
 
 The kernel has two build models:
 
@@ -1018,7 +1091,7 @@ For built-in use, `module_init(my_driver_init)` already handles registration via
 
 ---
 
-## 16. Module Metadata
+## 17. Module Metadata
 
 Module metadata is embedded in the `.modinfo` section using macros:
 
