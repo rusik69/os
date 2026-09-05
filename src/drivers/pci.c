@@ -216,6 +216,13 @@ static int map_ecam_region(uint64_t phys_base) {
     return 0;
 }
 
+/**
+ * pcie_ecam_set_base - Set the ECAM configuration-space base address
+ * @base: Physical address of the PCIe ECAM region
+ *
+ * Records the memory-mapped base of the Extended Configuration Access Mechanism region used for
+ * PCIe config reads/writes.
+ */
 void pcie_ecam_set_base(uint64_t base) {
     ecam_base = base;
     if (base) {
@@ -226,10 +233,23 @@ void pcie_ecam_set_base(uint64_t base) {
     }
 }
 
+/**
+ * pcie_is_available - Check whether PCIe ECAM access is available
+ * Returns non-zero if the ECAM base has been set and PCIe config access is possible.
+ */
 int pcie_is_available(void) {
     return ecam_base != 0;
 }
 
+/**
+ * pcie_read - Read a PCIe configuration register via ECAM
+ * @bus: Bus number
+ * @slot: Device/slot number
+ * @func: Function number
+ * @offset: Register offset
+ *
+ * Reads a 32-bit value from PCIe configuration space using the ECAM mechanism.
+ */
 uint32_t pcie_read(int bus, int slot, int func, int offset) {
     if (!ecam_base) return pci_read(bus, slot, func, (uint8_t)(offset & 0xFF));
     uint64_t addr = ecam_base
@@ -240,6 +260,16 @@ uint32_t pcie_read(int bus, int slot, int func, int offset) {
     return *(volatile uint32_t *)addr;
 }
 
+/**
+ * pcie_write - Write a PCIe configuration register via ECAM
+ * @bus: Bus number
+ * @slot: Device/slot number
+ * @func: Function number
+ * @offset: Register offset
+ * @val: Value to write
+ *
+ * Writes a 32-bit value to PCIe configuration space using the ECAM mechanism.
+ */
 void pcie_write(int bus, int slot, int func, int offset, uint32_t val) {
     if (!ecam_base) { pci_write(bus, slot, func, (uint8_t)(offset & 0xFF), val); return; }
     uint64_t addr = ecam_base
@@ -303,6 +333,11 @@ int pci_find_pcie_cap(int bus, int slot, int func, uint8_t *cap_offset) {
     return -EINVAL;
 }
 
+/**
+ * pcie_is_present - Probe PCIe presence via the vendor capability
+ * Checks PCIe capability support of the root device to determine whether the platform exposes a
+ * PCIe fabric. Returns non-zero if present.
+ */
 int pcie_is_present(void) {
     /* Scan for at least one PCIe device */
     for (int bus = 0; bus < 256; bus++) {
@@ -325,6 +360,14 @@ int pcie_is_present(void) {
     return 0;
 }
 
+/**
+ * pcie_device_type - Report the base class of a PCIe device
+ * @bus: Bus number
+ * @slot: Device/slot number
+ * @func: Function number
+ *
+ * Reads the device's class code and returns its base class value.
+ */
 int pcie_device_type(int bus, int slot, int func) {
     uint8_t cap_off;
     if (pci_find_pcie_cap(bus, slot, func, &cap_off) < 0)
@@ -425,6 +468,15 @@ static uint32_t pci_read32(uint8_t bus, uint8_t slot, uint8_t func, uint16_t off
 
 /* ── MSI capability parsing ───────────────────────────────────────── */
 
+/**
+ * pci_find_msi_cap - Locate the MSI capability structure
+ * @bus: Bus number
+ * @slot: Device/slot number
+ * @func: Function number
+ * @cap_offset: Receives the capability pointer
+ *
+ * Scans the capability list for the MSI capability. Returns the capability id or 0 if not present.
+ */
 int pci_find_msi_cap(uint8_t bus, uint8_t slot, uint8_t func,
                      struct msi_info *info) {
     if (!info) return -EINVAL;
@@ -464,6 +516,16 @@ int pci_find_msi_cap(uint8_t bus, uint8_t slot, uint8_t func,
 
 /* ── MSI-X capability parsing ─────────────────────────────────────── */
 
+/**
+ * pci_find_msix_cap - Locate the MSI-X capability structure
+ * @bus: Bus number
+ * @slot: Device/slot number
+ * @func: Function number
+ * @cap_offset: Receives the capability pointer
+ *
+ * Scans the capability list for the MSI-X capability. Returns the capability id or 0 if not
+ * present.
+ */
 int pci_find_msix_cap(uint8_t bus, uint8_t slot, uint8_t func,
                       struct msix_info *info) {
     if (!info) return -EINVAL;
@@ -521,6 +583,15 @@ int pci_find_msix_cap(uint8_t bus, uint8_t slot, uint8_t func,
 
 /* ── Enable MSI interrupts ────────────────────────────────────────── */
 
+/**
+ * pci_enable_msi - Enable MSI interrupt delivery for a device
+ * @dev: Target PCI device
+ * @vector: Interrupt vector to map
+ * @cpu: Destination CPU id
+ *
+ * Programs the device's MSI capability to deliver interrupts to @vector on @cpu. Returns 0 on
+ * success or a negative error code.
+ */
 int pci_enable_msi(struct pci_device *dev, uint8_t vector,
                    uint32_t apic_id, int nvecs, uint8_t delivery)
 {
@@ -600,6 +671,12 @@ int pci_enable_msi(struct pci_device *dev, uint8_t vector,
 
 /* ── Disable MSI interrupts ───────────────────────────────────────── */
 
+/**
+ * pci_disable_msi - Disable MSI interrupt delivery for a device
+ * @dev: Target PCI device
+ *
+ * Clears the MSI enable bit, reverting the device to legacy INTx interrupts.
+ */
 void pci_disable_msi(struct pci_device *dev) {
     struct msi_info info;
     if (pci_find_msi_cap(dev->bus, dev->slot, dev->func, &info) < 0)
@@ -621,6 +698,15 @@ void pci_disable_msi(struct pci_device *dev) {
 #define MSIX_ENTRY_SIZE    16
 #define MSIX_CTRL_MASKED   (1u << 31)   /* Vector Control: masked */
 
+/**
+ * pci_enable_msix - Enable MSI-X interrupt delivery for a device
+ * @dev: Target PCI device
+ * @info: MSI-X configuration with vector table
+ * @num_vectors: Number of vectors to allocate
+ *
+ * Programs the device's MSI-X capability with the given vector table. Returns 0 on success or a
+ * negative error code.
+ */
 int pci_enable_msix(struct pci_device *dev, struct msix_info *info,
                     volatile uint32_t *table_virt,
                     const uint8_t *vectors, const uint32_t *apic_ids,
@@ -673,6 +759,12 @@ int pci_enable_msix(struct pci_device *dev, struct msix_info *info,
 
 /* ── Disable MSI-X interrupts ─────────────────────────────────────── */
 
+/**
+ * pci_disable_msix - Disable MSI-X interrupt delivery for a device
+ * @dev: Target PCI device
+ *
+ * Clears the MSI-X enable bit, reverting the device to legacy interrupts.
+ */
 void pci_disable_msix(struct pci_device *dev) {
     struct msix_info info;
     if (pci_find_msix_cap(dev->bus, dev->slot, dev->func, &info) < 0)
@@ -709,6 +801,15 @@ static void irq_register_dispatch(int vector, isr_handler_t handler) {
     idt_register_handler((uint8_t)vector, handler);
 }
 
+/**
+ * pci_setup_interrupts - Configure interrupt routing for a PCI device
+ * @dev: Target PCI device
+ * @vector: Base interrupt vector
+ * @num: Number of vectors
+ *
+ * Programs MSI/MSI-X or legacy INTx routing for the device's interrupts and registers the handlers.
+ * Returns 0 on success or a negative error code.
+ */
 int pci_setup_interrupts(struct pci_device *dev,
                          struct pci_interrupt_config *cfg,
                          isr_handler_t handler)
@@ -941,6 +1042,17 @@ static uint64_t pci_probe_bar_size(int bus, int slot, int func,
  *
  * Returns 0 on success, -EINVAL on reserved type encoding.
  * A diagnostic warning is logged via kprintf on mismatch. */
+/**
+ * pci_read_bar - Read a device's Base Address Register
+ * @bus: Bus number
+ * @slot: Device/slot number
+ * @func: Function number
+ * @bar_index: BAR index (0-5)
+ * @out: Buffer receiving the raw BAR value
+ *
+ * Reads the specified BAR, returning its raw 32-bit value via @out. Returns 0 on success or a
+ * negative error code if @bar_index is out of range.
+ */
 int pci_read_bar(uint8_t bus, uint8_t slot, uint8_t func,
                  int bar_index, uint32_t *out_val)
 {
@@ -1038,6 +1150,16 @@ static const char *pci_class_name(uint8_t cls, uint8_t sub) {
     }
 }
 
+/**
+ * pci_read - Read a PCI configuration register
+ * @bus: Bus number
+ * @slot: Device/slot number
+ * @func: Function number
+ * @offset: Register offset
+ *
+ * Reads a 32-bit value from PCI configuration space, using either the ECAM or legacy I/O port
+ * mechanism depending on availability.
+ */
 uint32_t pci_read(int bus, int slot, int func, int offset) {
     uint32_t addr = (1U << 31) | ((uint32_t)bus << 16) | ((uint32_t)slot << 11) |
                     ((uint32_t)func << 8) | (offset & 0xFC);
@@ -1045,6 +1167,16 @@ uint32_t pci_read(int bus, int slot, int func, int offset) {
     return inl(PCI_CONFIG_DATA);
 }
 
+/**
+ * pci_write - Write a PCI configuration register
+ * @bus: Bus number
+ * @slot: Device/slot number
+ * @func: Function number
+ * @offset: Register offset
+ * @val: Value to write
+ *
+ * Writes a 32-bit value to PCI configuration space via the appropriate mechanism.
+ */
 void pci_write(int bus, int slot, int func, int offset, uint32_t val) {
     uint32_t addr = (1U << 31) | ((uint32_t)bus << 16) | ((uint32_t)slot << 11) |
                     ((uint32_t)func << 8) | (offset & 0xFC);
@@ -1052,6 +1184,15 @@ void pci_write(int bus, int slot, int func, int offset, uint32_t val) {
     outl(PCI_CONFIG_DATA, val);
 }
 
+/**
+ * pci_find_device - Locate a PCI device by vendor and device id
+ * @vendor: Vendor id to match
+ * @device: Device id to match
+ * @out: Buffer receiving the matching pci_device
+ *
+ * Scans the bus for the first function whose vendor/device id matches. Returns 0 on success or a
+ * negative error code when not found.
+ */
 int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
     if (!out) return -EINVAL;
 
@@ -1225,6 +1366,15 @@ int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
     return -EINVAL;
 }
 
+/**
+ * pci_find_class - Locate the first PCI device of a given class
+ * @cls: Base class code
+ * @sub: Subclass code
+ * @out: Buffer receiving the matching pci_device
+ *
+ * Scans the bus for the first function whose class/subclass match. Returns 0 on success or a
+ * negative error code when not found.
+ */
 int pci_find_class(uint8_t cls, uint8_t sub, struct pci_device *out) {
     if (!out) return -EINVAL;
     for (int bus = 0; bus < 256; bus++) {
@@ -1372,12 +1522,23 @@ int pci_find_class(uint8_t cls, uint8_t sub, struct pci_device *out) {
     return -EINVAL;
 }
 
+/**
+ * pci_enable_bus_master - Enable bus mastering on a PCI device
+ * @dev: Target PCI device
+ *
+ * Sets the bus-master enable bit in the device's command register, allowing it to initiate DMA
+ * transfers.
+ */
 void pci_enable_bus_master(struct pci_device *dev) {
     uint32_t cmd = pci_read(dev->bus, dev->slot, dev->func, 0x04);
     cmd |= (1U << 2); /* Bus Master Enable */
     pci_write(dev->bus, dev->slot, dev->func, 0x04, cmd);
 }
 
+/**
+ * pci_list - Enumerate and print all PCI devices
+ * Walks the PCI bus and prints each discovered device's config summary to the kernel log.
+ */
 void pci_list(void) {
     kprintf("BUS SLOT VID:DID   CLS DESCRIPTION\n");
     for (int bus = 0; bus < 256; bus++) {
@@ -1476,6 +1637,14 @@ int pci_vpd_capable(struct pci_device *dev)
     return pci_vpd_find_cap(dev) >= 0 ? 1 : 0;
 }
 
+/**
+ * pci_vpd_read - Read a word from a device's Vital Product Data
+ * @dev: Target PCI device
+ * @addr: VPD address to read
+ * @val: Receives the 32-bit value
+ *
+ * Reads a 32-bit word from the device VPD region. Returns 0 on success or a negative error code.
+ */
 int pci_vpd_read(struct pci_device *dev, uint32_t addr, uint32_t *val)
 {
     if (!dev || !val)
@@ -1508,6 +1677,14 @@ int pci_vpd_read(struct pci_device *dev, uint32_t addr, uint32_t *val)
     return -ETIMEDOUT;  /* Timeout */
 }
 
+/**
+ * pci_vpd_write - Write a word to a device's Vital Product Data
+ * @dev: Target PCI device
+ * @addr: VPD address to write
+ * @val: 32-bit value to write
+ *
+ * Writes a 32-bit word to the device VPD region. Returns 0 on success or a negative error code.
+ */
 int pci_vpd_write(struct pci_device *dev, uint32_t addr, uint32_t val)
 {
     if (!dev)
@@ -1632,6 +1809,16 @@ int pci_vpd_read_field(struct pci_device *dev, uint8_t field_tag,
     return copy_len;
 }
 
+/**
+ * pci_find_ext_cap - Locate a PCIe extended capability
+ * @bus: Bus number
+ * @slot: Device/slot number
+ * @func: Function number
+ * @cap_id: Extended capability id to find
+ *
+ * Walks the extended capability list of a PCIe device and returns the offset of the capability
+ * matching @cap_id, or 0 if absent.
+ */
 int pci_find_ext_cap(int bus, int slot, int func, uint16_t cap_id) {
     if (!ecam_base) return -EINVAL;  /* Extended caps require ECAM access */
 
@@ -1660,6 +1847,14 @@ int pci_find_ext_cap(int bus, int slot, int func, uint16_t cap_id) {
  * Find the AER extended capability on a PCIe device.
  *
  * AER has extended capability ID = 0x0001.
+ */
+/**
+ * pci_find_aer_cap - Locate the AER (Advanced Error Reporting) capability
+ * @bus: Bus number
+ * @slot: Device/slot number
+ * @func: Function number
+ *
+ * Finds the AER extended capability offset on the device, or 0 if not present.
  */
 int pci_find_aer_cap(uint8_t bus, uint8_t slot, uint8_t func) {
     return pci_find_ext_cap(bus, slot, func, 0x0001);
@@ -1769,6 +1964,10 @@ int pci_aer_check_device(uint8_t bus, uint8_t slot, uint8_t func) {
  * Check AER errors for all PCI devices.
  * This should be called periodically (e.g., from a timer or workqueue).
  * AER errors are logged but not fatal — the device continues operating.
+ */
+/**
+ * pci_aer_check_all - Check all devices for reported AER errors
+ * Scans every PCIe function and logs and clears any recorded Advanced Error Reporting status bits.
  */
 void pci_aer_check_all(void) {
     if (!ecam_base)
