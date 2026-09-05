@@ -1337,6 +1337,59 @@ Application Layer
 └─────────────────────────────────────────────┘
 ```
 
+#### Packet Data Flow
+
+The receive and transmit paths below are grounded in the actual dispatch
+code (`src/net/net.c`, `src/net/socket.c`, `src/net/net_tcp.c`).
+
+```
+RECEIVE (RX)                                           TRANSMIT (TX)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NIC IRQ (e1000 / virtio-net / ...)                   Application (socket API)
+    │                                                     │
+    ▼                                                     ▼
+net_rx_signal()  (waitqueue wake)                     handle_tcp() / handle_udp()
+    │              ──────────────                       (net_tcp.c / net_udp.c)
+    ▼                                                     │
+net_poll()  (softirq drain, non-blocking)              send_ip() / send_ip_with_ttl()
+    │              ──────────────                        │
+    ▼                                                     ▼
+net_link_recv()  (copies frame, net_lock)              netfilter  LOCAL_OUT  hook
+    │              ──────────────                        │
+    ▼                                                     ▼
+(optional RPS/RFS flow-hash remap across CPUs)         conntrack (state tracking)
+    │                                                     │
+    ▼                                                     ▼
+net_rx_dispatch()                                       netfilter  POST_ROUTING  hook
+    │  ── XDP hook (DROP / TX / PASS)                     │
+    ▼                                                     ▼
+netfilter  PREROUTING  hook                              loopback check?  ──yes──▶ lo
+    │                                                     │no
+    ▼                                                     ▼
+ARP (net.c) / IPv4 (handle_ip) / IPv6 (ipv6.c)         send_eth() (build eth header)
+    │                                                     │
+    ▼                                                     ▼
+netfilter  LOCAL_IN  hook                              net_link_send()
+    │                                                     │
+    ▼                                                     ▼
+handle_ip()  ── demux by protocol ──┐                  netdevice queue → NIC driver
+    │                               │
+    ├──▶ handle_icmp()        ┌─────┴──────┐
+    ├──▶ handle_tcp()         │ forwarded   │
+    ├──▶ handle_udp()         │ (net_ip_    │
+    └──▶ handle_sctp()        │  forwarding)│
+                             └────────────┘
+    │
+    ▼
+socket.c dispatch → recv queue → user recv()
+```
+
+Every read/write of shared state (routing table, ARP cache, TCP
+connections, UDP bindings/listeners) is guarded by `net_lock`
+(`spinlock_t`). `net_poll()` is non-blocking and must not sleep,
+so RX dispatch is driven from softirq/tasklet context while the
+worker/softirq thread (`ksoftirqd`) handles the deferred work.
+
 ### Driver Layer
 
 **Files:** `src/net/netdevice.c`, `src/drivers/e1000.c`, `src/drivers/virtio_net.c`, `src/include/netdevice.h`
