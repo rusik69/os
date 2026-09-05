@@ -18,13 +18,14 @@
 
 #define KERNEL_INTERNAL
 #include "ipc_namespace.h"
-#include "types.h"
-#include "printf.h"
-#include "string.h"
-#include "spinlock.h"
+
 #include "errno.h"
-#include "process.h"
 #include "pmm.h"
+#include "printf.h"
+#include "process.h"
+#include "spinlock.h"
+#include "string.h"
+#include "types.h"
 #include "vmm.h"
 
 /* Forward declarations for existing IPC functions */
@@ -45,8 +46,8 @@ static spinlock_t ipc_ns_lock = 0;
 
 /* ── Root (initial) IPC namespace ─────────────────────────────────── */
 struct ipc_namespace init_ipc_ns = {
-    .id        = 0,
-    .in_use    = 1,
+    .id = 0,
+    .in_use = 1,
     .sem_count = 0,
     .shm_count = 0,
     .msg_count = 0,
@@ -54,8 +55,7 @@ struct ipc_namespace init_ipc_ns = {
 
 /* ── Initialization ────────────────────────────────────────────────── */
 
-void ipc_ns_init(void)
-{
+void ipc_ns_init(void) {
     spinlock_acquire(&ipc_ns_lock);
     memset(ipc_ns_table, 0, sizeof(ipc_ns_table));
     ipc_ns_table[0] = init_ipc_ns;
@@ -70,8 +70,7 @@ void ipc_ns_init(void)
  * Allocates a new IPC namespace from the table and copies the
  * current namespace's state.  Returns NULL if table is full.
  */
-struct ipc_namespace *ipc_ns_create(void)
-{
+struct ipc_namespace *ipc_ns_create(void) {
     struct ipc_namespace *ns = NULL;
 
     spinlock_acquire(&ipc_ns_lock);
@@ -106,10 +105,9 @@ struct ipc_namespace *ipc_ns_create(void)
 
 /* ── Free an IPC namespace ─────────────────────────────────────────── */
 
-void ipc_ns_free(struct ipc_namespace *ns)
-{
+void ipc_ns_free(struct ipc_namespace *ns) {
     if (!ns || ns == &init_ipc_ns)
-        return;  /* cannot free root namespace */
+        return; /* cannot free root namespace */
 
     spinlock_acquire(&ipc_ns_lock);
     memset(ns, 0, sizeof(*ns));
@@ -124,21 +122,15 @@ void ipc_ns_free(struct ipc_namespace *ns)
  * Returns the IPC namespace of the current process, or the initial
  * namespace if the process doesn't have one set.
  */
-struct ipc_namespace *ipc_ns_current(void)
-{
+struct ipc_namespace *ipc_ns_current(void) {
     struct process *cur = process_get_current();
     if (!cur)
         return &init_ipc_ns;
 
-    /* Check if the process has an IPC namespace pointer.
-     * For now, if the field doesn't exist, return the init ns.
-     * The process struct may be extended with an ipc_ns field later. */
-    /* Note: we cast from uint64_t field if present, or just use init_ns */
-    /* Since process.h doesn't have ipc_ns yet, we check via ns_flags */
-    if (cur->ns_flags & 0x08000000) { /* CLONE_NEWIPC */
-        /* The process has an IPC namespace — we'd retrieve it here.
-         * For simplicity, return init_ns until the field is added. */
-    }
+    /* If the process has attached its own IPC namespace, return it;
+     * otherwise fall back to the initial namespace. */
+    if (cur->ipc_ns)
+        return cur->ipc_ns;
 
     return &init_ipc_ns;
 }
@@ -149,11 +141,11 @@ struct ipc_namespace *ipc_ns_current(void)
  * They provide namespace-isolated semget/semop semantics.
  */
 
-int ipc_ns_semget(struct ipc_namespace *ns, int key, int nsems, int semflg)
-{
+int ipc_ns_semget(struct ipc_namespace *ns, int key, int nsems, int semflg) {
     (void)nsems;
 
-    if (!ns) ns = &init_ipc_ns;
+    if (!ns)
+        ns = &init_ipc_ns;
 
     /* Look for existing semaphore with this key */
     for (int i = 0; i < IPC_NS_MAX_SEMS; i++) {
@@ -185,12 +177,11 @@ int ipc_ns_semget(struct ipc_namespace *ns, int key, int nsems, int semflg)
     return -ENOENT;
 }
 
-int ipc_ns_semop(struct ipc_namespace *ns, int semid,
-                 const void *sops, unsigned int nsops)
-{
+int ipc_ns_semop(struct ipc_namespace *ns, int semid, const void *sops, unsigned int nsops) {
     (void)nsops;
 
-    if (!ns) ns = &init_ipc_ns;
+    if (!ns)
+        ns = &init_ipc_ns;
 
     if (semid < 0 || semid >= IPC_NS_MAX_SEMS || !ns->sem_table[semid].used)
         return -EINVAL;
@@ -201,7 +192,7 @@ int ipc_ns_semop(struct ipc_namespace *ns, int semid,
     if (!ops || nsops == 0)
         return -EINVAL;
 
-    short op = ops[0];  /* simplified: use first operation */
+    short op = ops[0]; /* simplified: use first operation */
 
     if (op > 0) {
         /* Release (V operation) */
@@ -225,11 +216,11 @@ int ipc_ns_semop(struct ipc_namespace *ns, int semid,
  * per-namespace key-to-id translation.
  */
 
-int ipc_ns_shmget(struct ipc_namespace *ns, int key, size_t size, int shmflg)
-{
+int ipc_ns_shmget(struct ipc_namespace *ns, int key, size_t size, int shmflg) {
     (void)size;
 
-    if (!ns) ns = &init_ipc_ns;
+    if (!ns)
+        ns = &init_ipc_ns;
 
     /* Look for existing SHM segment with this key */
     for (int i = 0; i < IPC_NS_MAX_SHM; i++) {
@@ -257,8 +248,8 @@ int ipc_ns_shmget(struct ipc_namespace *ns, int key, size_t size, int shmflg)
                 ns->shm_table[i].gid = 0;
                 ns->shm_table[i].mode = 0x1B6; /* rw for owner, r for others */
                 ns->shm_count++;
-                kprintf("[IPC_NS] shmget: created segment key=%d id=%d phys=0x%llx\n",
-                        key, i, (unsigned long long)frame);
+                kprintf("[IPC_NS] shmget: created segment key=%d id=%d phys=0x%llx\n", key, i,
+                        (unsigned long long)frame);
                 return i;
             }
         }
@@ -268,20 +259,20 @@ int ipc_ns_shmget(struct ipc_namespace *ns, int key, size_t size, int shmflg)
     return -ENOENT;
 }
 
-void *ipc_ns_shmat(struct ipc_namespace *ns, int shmid,
-                   const void *shmaddr, int shmflg)
-{
+void *ipc_ns_shmat(struct ipc_namespace *ns, int shmid, const void *shmaddr, int shmflg) {
     (void)shmaddr;
     (void)shmflg;
 
-    if (!ns) ns = &init_ipc_ns;
+    if (!ns)
+        ns = &init_ipc_ns;
 
     if (shmid < 0 || shmid >= IPC_NS_MAX_SHM || !ns->shm_table[shmid].used)
         return NULL;
 
     /* Map the physical frame into the current process's address space */
     struct process *cur = process_get_current();
-    if (!cur) return NULL;
+    if (!cur)
+        return NULL;
 
     uint64_t virt = 0x0000700000000000ULL + (uint64_t)shmid * 0x200000ULL;
     /* Simple mapping at a fixed virtual address */
@@ -296,14 +287,13 @@ void *ipc_ns_shmat(struct ipc_namespace *ns, int shmid,
         return NULL;
 
     ns->shm_table[shmid].refs++;
-    kprintf("[IPC_NS] shmat: attached segment id=%d at 0x%llx\n",
-            shmid, (unsigned long long)virt);
+    kprintf("[IPC_NS] shmat: attached segment id=%d at 0x%llx\n", shmid, (unsigned long long)virt);
     return (void *)virt;
 }
 
-int ipc_ns_shmdt(struct ipc_namespace *ns, const void *shmaddr)
-{
-    if (!ns) ns = &init_ipc_ns;
+int ipc_ns_shmdt(struct ipc_namespace *ns, const void *shmaddr) {
+    if (!ns)
+        ns = &init_ipc_ns;
 
     if (!shmaddr)
         return -EINVAL;
@@ -335,9 +325,9 @@ int ipc_ns_shmdt(struct ipc_namespace *ns, const void *shmaddr)
  * These wrappers provide namespace-isolated message queue operations.
  */
 
-int ipc_ns_msgget(struct ipc_namespace *ns, int key, int msgflg)
-{
-    if (!ns) ns = &init_ipc_ns;
+int ipc_ns_msgget(struct ipc_namespace *ns, int key, int msgflg) {
+    if (!ns)
+        ns = &init_ipc_ns;
 
     /* Look for existing queue with this key */
     for (int i = 0; i < IPC_NS_MAX_MSG; i++) {
@@ -368,12 +358,11 @@ int ipc_ns_msgget(struct ipc_namespace *ns, int key, int msgflg)
     return -ENOENT;
 }
 
-int ipc_ns_msgsnd(struct ipc_namespace *ns, int msqid,
-                  const void *msgp, size_t msgsz, int msgflg)
-{
+int ipc_ns_msgsnd(struct ipc_namespace *ns, int msqid, const void *msgp, size_t msgsz, int msgflg) {
     (void)msgflg;
 
-    if (!ns) ns = &init_ipc_ns;
+    if (!ns)
+        ns = &init_ipc_ns;
 
     if (msqid < 0 || msqid >= IPC_NS_MAX_MSG || !ns->msg_table[msqid].used)
         return -EINVAL;
@@ -392,13 +381,13 @@ int ipc_ns_msgsnd(struct ipc_namespace *ns, int msqid,
     return 0;
 }
 
-ssize_t ipc_ns_msgrcv(struct ipc_namespace *ns, int msqid,
-                       void *msgp, size_t msgsz, long msgtyp, int msgflg)
-{
+ssize_t ipc_ns_msgrcv(struct ipc_namespace *ns, int msqid, void *msgp, size_t msgsz, long msgtyp,
+                      int msgflg) {
     (void)msgtyp;
     (void)msgflg;
 
-    if (!ns) ns = &init_ipc_ns;
+    if (!ns)
+        ns = &init_ipc_ns;
 
     if (msqid < 0 || msqid >= IPC_NS_MAX_MSG || !ns->msg_table[msqid].used)
         return -EINVAL;
@@ -407,7 +396,7 @@ ssize_t ipc_ns_msgrcv(struct ipc_namespace *ns, int msqid,
         return -EINVAL;
 
     if (ns->msg_table[msqid].len == 0)
-        return -ENOMSG;  /* no message available */
+        return -ENOMSG; /* no message available */
 
     size_t copy = msgsz;
     if (copy > ns->msg_table[msqid].len)
@@ -418,26 +407,24 @@ ssize_t ipc_ns_msgrcv(struct ipc_namespace *ns, int msqid,
     /* Clear the message after reading (simplified: single-message queue) */
     ns->msg_table[msqid].len = 0;
 
-    kprintf("[IPC_NS] msgrcv: received %llu bytes from queue id=%d\n", (unsigned long long)copy, msqid);
+    kprintf("[IPC_NS] msgrcv: received %llu bytes from queue id=%d\n", (unsigned long long)copy,
+            msqid);
     return (ssize_t)copy;
 }
 
 /* ── Stub: ipc_ns_delete ─────────────────────────────── */
-static int ipc_ns_delete(void *ns)
-{
+static int ipc_ns_delete(void *ns) {
     (void)ns;
     kprintf("[ipc_ns] ipc_ns_delete: not yet implemented\n");
     return 0;
 }
 /* ── Stub: ipc_ns_get ─────────────────────────────── */
-static void* ipc_ns_get(void)
-{
+static void *ipc_ns_get(void) {
     kprintf("[ipc_ns] ipc_ns_get: not yet implemented\n");
     return 0;
 }
 /* ── Stub: ipc_ns_put ─────────────────────────────── */
-static int ipc_ns_put(void *ns)
-{
+static int ipc_ns_put(void *ns) {
     (void)ns;
     kprintf("[ipc_ns] ipc_ns_put: not yet implemented\n");
     return 0;

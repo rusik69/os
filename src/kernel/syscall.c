@@ -4002,9 +4002,16 @@ static int64_t sys_unshare(uint64_t flags) {
          * is accepted for future-proofing. */
     }
 
-    /* ── CLONE_NEWIPC: mark for IPC namespace ────────────────── */
+    /* ── CLONE_NEWIPC: create a new IPC namespace (SYSV IPC isolation) ── */
     if (flags & CLONE_NEWIPC) {
-        /* IPC namespace isolation: future. */
+        struct ipc_namespace *new_ipc = ipc_ns_create();
+        if (!new_ipc)
+            return (uint64_t)-1; /* ENOMEM / table full */
+        if (cur->ipc_ns)
+            ipc_ns_free(cur->ipc_ns);
+        cur->ipc_ns = new_ipc;
+        cur->ns_flags |= CLONE_NEWIPC;
+        kprintf("[IPC_NS] unshare(NEWIPC): PID %d, ns id=%d\n", cur->pid, new_ipc->id);
     }
 
     /* ── CLONE_NEWCGROUP: create a new cgroup namespace (Item 117) ── */
