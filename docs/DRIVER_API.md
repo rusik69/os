@@ -14,12 +14,13 @@ A practical guide for writing device drivers for the Hermes OS kernel (x86-64, C
 6. [Network Driver API](#6-network-driver-api)
 7. [USB Driver Binding](#7-usb-driver-binding)
 8. [VirtIO Driver API](#8-virtio-driver-api)
-9. [DMA Buffer Allocation](#9-dma-buffer-allocation)
-10. [Timer API](#10-timer-api)
-11. [Locking Requirements](#11-locking-requirements)
-12. [Exporting Symbols](#12-exporting-symbols)
-13. [Makefile Integration](#13-makefile-integration)
-14. [Module Metadata](#14-module-metadata)
+9. [Character Device (devfs) Driver API](#9-character-device-devfs-driver-api)
+10. [DMA Buffer Allocation](#10-dma-buffer-allocation)
+11. [Timer API](#11-timer-api)
+12. [Locking Requirements](#12-locking-requirements)
+13. [Exporting Symbols](#13-exporting-symbols)
+14. [Makefile Integration](#14-makefile-integration)
+15. [Module Metadata](#15-module-metadata)
 
 ---
 
@@ -359,7 +360,7 @@ idt_register_handler_named(32 + irq_line, mydrv_irq_handler, "my_driver");
 ### IRQ handler best practices
 
 - **Keep handlers fast.** Do minimal work (read status, clear source, schedule bottom-half if needed).
-- **Hold spinlocks with IRQs disabled** when touching shared state (see Section 11).
+- **Hold spinlocks with IRQs disabled** when touching shared state (see Section 12).
 - **Use `irq_ack()`** at the end to signal End-Of-Interrupt to the PIC/IOAPIC.
 - **Network drivers** should call `net_rx_signal()` after acking to wake the network poll loop.
 
@@ -544,7 +545,56 @@ device_initcall(my_virtio_driver_init);
 
 ---
 
-## 9. DMA Buffer Allocation
+## 9. Character Device (devfs) Driver API
+
+Character-device drivers (TTY, serial, misc) expose a node under `/dev/`
+through the **devfs** dynamic device-node layer (`src/fs/devfs.c`).
+Instead of a Linux-style `cdev`/major-minor model, a driver registers a
+named node with optional read/write callbacks; open/close routing is
+handled by the VFS on the node name.
+
+```c
+#include "devfs.h"
+
+static int mydrv_read(void *priv, void *buf, uint32_t max_size,
+                      uint32_t *out_size)
+{
+    /* Copy up to max_size bytes from device into buf. */
+    /* Set *out_size = bytes read (0 = EOF/no data). */
+    return 0;
+}
+
+static int mydrv_write(void *priv, const void *data, uint32_t size)
+{
+    /* Consume size bytes from the device. */
+    return 0;
+}
+
+static int mydrv_init(void)
+{
+    /* Creates /dev/mydrv (name must contain no '/', len <= 47). */
+    return devfs_register_device("mydrv", /*priv*/, mydrv_read, mydrv_write);
+}
+device_initcall(mydrv_init);
+```
+
+**Key points:**
+
+- `devfs_register_device(name, priv, read_fn, write_fn)` creates the node
+  `/dev/<name>`. `read_fn`/`write_fn` are optional (NULL read → returns
+  0 bytes; NULL write → success). `priv` is passed to both callbacks.
+- Names are rejected if empty, contain `/`, exceed 47 chars, or collide
+  with an existing node; the table holds `DEVFS_MAX_DEVICES` entries.
+- `devfs_unregister_device(name)` removes the node on unload.
+- A simpler helper, `devfs_register(name, ...)`, also exists for basic
+  nodes without a slash; prefer `devfs_register_device()` for new code.
+- After registration, userspace opens/reads/writes `/dev/<name>` through
+  the normal VFS `open/read/write` syscalls, which dispatch to the
+  registered callbacks.
+
+---
+
+## 10. DMA Buffer Allocation
 
 Use the physical memory manager for DMA-capable buffers. The kernel provides `pmm_alloc_frame()` (single 4 KB page) and `pmm_alloc_frames()` (contiguous multi-page block).
 
@@ -610,7 +660,7 @@ cmd.prp1 = data_phys;
 
 ---
 
-## 10. Timer API
+## 11. Timer API
 
 Use the dynamic timer subsystem for delayed work, polling loops, and periodic tasks.
 
@@ -713,7 +763,7 @@ uint64_t ms_to_ticks(uint64_t ms) {
 
 ---
 
-## 11. Locking Requirements
+## 12. Locking Requirements
 
 Drivers that touch shared state (global data, device registers accessed from multiple CPUs) must use spinlocks. The kernel provides both plain and IRQ-safe variants.
 
@@ -787,7 +837,7 @@ static void e1000_irq_handler(struct interrupt_frame *frame)
 
 ---
 
-## 12. Exporting Symbols
+## 13. Exporting Symbols
 
 Drivers that are compiled as loadable modules or provide an API to other modules can export symbols using `EXPORT_SYMBOL()` and `EXPORT_SYMBOL_GPL()`.
 
@@ -835,7 +885,7 @@ EXPORT_SYMBOL(mpath_select_path);
 
 ---
 
-## 13. Makefile Integration
+## 14. Makefile Integration
 
 The kernel has two build models:
 
@@ -909,7 +959,7 @@ For built-in use, `module_init(my_driver_init)` already handles registration via
 
 ---
 
-## 14. Module Metadata
+## 15. Module Metadata
 
 Module metadata is embedded in the `.modinfo` section using macros:
 
