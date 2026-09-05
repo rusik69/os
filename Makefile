@@ -2560,8 +2560,8 @@ doccheck:
 	fi; \
 	todo_docs=0; \
 	for f in $$md_files; do \
-	    if grep -n 'TODO\|FIXME\|HACK\|XXX\|BUG' "$$f" 2>/dev/null | grep -v -i 'syscall.*num\|signature\|\.todo' > /dev/null 2>&1; then \
-	        count=$$(grep -c 'TODO\|FIXME\|HACK\|XXX\|BUG' "$$f" 2>/dev/null); \
+	    if grep -nwE 'TODO|FIXME|HACK|XXX|BUG' "$$f" 2>/dev/null | grep -v -i 'syscall.*num\|signature\|\.todo' > /dev/null 2>&1; then \
+	        count=$$(grep -cwE 'TODO|FIXME|HACK|XXX|BUG' "$$f" 2>/dev/null); \
 	        echo "⚠️  $$f: $$count TODO/FIXME/HACK markers found"; \
 	        todo_docs=$$((todo_docs + 1)); \
 	    fi; \

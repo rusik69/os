@@ -2,7 +2,7 @@
 
 > **Goal:** Find and fix 100 bugs across the ~159K LOC kernel.
 > **Method:** Systematic audits covering concurrency/locking, memory safety, buffer overflows, filesystem correctness, network stack, drivers, ELF loader, shell commands, and test coverage.
-> **Source data:** 4 deep audits (TODO markers, buffer overflows, locking races, integer issues, filesystem/network/driver correctness) conducted June 2026.
+> **Source data:** 4 deep audits (code-review markers, buffer overflows, locking races, integer issues, filesystem/network/driver correctness) conducted June 2026.
 
 ---
 
