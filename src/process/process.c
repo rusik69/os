@@ -19,6 +19,7 @@
 #include "printf.h"
 #include "sched_attr.h"
 #include "scheduler.h"
+#include "seccomp_bpf.h"
 #include "signal.h"
 #include "smp.h"
 #include "string.h"
@@ -1754,6 +1755,13 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack, uin
     child->context = NULL;
     child->next = NULL;
     child->tgid = (flags & CLONE_THREAD) ? parent->tgid : child->pid;
+
+    /* ── Deep-copy the parent's seccomp BPF filter chain ──────── */
+    /* The '*child = *parent' struct copy above aliases child->seccomp_filter
+     * to the parent's filter stack.  Give the child its own independent
+     * copy so a confined parent cannot leak an unconfined (or shared-stack)
+     * child — a seccomp filter must survive the fork/clone->exec path. */
+    seccomp_bpf_clone(child, parent);
 
     /* Per POSIX / Linux semantics: after fork/clone, the child inherits
      * NO pending signals from the parent.  The pending signal set must

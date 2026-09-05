@@ -106,6 +106,14 @@ struct sock_fprog {
  * Returns 0 on success, negative errno on failure. */
 int seccomp_filter_install(const struct sock_fprog *prog);
 
+/* Deep-copy the caller's seccomp BPF filter chain into a freshly forked
+ * child, so a child does not alias (share) the parent's mutable filter
+ * stack.  On success the child owns its own instruction-array copies and
+ * retains the parent's seccomp mode + no_new_privs.  On allocation
+ * failure the child is left in SECCOMP_MODE_DISABLED with no filter
+ * (fail-closed), never a shared pointer. */
+void seccomp_bpf_clone(struct process *child, const struct process *parent);
+
 /* Evaluate a seccomp filter for a given syscall number and architecture.
  * Returns the SECCOMP_RET_* action. */
 uint32_t seccomp_filter_evaluate(int syscall_nr, uint32_t arch);

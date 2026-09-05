@@ -298,6 +298,89 @@ void seccomp_bpf_release(void)
     current->seccomp_mode   = SECCOMP_MODE_DISABLED;
 }
 
+/* Deep-copy the caller's seccomp BPF filter chain into a freshly forked
+ * child.  The fork/clone path shallow-copies the whole struct process
+ * ('*child = *parent'), which would alias the parent's seccomp_filter
+ * pointer: parent and child would then share one mutable filter stack.
+ * A child must instead own independent copies of the instruction arrays
+ * and wrapper nodes, preserving the parent's mode + no_new_privs so a
+ * confined parent cannot silently leak an unconfined child.
+ *
+ * On allocation failure the child is left in SECCOMP_MODE_DISABLED with
+ * no filter (a shared pointer is never written), so confinement can only
+ * fail closed — never to an unrestricted state. */
+void seccomp_bpf_clone(struct process *child, const struct process *parent) {
+    if (!child || !parent)
+        return;
+
+    /* Parent is not BPF-confined: child inherits a disabled/no-filter
+     * state rather than a shared (dangling) pointer. */
+    if (parent->seccomp_mode != SECCOMP_MODE_FILTER_BPF || !parent->seccomp_filter) {
+        child->seccomp_filter = NULL;
+        child->seccomp_mode = SECCOMP_MODE_DISABLED;
+        return;
+    }
+
+    /* Walk the parent's chain oldest-first, building an independent
+     * copy (newest filter becomes the child's chain head). */
+    const struct seccomp_filter *parent_tail = NULL;
+    int count = 0;
+    {
+        const struct seccomp_filter *f = (const struct seccomp_filter *)parent->seccomp_filter;
+        for (; f; f = f->prev) {
+            count++;
+            parent_tail = f;
+        }
+    }
+
+    struct seccomp_filter *child_head = NULL;
+    struct seccomp_filter *child_next = NULL; /* prev link of next copy */
+
+    /* Rebuild from oldest (parent_tail) toward newest (parent head). */
+    const struct seccomp_filter *src = parent_tail;
+    for (int i = 0; i < count; i++) {
+        struct seccomp_filter *copy =
+            (struct seccomp_filter *)kmalloc(sizeof(struct seccomp_filter));
+        if (!copy)
+            goto fail;
+        struct sock_filter *insns =
+            (struct sock_filter *)kmalloc((size_t)src->len * sizeof(struct sock_filter));
+        if (!insns) {
+            kfree(copy);
+            goto fail;
+        }
+        memcpy(insns, src->insns, (size_t)src->len * sizeof(struct sock_filter));
+
+        copy->insns = insns;
+        copy->len = src->len;
+        copy->refcount = 1;
+        copy->prev = child_next;
+
+        child_next = copy;
+        if (i == count - 1)
+            child_head = copy; /* newest copy is the new chain head */
+
+        src = src->prev;
+    }
+
+    child->seccomp_filter = child_head;
+    child->seccomp_mode = SECCOMP_MODE_FILTER_BPF;
+    child->no_new_privs = parent->no_new_privs;
+    return;
+
+fail:
+    /* Free any partial chain already built for the child. */
+    while (child_next) {
+        struct seccomp_filter *f = child_next;
+        child_next = f->prev;
+        if (f->insns)
+            kfree(f->insns);
+        kfree(f);
+    }
+    child->seccomp_filter = NULL;
+    child->seccomp_mode = SECCOMP_MODE_DISABLED;
+}
+
 /* Forward declaration for stub functions */
 struct bpf_prog;
 
