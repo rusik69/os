@@ -2421,6 +2421,49 @@ OCI Runtime (runtime.c, config.c)
           resource quotas, affinity/anti-affinity, seccomp notify
 ```
 
+### Container ↔ Kernel Primitive Mapping
+
+A running container is the composition of standard kernel isolation
+primitives rather than a separate kernel object. `container_create()`
+builds the on-disk hierarchy and mounts; `container_start()` spawns the
+init process via `process_spawn()` with the configured namespace flags.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Container (one descriptor in container_table[CONTAINER_MAX])│
+└──────┬───────────────────────────────────────────────────────┘
+       │ created from config.json (OCI bundle) by container_create()
+┌──────▼───────────────────────────────────────────────────────┐
+│  Rootfs (overlay union mount)                                │
+│    lowerdir = image layers (read-only, content-addressed)    │
+│    upperdir = container diff (writable)  workdir = work      │
+│    mounted over /var/lib/containers/<id>/rootfs             │
+└──────┬───────────────────────────────────────────────────────┘
+       │ process_spawn() with ns_flags
+┌──────▼───────────────────────────────────────────────────────┐
+│  Namespace isolation (ns_flags)                              │
+│    CLONE_NEWPID  → separate PID namespace (init = PID 1)     │
+│    CLONE_NEWNS   → private mount namespace                   │
+│    CLONE_NEWNET  → veth pair into container netns            │
+│    CLONE_NEWIPC  → private IPC namespace                     │
+└──────┬───────────────────────────────────────────────────────┘
+       │ runtime bookkeeping
+┌──────▼───────────────────────────────────────────────────────┐
+│  Resource & policy enforcement                               │
+│    cgroup v2  → CPU/memory/PID accounting under              │
+│                 /sys/fs/cgroup/containers/<id>/              │
+│    seccomp    → syscall filtering (seccomp_notify daemon)    │
+│    rlimits    → CPU time, memory, open-file caps             │
+└──────────────────────────────────────────────────────────────┘
+```
+
+Isolation comes from kernel `CLONE_NEW*` namespaces, resource control
+from the cgroup v2 hierarchy, syscall filtering from seccomp, and
+storage from overlay union mounts. The container manager itself only
+orchestrates these existing kernel mechanisms — there is no dedicated
+"container" scheduler; container processes run as ordinary tasks under
+the global scheduler.
+
 ### Container Table & State Machine
 
 A fixed-size global table (`container_table[CONTAINER_MAX]` with CONTAINER_MAX=64) holds all active container descriptors. Each slot is protected by a per-container spinlock; the global table lock guards table-wide operations (alloc, free, iteration).
